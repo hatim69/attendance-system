@@ -38,3 +38,14 @@ for port in open_ports:
         break
     except Exception as e:
         print(f"ZK protocol on port {port}: FAILED ({e})")
+else:
+    # TCP found nothing: some ZK firmwares only answer over UDP
+    for port in dict.fromkeys([4370, 5005] + open_ports):
+        try:
+            c = ZK(ip, port=port, timeout=5, password=key, force_udp=True, ommit_ping=True).connect()
+            print(f"ZK protocol OK over UDP on port {port}. serial:", c.get_serialnumber())
+            c.disconnect()
+            print(f"\n=> ZK works over UDP; tell Claude (set force_udp=True in app/zk_poller.py)")
+            break
+        except Exception as e:
+            print(f"ZK over UDP on port {port}: FAILED ({e})")

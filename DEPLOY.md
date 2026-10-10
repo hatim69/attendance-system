@@ -10,7 +10,13 @@ You need: the VPS (SSH as `root`, Hostinger's **Web console** button works too) 
 ## 2. Open the ports
 Hostinger panel -> VPS -> **Firewall**: create a rule set allowing inbound **TCP 22, 80, 443** only and apply it to the VPS (with 0 rules everything is open).
 
-## 3. Install and start (paste into the Web console or SSH)
+## 3a. Fastest: one command (Web console or SSH as root)
+```
+curl -fsSL https://raw.githubusercontent.com/hatim69/attendance-system/claude/eager-wright-hkels3/deploy/install.sh | DOMAIN=srv1949824.hstgr.cloud bash
+```
+It installs Docker, fetches the code, creates `.env` with a random admin password and secret key, starts everything and prints the login and the device URL. Safe to re-run (keeps your data and `.env`).
+
+## 3b. Manual steps (what the installer does)
 ```
 apt-get update && apt-get install -y docker.io docker-compose-v2 git
 git clone https://github.com/hatim69/attendance-system.git

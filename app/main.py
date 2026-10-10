@@ -51,6 +51,10 @@ class EmployeeIn(BaseModel):
     shift_id: int | None = None
     salary: float = 0
     joined: str = ""  # optional YYYY-MM-DD; days before it are not counted
+    designation: str = ""
+    branch: str = ""
+    mobile: str = ""
+    father_name: str = ""
 
 
 class ShiftIn(BaseModel):
@@ -183,7 +187,7 @@ async def save_user(body: UserIn, u: dict = Depends(access.need("admin"))):
     if not re.fullmatch(r"[a-z0-9._-]{3,30}", name):
         raise HTTPException(400, "Username: 3-30 characters, letters, digits . _ -")
     if body.role not in access.LEVEL:
-        raise HTTPException(400, "Role must be admin, hr or manager")
+        raise HTTPException(400, "Role must be admin, hr, management or manager")
     if body.role == "manager" and not body.department.strip():
         raise HTTPException(400, "A manager needs a department")
     if body.password and len(body.password) < 8:
@@ -242,10 +246,10 @@ async def audit_writes(request: Request, call_next):
 def list_employees():
     frag, args = access.scope_sql("e.department")
     rows = [dict(r) for r in db.conn().execute(
-        "SELECT e.id, e.device_user_id, e.name, e.department, e.active, e.pin_hash IS NOT NULL AS pin_hash, e.shift_id, "
+        "SELECT e.id, e.device_user_id, e.name, e.department, e.designation, e.branch, e.mobile, e.father_name, e.active, e.pin_hash IS NOT NULL AS pin_hash, e.shift_id, "
         "e.salary, COALESCE(e.joined,'') joined, COALESCE(s.name,'') shift FROM employees e LEFT JOIN shifts s ON s.id=e.shift_id "
         "WHERE 1=1" + frag + " ORDER BY e.name", args)]
-    if access.scope_dept.get() is not None:   # managers never see salary
+    if not access.salary_visible.get():       # only hr and admin see salaries
         for r in rows:
             r["salary"] = 0
     return rows
@@ -260,13 +264,35 @@ def upsert_employee(e: EmployeeIn):
         _valid_date(e.joined)
     c = db.conn()
     c.execute(
-        "INSERT INTO employees(device_user_id,name,department,active,shift_id,salary,joined) VALUES (?,?,?,?,?,?,?) "
+        "INSERT INTO employees(device_user_id,name,department,active,shift_id,salary,joined,designation,branch,mobile,father_name) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(device_user_id) DO UPDATE SET name=excluded.name, department=excluded.department, "
-        "active=excluded.active, shift_id=excluded.shift_id, salary=excluded.salary, joined=excluded.joined",
-        (e.device_user_id, e.name, e.department, int(e.active), e.shift_id, e.salary, e.joined or None),
+        "active=excluded.active, shift_id=excluded.shift_id, salary=excluded.salary, joined=excluded.joined, "
+        "designation=excluded.designation, branch=excluded.branch, mobile=excluded.mobile, father_name=excluded.father_name",
+        (e.device_user_id, e.name, e.department, int(e.active), e.shift_id, e.salary, e.joined or None,
+         e.designation, e.branch, e.mobile, e.father_name),
     )
     c.commit()
     return {"ok": True}
+
+
+class BulkShiftIn(BaseModel):
+    ids: list[str]
+    shift_id: int | None = None
+
+
+@app.post("/api/employees/bulk-shift", dependencies=[Depends(access.need("hr"))])
+def bulk_shift(body: BulkShiftIn):
+    """Assign one shift (or none) to many employees at once."""
+    c = db.conn()
+    if body.shift_id is not None and not c.execute("SELECT 1 FROM shifts WHERE id=?", (body.shift_id,)).fetchone():
+        raise HTTPException(404, "No such shift")
+    ids = [db.canon_id(i) for i in body.ids]
+    if not ids:
+        raise HTTPException(400, "Select at least one employee")
+    n = c.executemany("UPDATE employees SET shift_id=? WHERE device_user_id=?", [(body.shift_id, i) for i in ids]).rowcount
+    c.commit()
+    return {"updated": n}
 
 
 @app.delete("/api/employees/{device_user_id}", dependencies=[Depends(access.need("hr"))])
@@ -446,12 +472,12 @@ MAX_IMPORT_BYTES = 15 * 1024 * 1024
 
 
 @app.post("/api/import/{kind}", dependencies=[Depends(access.need("hr"))])
-async def import_file(kind: str, file: UploadFile = File(...), dry_run: bool = True):
+async def import_file(kind: str, file: UploadFile = File(...), dry_run: bool = True, inactive: bool = False):
     data = await file.read(MAX_IMPORT_BYTES + 1)
     if len(data) > MAX_IMPORT_BYTES:
         raise HTTPException(413, "File too large (max 15 MB)")
     try:
-        return importer.run(kind, file.filename or "", data, dry_run)
+        return importer.run(kind, file.filename or "", data, dry_run, inactive)
     except importer.ImportError_ as e:
         raise HTTPException(400, str(e))
     except Exception as e:  # corrupt xlsx etc.: report, never a stack trace

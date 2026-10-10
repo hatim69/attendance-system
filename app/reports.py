@@ -100,7 +100,7 @@ def daily(date: str, device: str | None = None) -> list[dict]:
         sh = shifts.get(e["shift_id"])
         r = evaluate(e, sh, date, pm.get((e["device_user_id"], date)), holidays, leaves, today)
         r.update(device_user_id=e["device_user_id"], name=e["name"], department=e["department"],
-                 shift=sh["name"] if sh else "")
+                 designation=e["designation"], branch=e["branch"], shift=sh["name"] if sh else "")
         rows.append(r)
     return rows
 
@@ -120,7 +120,7 @@ def _summary(e: dict, sh: dict | None, res: list[dict]) -> dict:
     full = cnt("Present") + cnt("Late")
     return {
         "device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
-        "shift": sh["name"] if sh else "",
+        "designation": e["designation"], "branch": e["branch"], "shift": sh["name"] if sh else "",
         "days_present": full + cnt("Half Day"), "late_days": cnt("Late"), "half_days": cnt("Half Day"),
         "absent": cnt("Absent"), "leave": cnt("Leave"), "holidays": cnt("Holiday"), "weekly_offs": cnt("Weekly Off"),
         "total_hours": round(sum(r["hours"] for r in res), 2),
@@ -142,6 +142,7 @@ def grid(month: str, device: str | None = None) -> dict:
     for e, sh, res in _month_results(month, device):
         t = _summary(e, sh, res)
         rows.append({"device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
+                     "designation": e["designation"], "father_name": e["father_name"],
                      "codes": [CODES[r["status"]] for r in res],
                      "totals": {"worked": t["days_present"], "weekly_offs": t["weekly_offs"], "holidays": t["holidays"],
                                 "leave": t["leave"], "absent": t["absent"], "paid_days": t["paid_days"]}})
@@ -153,7 +154,8 @@ def muster(month: str, device: str | None = None) -> list[dict]:
     g = grid(month, device)
     out = []
     for i, r in enumerate(g["rows"], 1):
-        row = {"Sr": i, "Code": r["device_user_id"], "Name": r["name"], "Department": r["department"]}
+        row = {"Sr": i, "Code": r["device_user_id"], "Name": r["name"], "Father's Name": r["father_name"],
+               "Designation": r["designation"], "Department": r["department"]}
         row.update({f"{d:02d}": c for d, c in zip(g["days"], r["codes"])})
         t = r["totals"]
         row.update({"Worked Days": t["worked"], "W.Days Off": t["weekly_offs"], "Holidays": t["holidays"],

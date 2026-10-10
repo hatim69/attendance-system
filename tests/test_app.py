@@ -487,3 +487,47 @@ def test_require_login_refuses_open_hosting(tmp_path, monkeypatch):
     with __import__("pytest").raises(RuntimeError, match="ADMIN_PASSWORD"):
         with TestClient(app):
             pass
+
+
+def test_management_role_and_bulk_shift_and_new_employee_fields(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "mgmt.db"))
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "admin-password-123")
+    H = {"X-Requested-With": "fetch"}
+    with TestClient(app) as admin:
+        admin.headers.update(H)
+        admin.post("/api/auth/login", json={"username": "admin", "password": "admin-password-123"})
+        admin.post("/api/users", json={"username": "boss", "password": "boss-password-1", "role": "management"})
+        admin.post("/api/users", json={"username": "lead", "password": "lead-password-1", "role": "manager", "department": "Ops"})
+        admin.post("/api/shifts", json={"name": "Bulk 9-6", "start": "09:00", "end": "18:00"})
+        sid = admin.get("/api/shifts").json()[0]["id"]
+        for uid, dp in (("1", "Ops"), ("2", "Sales"), ("3", "Ops")):
+            admin.post("/api/employees", json={"device_user_id": uid, "name": f"E{uid}", "department": dp, "salary": 40000,
+                                               "designation": "Exec", "branch": "Mumbai", "mobile": "99999", "father_name": "Dad"})
+        # bulk assign by id (zero-padded ids work, unknown shift and empty selection are rejected)
+        assert admin.post("/api/employees/bulk-shift", json={"ids": ["001", "2", "3"], "shift_id": sid}).json() == {"updated": 3}
+        assert admin.post("/api/employees/bulk-shift", json={"ids": ["1"], "shift_id": 99999}).status_code == 404
+        assert admin.post("/api/employees/bulk-shift", json={"ids": [], "shift_id": sid}).status_code == 400
+        e = {x["device_user_id"]: x for x in admin.get("/api/employees").json()}
+        assert e["1"]["shift"] == "Bulk 9-6" and e["1"]["designation"] == "Exec" and e["1"]["father_name"] == "Dad" and e["1"]["salary"] == 40000
+        assert admin.post("/api/employees/bulk-shift", json={"ids": ["2"], "shift_id": None}).json() == {"updated": 1}
+        # management: everything read-only across ALL departments, never salaries or payroll
+        boss = TestClient(app); boss.headers.update(H)
+        assert boss.post("/api/auth/login", json={"username": "boss", "password": "boss-password-1"}).status_code == 200
+        emps = boss.get("/api/employees").json()
+        assert {x["device_user_id"] for x in emps} == {"1", "2", "3"} and all(x["salary"] == 0 for x in emps)
+        assert boss.get("/api/reports/payroll?month=2025-09").status_code == 403
+        assert boss.post("/api/employees/bulk-shift", json={"ids": ["1"], "shift_id": sid}).status_code == 403
+        assert boss.get("/api/dashboard").json()["total"] == 3
+        # team lead: own department only
+        lead = TestClient(app); lead.headers.update(H)
+        lead.post("/api/auth/login", json={"username": "lead", "password": "lead-password-1"})
+        assert {x["device_user_id"] for x in lead.get("/api/employees").json()} == {"1", "3"}
+        # muster has the statutory columns; resigned import marks inactive
+        row = admin.get("/api/reports/muster?month=2025-09").json()[0]
+        assert row["Father's Name"] == "Dad" and row["Designation"] == "Exec"
+        csv_bytes = b"Emp Code,Empname,Dept Name,Desig Name,Branch Name,Phone.No,Father Name\n00077,Gone Gina,Ops,Clerk,Pune,12345,Papa\n"
+        r = admin.post("/api/import/employees?dry_run=false&inactive=true", files={"file": ("old.csv", csv_bytes)}).json()
+        assert r["created"] == 1
+        gina = [x for x in admin.get("/api/employees").json() if x["device_user_id"] == "77"][0]
+        assert (gina["active"], gina["designation"], gina["branch"], gina["mobile"]) == (0, "Clerk", "Pune", "12345")
+        assert "77" not in {x["device_user_id"] for x in admin.get("/api/reports/monthly?month=2025-09").json()}

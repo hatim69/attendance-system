@@ -133,7 +133,9 @@ def init():
         if col not in have:
             c.execute(f"ALTER TABLE punches ADD COLUMN {col} {decl}")
     emp_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
-    for col, decl in {"pin_hash": "TEXT", "shift_id": "INTEGER", "salary": "REAL NOT NULL DEFAULT 0", "joined": "TEXT"}.items():
+    for col, decl in {"pin_hash": "TEXT", "shift_id": "INTEGER", "salary": "REAL NOT NULL DEFAULT 0", "joined": "TEXT",
+                       "designation": "TEXT NOT NULL DEFAULT ''", "branch": "TEXT NOT NULL DEFAULT ''",
+                       "mobile": "TEXT NOT NULL DEFAULT ''", "father_name": "TEXT NOT NULL DEFAULT ''"}.items():
         if col not in emp_cols:
             c.execute(f"ALTER TABLE employees ADD COLUMN {col} {decl}")
     _canonicalize(c)

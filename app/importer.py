@@ -20,6 +20,10 @@ ALIASES = {
     "holiday_name": ["holiday name", "name", "holiday", "description", "occasion"],
     "department": ["department", "dept", "dept name", "dept_name", "department name"],
     "shift": ["shift", "shift name", "shiftname"],
+    "designation": ["designation", "desig name", "desig_name", "desig", "designation name"],
+    "branch": ["branch", "branch name", "branch_name", "location"],
+    "mobile": ["mobile", "phone", "phone.no", "phone no", "phone no.", "mobile no", "contact", "contact no"],
+    "father": ["father name", "father's name", "father/husband name", "husband name", "fathername"],
     "salary": ["salary", "monthly salary", "gross salary", "basic"],
     "joined": ["joined", "date of joining", "dateof join", "date of join", "doj", "joining date", "join date"],
     "start": ["start", "start time", "shift start", "from time", "in time"],
@@ -38,14 +42,14 @@ ALIASES = {
     "device": ["device", "device id", "deviceid", "device name", "serial", "machine"],
 }
 TEMPLATES = {
-    "employees": ["id", "name", "department", "shift", "salary", "joined"],
+    "employees": ["id", "name", "department", "designation", "branch", "mobile", "shift", "salary", "joined"],
     "shifts": ["name", "start", "end", "grace", "half_day_hours", "ot_after", "weekly_off"],
     "holidays": ["date", "name"],
     "leaves": ["id", "from", "to", "type", "note"],
     "punches": ["id", "datetime", "device"],
 }
 TEMPLATE_EXAMPLES = {
-    "employees": [["217315", "Asha Khan", "Sales", "Morning 9-6", "30000", "2025-04-01"]],
+    "employees": [["217315", "Asha Khan", "Sales", "Executive", "Mumbai", "9876543210", "Morning 9-6", "30000", "2025-04-01"]],
     "shifts": [["Morning 9-6", "09:00", "18:00", "10", "4", "30", "SUN"]],
     "holidays": [["2026-10-20", "Dussehra"]],
     "leaves": [["217315", "2026-10-12", "2026-10-13", "Casual", "family function"]],
@@ -147,7 +151,7 @@ def to_num(v, default=0.0) -> float:
         raise ValueError(f"not a number: {v!r}")
 
 
-def run(kind: str, filename: str, data: bytes, dry: bool) -> dict:
+def run(kind: str, filename: str, data: bytes, dry: bool, inactive: bool = False) -> dict:
     if kind not in TEMPLATES:
         raise ImportError_("Unknown import type")
     rows = read_table(filename, data)
@@ -170,17 +174,23 @@ def run(kind: str, filename: str, data: bytes, dry: bool) -> dict:
                 sid = shifts.get(str(sh).strip().lower()) if sh else None
                 if sh and sid is None:
                     raise ValueError(f"unknown shift {sh!r} (import shifts first)")
-                vals = {"name": name, "department": str(pick(row, "department") or "").strip(),
+                text = lambda f: str(pick(row, f) or "").strip()
+                vals = {"name": name, "department": text("department"), "designation": text("designation"),
+                        "branch": text("branch"), "mobile": text("mobile"), "father_name": text("father"),
                         "salary": to_num(pick(row, "salary")), "joined": to_date(pick(row, "joined")), "shift_id": sid}
+                if inactive:       # the file lists resigned staff: keep their history but not in active reports
+                    vals["active"] = 0
                 exists = uid in known_ids
                 if not dry:
                     if exists:   # only overwrite what the file provides; never touches PINs
-                        sets = {k: v for k, v in vals.items() if v not in (None, "") and not (k == "salary" and v == 0)}
+                        sets = {k: v for k, v in vals.items() if (v not in (None, "") and not (k == "salary" and v == 0)) or k == "active"}
                         c.execute("UPDATE employees SET " + ",".join(f"{k}=?" for k in sets) + " WHERE device_user_id=?",
                                   list(sets.values()) + [uid])
                     else:
-                        c.execute("INSERT INTO employees(device_user_id,name,department,salary,joined,shift_id) VALUES (?,?,?,?,?,?)",
-                                  (uid, name, vals["department"], vals["salary"], vals["joined"], sid))
+                        c.execute("INSERT INTO employees(device_user_id,name,department,salary,joined,shift_id,designation,branch,mobile,father_name,active) "
+                                  "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                                  (uid, name, vals["department"], vals["salary"], vals["joined"], sid, vals["designation"],
+                                   vals["branch"], vals["mobile"], vals["father_name"], vals.get("active", 1)))
                 known_ids.add(uid)
                 res["updated" if exists else "created"] += 1
             elif kind == "shifts":

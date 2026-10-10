@@ -139,8 +139,8 @@ async function render(){
     $('#t').innerHTML=`<div class="toast">${dry?'<b>Preview (nothing saved):</b> ':'<b>Imported:</b> '}${r.rows} rows read · ${r.created} new · ${r.updated} updated · ${r.skipped} skipped${r.errors.length?' · '+r.errors.length+' problems':''}</div>`+(r.errors.length?tbl([['row','Row in file'],['message','Problem']],r.errors):'')+(dry&&!r.errors.length?'<p class="hint">Looks good. Untick "Preview only" and press Run to import.</p>':'');
    }finally{$('#ib').disabled=false}});
  } else if(tab=='users'){
-  m.innerHTML=`<div class="bar"><input id="un" placeholder="Username" size=12><input id="ud" placeholder="Display name" size=14><input id="up" type="password" placeholder="Password (min 8)" size=14> <select id="ur"><option value="manager">Manager (read-only, one department)</option><option value="hr">HR (day-to-day work and payroll)</option><option value="admin">Admin (everything)</option></select><input id="ut" placeholder="Department (managers)" size=14><label><input type="checkbox" id="ua" checked> Active</label><button id="s">Save user</button></div>
-   <p class="hint">Managers see only their department and no salaries. To change someone's password, enter a new one and save. Leave it empty to keep the current password.</p><div id="t"></div>`;
+  m.innerHTML=`<div class="bar"><input id="un" placeholder="Username" size=12><input id="ud" placeholder="Display name" size=14><input id="up" type="password" placeholder="Password (min 8)" size=14> <select id="ur"><option value="manager">Team Lead (read-only, one department)</option><option value="management">Management (read-only, all departments)</option><option value="hr">HR (day-to-day work and payroll)</option><option value="admin">Admin (everything)</option></select><input id="ut" placeholder="Department (managers)" size=14><label><input type="checkbox" id="ua" checked> Active</label><button id="s">Save user</button></div>
+   <p class="hint">Team leads see only their department. Team leads and management are read-only and never see salaries. To change someone's password, enter a new one and save. Leave it empty to keep the current password.</p><div id="t"></div>`;
   const us=await j('/api/users'); listCache=us;
   $('#t').innerHTML=tbl([['username','Username'],['display_name','Name'],['role','Role'],['department','Department'],['active','Active'],['x','',r=>`<button onclick="editUser(${listCache.indexOf(r)})">Edit</button><button onclick="delUser(${listCache.indexOf(r)})">Delete</button>`]],us);
   $('#s').onclick=safe(async()=>{await post('/api/users',{username:$('#un').value,display_name:$('#ud').value,password:$('#up').value,role:$('#ur').value,department:$('#ut').value,active:$('#ua').checked});render()});
@@ -185,14 +185,14 @@ function connect(){
  ws.onopen=()=>{$('#conn').style.color='#4ade80';ws.send('hi')}; ws.onclose=()=>{$('#conn').style.color='#f87171';setTimeout(connect,2000)};
  ws.onmessage=e=>{const p=JSON.parse(e.data); if(tab!='live')return; const d=document.createElement('div');d.className='toast';d.textContent=`${p.ts.slice(11)}  ${p.name} checked in${p.flag=='outside_geofence'?' (outside area)':''}`;$('#feed').prepend(d);setTimeout(render,500)};
 }
-const HIDE={manager:['payroll','emp','shifts','holidays','leave','import','sites','users','audit'],hr:['sites','users','audit'],admin:[]};
+const HIDE={manager:['payroll','emp','shifts','holidays','leave','import','sites','users','audit'],management:['payroll','emp','shifts','holidays','leave','import','sites','users','audit'],hr:['sites','users','audit'],admin:[]};
 (async()=>{try{const me=await j('/api/auth/me');
   $('#who').textContent=me.open_mode?'OPEN MODE (no login)':`${me.display_name||me.username} · ${me.role}${me.role=='manager'?' · '+me.department:''}`;
   (HIDE[me.role]||[]).forEach(t=>{const a=document.querySelector(`header a[data-t=${t}]`);if(a)a.style.display='none'});
   if(me.open_mode){$('#out').style.display=$('#pw').style.display='none'}
   $('#out').onclick=async()=>{await fetch('/api/auth/logout',{method:'POST',headers:{'X-Requested-With':'fetch'}});location.href='/login'};
   $('#pw').onclick=safe(async()=>{const o=prompt('Current password:');if(!o)return;const n=prompt('New password (min 8 characters):');if(!n)return;await post('/api/auth/password',{old_password:o,new_password:n});alert('Password changed')});
-  if(me.role!='manager')connect();
+  if(me.role=='hr'||me.role=='admin')connect();
   render();
  }catch(e){}})();
 </script></body></html>

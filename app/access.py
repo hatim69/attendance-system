@@ -9,12 +9,14 @@ from fastapi import HTTPException, Request
 
 from . import auth, config, db
 
-LEVEL = {"manager": 1, "hr": 2, "admin": 3}
+LEVEL = {"manager": 1, "management": 1, "hr": 2, "admin": 3}   # manager = team lead (one department)
 COOKIE = "att_session"
 SESSION_TTL = 12 * 3600
 SAFE = {"GET", "HEAD", "OPTIONS"}
 # A manager is scoped to one department; this holds it for the current request (None = no restriction).
 scope_dept: ContextVar[str | None] = ContextVar("scope_dept", default=None)
+# Salary figures are visible to hr and admin only.
+salary_visible: ContextVar[bool] = ContextVar("salary_visible", default=True)
 
 
 def user_count() -> int:
@@ -49,6 +51,7 @@ def need(role: str):
         if open_mode():
             request.state.user = "(open)"
             scope_dept.set(None)
+            salary_visible.set(True)
             return {"username": "(open)", "role": "admin", "department": "", "display_name": "Open mode"}
         user = session_user(request)
         if not user:
@@ -59,6 +62,7 @@ def need(role: str):
         if LEVEL[user["role"]] < LEVEL[role]:
             raise HTTPException(403, "Your role does not allow this")
         scope_dept.set((user["department"] or "\u0000") if user["role"] == "manager" else None)
+        salary_visible.set(LEVEL[user["role"]] >= LEVEL["hr"])
         return user
     return dep
 

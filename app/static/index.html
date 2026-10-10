@@ -31,7 +31,7 @@
  .c-P{color:#15803d}.c-L{color:#b45309;font-weight:600}.c-HD{color:#c2410c;font-weight:600}.c-A{color:#b91c1c;font-weight:700}.c-LV{color:#7c3aed}.c-H,.c-WO{color:#9ca3af}
 </style></head><body>
 <header><b style="margin-right:8px">Attendance</b>
- <a data-t="live" class="on">Dashboard</a><a data-t="punches">Punches</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="sheet">Sheet</a><a data-t="payroll">Payroll</a>
+ <a data-t="live" class="on">Dashboard</a><a data-t="punches">Punches</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="sheet">Sheet</a><a data-t="timecard">Time Card</a><a data-t="payroll">Payroll</a>
  <a data-t="emp">Employees</a><a data-t="shifts">Shifts</a><a data-t="holidays">Holidays</a><a data-t="leave">Leave</a><a data-t="devices">Devices</a><a data-t="sites">Sites</a>
  <span id="conn" style="margin-left:auto;font-size:12px">●</span></header>
 <main id="m"></main><div id="big" onclick="this.style.display='none'"><img></div>
@@ -85,8 +85,12 @@ async function render(){
   $('#d').onchange=load; $('#dv').onchange=load;
   $('#mp_b').onclick=safe(async()=>{const r=await post('/api/punches',{device_user_id:$('#mp_e').value,ts:$('#mp_t').value.replace('T',' ')+':00'});if(!r.stored)alert('Not saved: a punch within a minute of that time already exists');load()}); load();
  } else if(tab=='daily'){
-  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()} <select id="f"><option value="">All</option><option>Present</option><option>Late</option><option>Half Day</option><option>Absent</option><option>Leave</option></select> <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a></div><div id="t"></div>`;
-  const load=async()=>{let r=await j('/api/reports/daily?day='+$('#d').value+dq()); if($('#f').value)r=r.filter(x=>x.status==$('#f').value);
+  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()} <select id="f"><option value="">All employees</option><option>Present</option><option>Late</option><option>Half Day</option><option>Absent</option><option>Leave</option><option value="early">Early going</option><option value="miss">Miss punch</option><option value="dept">Department summary</option></select> <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a></div><div id="t"></div>`;
+  const load=async()=>{let r=await j('/api/reports/daily?day='+$('#d').value+dq()); const f=$('#f').value;
+   if(f=='dept'){const g={};r.forEach(x=>{const k=x.department||'Unassigned';const o=g[k]||(g[k]={department:k,total:0,present:0,late:0,absent:0,leave:0,weekoff:0});o.total++;if(['Present','Late','Half Day'].includes(x.status))o.present++;if(x.status=='Late')o.late++;if(x.status=='Absent')o.absent++;if(x.status=='Leave')o.leave++;if(x.status=='Weekly Off'||x.status=='Holiday')o.weekoff++});
+    const rows=Object.values(g).sort((a,b)=>a.department.localeCompare(b.department));const tt=rows.reduce((a,x)=>{for(const k of ['total','present','late','absent','leave','weekoff'])a[k]+=x[k];return a},{department:'TOTAL',total:0,present:0,late:0,absent:0,leave:0,weekoff:0});
+    $('#t').innerHTML=tbl([['department','Department'],['total','Employees'],['present','Present'],['late','Late'],['absent','Absent'],['leave','Leave'],['weekoff','Off / Holiday']],rows.concat([tt]));return}
+   if(f=='early')r=r.filter(x=>x.early_min>0); else if(f=='miss')r=r.filter(x=>(x.note||'').includes('missing out')); else if(f)r=r.filter(x=>x.status==f);
    $('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['shift','Shift'],['first_in','In'],['last_out','Out'],['hours','Hours'],['late_min','Late',r=>mins(r.late_min)],['early_min','Early out',r=>mins(r.early_min)],['ot_min','Overtime',r=>mins(r.ot_min)],['status','Status'],['note','Note']],r)};
   $('#d').onchange=load; $('#dv').onchange=load; $('#f').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/daily.csv?day='+$('#d').value+dq()}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/daily.xlsx?day='+$('#d').value+dq()}; load();
  } else if(tab=='monthly'){
@@ -94,10 +98,14 @@ async function render(){
   const load=async()=>$('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['shift','Shift'],['days_present','Present'],['late_days','Late days'],['half_days','Half'],['absent','Absent'],['leave','Leave'],['holidays','Hol.'],['weekly_offs','W.off'],['total_hours','Hours'],['overtime_hours','OT hrs'],['late_minutes','Late min'],['paid_days','Paid days']],await j('/api/reports/monthly?month='+$('#mo').value+dq()));
   $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/monthly.csv?month='+$('#mo').value+dq()}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/monthly.xlsx?month='+$('#mo').value+dq()}; load();
  } else if(tab=='sheet'){
-  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> ${devSel()} <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a> <span class="hint">P present · L late · HD half day · A absent · LV leave · H holiday · WO weekly off</span></div><div id="t"></div>`;
+  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> ${devSel()} <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a> <a href="#" id="mus">Muster roll (Excel)</a> <span class="hint">P present · L late · HD half day · A absent · LV leave · H holiday · WO weekly off</span></div><div id="t"></div>`;
   const load=async()=>{const g=await j('/api/reports/grid?month='+$('#mo').value+dq());
-   $('#t').innerHTML=`<table class="sheet"><tr><th>Employee</th>${g.days.map(d=>`<th>${d}</th>`).join('')}</tr>${g.rows.map(r=>`<tr><td>${esc(r.name)}</td>${r.codes.map(c=>`<td class="c-${c}">${c}</td>`).join('')}</tr>`).join('')}</table>`};
-  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/grid.csv?month='+$('#mo').value+dq()}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/grid.xlsx?month='+$('#mo').value+dq()}; load();
+   $('#t').innerHTML=`<table class="sheet"><tr><th>Employee</th>${g.days.map(d=>`<th>${d}</th>`).join('')}<th>Worked</th><th>W.off</th><th>Hol.</th><th>Leave</th><th>Absent</th><th>Paid</th></tr>${g.rows.map(r=>`<tr><td>${esc(r.name)}</td>${r.codes.map(c=>`<td class="c-${c}">${c}</td>`).join('')}${['worked','weekly_offs','holidays','leave','absent','paid_days'].map(k=>`<td><b>${r.totals[k]}</b></td>`).join('')}</tr>`).join('')}</table>`};
+  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/grid.csv?month='+$('#mo').value+dq()}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/grid.xlsx?month='+$('#mo').value+dq()}; $('#mus').onclick=e=>{e.target.href='/api/reports/muster.xlsx?month='+$('#mo').value+dq()}; load();
+ } else if(tab=='timecard'){
+  m.innerHTML=`<div class="bar">${empSel('tce')} <input type="month" id="mo" value="${today().slice(0,7)}"> <a href="#" id="xlsx">Excel</a></div><div id="t"></div>`;
+  const load=async()=>$('#t').innerHTML=tbl([['date','Date'],['weekday','Day'],['day_type','Day type'],['schedule','Schedule'],['in','In',r=>esc(r.in)],['out','Out',r=>esc(r.out)],['hours','Hours'],['late_min','Late',r=>mins(r.late_min)],['early_min','Early out',r=>mins(r.early_min)],['overtime_min','Overtime',r=>mins(r.overtime_min)],['status','Status'],['note','Note']],await j('/api/reports/timecard?employee='+encodeURIComponent($('#tce').value)+'&month='+$('#mo').value));
+  $('#tce').onchange=load; $('#mo').onchange=load; $('#xlsx').onclick=e=>{e.target.href='/api/reports/timecard.xlsx?employee='+encodeURIComponent($('#tce').value)+'&month='+$('#mo').value}; if($('#tce').value)load();
  } else if(tab=='payroll'){
   m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a></div>
    <p class="hint">Pay = monthly salary ÷ days in month × paid days (present, paid leave, holidays and weekly offs; half day = 0.5). No tax, PF/ESI or allowances. Run it after the month ends; set salaries in Employees.</p><div id="t"></div>`;

@@ -113,32 +113,73 @@ def _month_results(month: str, device: str | None):
         yield e, sh, [evaluate(e, sh, d, pm.get((e["device_user_id"], d)), holidays, leaves, today) for d in days]
 
 
+def _summary(e: dict, sh: dict | None, res: list[dict]) -> dict:
+    cnt = lambda st: sum(r["status"] == st for r in res)
+    paid_leave = sum(r["status"] == "Leave" and r["note"] != "Unpaid" for r in res)
+    full = cnt("Present") + cnt("Late")
+    return {
+        "device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
+        "shift": sh["name"] if sh else "",
+        "days_present": full + cnt("Half Day"), "late_days": cnt("Late"), "half_days": cnt("Half Day"),
+        "absent": cnt("Absent"), "leave": cnt("Leave"), "holidays": cnt("Holiday"), "weekly_offs": cnt("Weekly Off"),
+        "total_hours": round(sum(r["hours"] for r in res), 2),
+        "late_minutes": sum(r["late_min"] for r in res), "early_minutes": sum(r["early_min"] for r in res),
+        "overtime_hours": round(sum(r["ot_min"] for r in res) / 60, 2),
+        "paid_days": full + 0.5 * cnt("Half Day") + paid_leave + cnt("Holiday") + cnt("Weekly Off"),
+    }
+
+
 def monthly(month: str, device: str | None = None) -> list[dict]:
     """Per-employee summary for `month` (YYYY-MM)."""
-    out = []
-    for e, sh, res in _month_results(month, device):
-        cnt = lambda st: sum(r["status"] == st for r in res)
-        paid_leave = sum(r["status"] == "Leave" and r["note"] != "Unpaid" for r in res)
-        full = cnt("Present") + cnt("Late")
-        out.append({
-            "device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
-            "shift": sh["name"] if sh else "",
-            "days_present": full + cnt("Half Day"), "late_days": cnt("Late"), "half_days": cnt("Half Day"),
-            "absent": cnt("Absent"), "leave": cnt("Leave"), "holidays": cnt("Holiday"), "weekly_offs": cnt("Weekly Off"),
-            "total_hours": round(sum(r["hours"] for r in res), 2),
-            "late_minutes": sum(r["late_min"] for r in res), "early_minutes": sum(r["early_min"] for r in res),
-            "overtime_hours": round(sum(r["ot_min"] for r in res) / 60, 2),
-            "paid_days": full + 0.5 * cnt("Half Day") + paid_leave + cnt("Holiday") + cnt("Weekly Off"),
-        })
-    return out
+    return [_summary(e, sh, res) for e, sh, res in _month_results(month, device)]
 
 
 def grid(month: str, device: str | None = None) -> dict:
-    """Attendance sheet: one row per employee, one code per day."""
+    """Attendance sheet: one row per employee, one code per day, plus the month's totals."""
     days, _, _ = _month_days(month)
-    rows = [{"device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
-             "codes": [CODES[r["status"]] for r in res]} for e, _, res in _month_results(month, device)]
+    rows = []
+    for e, sh, res in _month_results(month, device):
+        t = _summary(e, sh, res)
+        rows.append({"device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
+                     "codes": [CODES[r["status"]] for r in res],
+                     "totals": {"worked": t["days_present"], "weekly_offs": t["weekly_offs"], "holidays": t["holidays"],
+                                "leave": t["leave"], "absent": t["absent"], "paid_days": t["paid_days"]}})
     return {"days": [int(d[8:]) for d in days], "rows": rows}
+
+
+def muster(month: str, device: str | None = None) -> list[dict]:
+    """Muster-roll style register: one row per employee, a code per day, then the statutory totals."""
+    g = grid(month, device)
+    out = []
+    for i, r in enumerate(g["rows"], 1):
+        row = {"Sr": i, "Code": r["device_user_id"], "Name": r["name"], "Department": r["department"]}
+        row.update({f"{d:02d}": c for d, c in zip(g["days"], r["codes"])})
+        t = r["totals"]
+        row.update({"Worked Days": t["worked"], "W.Days Off": t["weekly_offs"], "Holidays": t["holidays"],
+                    "Leave": t["leave"], "Absent": t["absent"], "Total Salary Days": t["paid_days"]})
+        out.append(row)
+    return out
+
+
+def timecard(month: str, employee_id: str, device: str | None = None) -> list[dict]:
+    """One employee's day-by-day card for the month."""
+    shifts, emps, holidays, leaves = _load()
+    e = next((x for x in emps if x["device_user_id"] == employee_id), None)
+    if not e:
+        return []
+    sh, (days, d1, d2) = shifts.get(e["shift_id"]), _month_days(month)
+    pm, today = _punch_map(d1, d2, device), now_local().date().isoformat()
+    offs = [o.strip().upper() for o in (sh["weekly_off"] if sh else config.WEEKLY_OFF).split(",") if o.strip()]
+    rows = []
+    for d in days:
+        r = evaluate(e, sh, d, pm.get((employee_id, d)), holidays, leaves, today)
+        wd = WEEKDAYS[Date.fromisoformat(d).weekday()]
+        rows.append({"date": d, "weekday": wd.title(),
+                     "day_type": "HOLIDAY" if d in holidays else "WEEKLY OFF" if wd in offs else "WORKDAY",
+                     "schedule": f"{sh['start']}-{sh['end']}" if sh else "flexible",
+                     "in": r["first_in"], "out": r["last_out"], "hours": r["hours"], "late_min": r["late_min"],
+                     "early_min": r["early_min"], "overtime_min": r["ot_min"], "status": r["status"], "note": r["note"]})
+    return rows
 
 
 def payroll(month: str, device: str | None = None) -> list[dict]:

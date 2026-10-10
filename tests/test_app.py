@@ -296,3 +296,24 @@ def test_excel_exports_and_formula_injection_guard():
             assert len(rows) >= 2
             assert not any(isinstance(v, str) and v[:1] in "=+@" for row in rows for v in row)
         assert "'=HYPERLINK" in c.get("/api/reports/daily.csv?day=2025-06-02").text
+
+
+def test_muster_timecard_and_grid_totals():
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "Muster 10-19", "start": "10:00", "end": "19:00"})
+        sid = [x for x in c.get("/api/shifts").json() if x["name"] == "Muster 10-19"][0]["id"]
+        c.post("/api/employees", json={"device_user_id": "M1", "name": "Mia", "shift_id": sid, "department": "Ops"})
+        c.post("/api/punches", json={"device_user_id": "M1", "ts": "2025-08-04 10:30:00"})   # Mon, 30 min late
+        c.post("/api/punches", json={"device_user_id": "M1", "ts": "2025-08-04 19:40:00"})
+        row = [r for r in c.get("/api/reports/muster?month=2025-08").json() if r["Code"] == "M1"][0]
+        assert row["04"] == "L" and row["03"] == "WO" and row["05"] == "A" and row["Worked Days"] == 1   # 3 Aug 2025 = Sunday
+        assert row["W.Days Off"] == 5 and row["Total Salary Days"] == 1 + 5   # Aug 2025 has 5 Sundays
+        tc = c.get("/api/reports/timecard?employee=M1&month=2025-08").json()
+        assert len(tc) == 31 and tc[3]["in"] == "10:30:00" and tc[3]["late_min"] == 30 and tc[3]["overtime_min"] == 40
+        assert tc[3]["schedule"] == "10:00-19:00" and tc[3]["day_type"] == "WORKDAY"
+        assert (tc[2]["weekday"], tc[2]["day_type"], tc[2]["status"]) == ("Sun", "WEEKLY OFF", "Weekly Off")
+        assert tc[4]["day_type"] == "WORKDAY" and tc[4]["status"] == "Absent"
+        g = [r for r in c.get("/api/reports/grid?month=2025-08").json()["rows"] if r["device_user_id"] == "M1"][0]
+        assert g["totals"]["worked"] == 1
+        assert c.get("/api/reports/muster.xlsx?month=2025-08").status_code == 200
+        assert c.get("/api/reports/timecard.xlsx?employee=0M1&month=2025-08").status_code == 200

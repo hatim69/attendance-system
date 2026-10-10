@@ -407,7 +407,7 @@ def _xlsx(rows: list[dict], filename: str, title: str = "Report") -> Response:
 
 def _grid_rows(g: dict) -> list[dict]:
     return [{"ID": r["device_user_id"], "Name": r["name"], "Department": r["department"],
-             **{str(d): c for d, c in zip(g["days"], r["codes"])}} for r in g["rows"]]
+             **{str(d): c for d, c in zip(g["days"], r["codes"])}, **{k: v for k, v in r["totals"].items()}} for r in g["rows"]]
 
 
 def _day(day): return day or now_local().date().isoformat()
@@ -462,6 +462,31 @@ def report_grid_xlsx(month: str | None = None, device: str | None = None):
 @app.get("/api/reports/payroll.xlsx", dependencies=admin)
 def report_payroll_xlsx(month: str | None = None, device: str | None = None):
     return _xlsx(reports.payroll(_month(month), device), "payroll.xlsx", "Payroll")
+
+
+@app.get("/api/reports/muster", dependencies=admin)
+def report_muster(month: str | None = None, device: str | None = None):
+    return reports.muster(_month(month), device)
+
+
+@app.get("/api/reports/muster.csv", dependencies=admin)
+def report_muster_csv(month: str | None = None, device: str | None = None):
+    return _csv(reports.muster(_month(month), device), "muster-roll.csv")
+
+
+@app.get("/api/reports/muster.xlsx", dependencies=admin)
+def report_muster_xlsx(month: str | None = None, device: str | None = None):
+    return _xlsx(reports.muster(_month(month), device), "muster-roll.xlsx", "Muster Roll")
+
+
+@app.get("/api/reports/timecard", dependencies=admin)
+def report_timecard(employee: str, month: str | None = None):
+    return reports.timecard(_month(month), db.canon_id(employee))
+
+
+@app.get("/api/reports/timecard.xlsx", dependencies=admin)
+def report_timecard_xlsx(employee: str, month: str | None = None):
+    return _xlsx(reports.timecard(_month(month), db.canon_id(employee)), "time-card.xlsx", "Time Card")
 
 
 @app.get("/api/reports/payroll", dependencies=admin)

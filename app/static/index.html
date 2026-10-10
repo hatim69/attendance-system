@@ -32,7 +32,7 @@
 </style></head><body>
 <header><b style="margin-right:8px">Attendance</b>
  <a data-t="live" class="on">Dashboard</a><a data-t="punches">Punches</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="sheet">Sheet</a><a data-t="timecard">Time Card</a><a data-t="payroll">Payroll</a>
- <a data-t="emp">Employees</a><a data-t="shifts">Shifts</a><a data-t="holidays">Holidays</a><a data-t="leave">Leave</a><a data-t="devices">Devices</a><a data-t="sites">Sites</a>
+ <a data-t="emp">Employees</a><a data-t="shifts">Shifts</a><a data-t="holidays">Holidays</a><a data-t="leave">Leave</a><a data-t="devices">Devices</a><a data-t="import">Import</a><a data-t="sites">Sites</a>
  <span id="conn" style="margin-left:auto;font-size:12px">●</span></header>
 <main id="m"></main><div id="big" onclick="this.style.display='none'"><img></div>
 <script>
@@ -127,6 +127,17 @@ async function render(){
    <div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <span class="hint">Unpaid leave is not paid in Payroll; all other types are.</span></div><div id="t"></div>`;
   const load=async()=>{const l=await j('/api/leaves?month='+$('#mo').value);listCache=l;$('#t').innerHTML=tbl([['name','Employee'],['start_date','From'],['end_date','To'],['type','Type'],['note','Note'],['x','',r=>`<button onclick="delLeave(${listCache.indexOf(r)})">Delete</button>`]],l)};
   $('#mo').onchange=load; $('#s').onclick=safe(async()=>{await post('/api/leaves',{device_user_id:$('#le').value,start_date:$('#lf').value,end_date:$('#lt').value,type:$('#ly').value,note:$('#ln').value});load()}); load();
+ } else if(tab=='import'){
+  m.innerHTML=`<p class="hint">Load data exported from another system (Excel .xlsx or .csv). Column names are matched automatically (for example "Emp Code", "Card No" and "ID" all work). Recommended order: <b>Shifts → Employees → Holidays → Leave → Punches</b>. Preview first: nothing is saved until you untick "Preview only".</p>
+   <div class="bar"><select id="ik"><option value="shifts">Shifts</option><option value="employees">Employees</option><option value="holidays">Holidays</option><option value="leaves">Leave</option><option value="punches">Punches (attendance history)</option></select>
+   <input type="file" id="if" accept=".csv,.xlsx,.txt"> <label><input type="checkbox" id="idry" checked> Preview only</label> <button id="ib">Run</button> <a href="#" id="itpl">Download template</a></div><div id="t"></div>`;
+  $('#itpl').onclick=e=>{e.target.href='/api/import/'+$('#ik').value+'/template.csv'};
+  $('#ib').onclick=safe(async()=>{const f=$('#if').files[0]; if(!f){alert('Choose a file first');return}
+   const dry=$('#idry').checked; if(!dry&&!confirm('Import for real? This writes to the database.'))return;
+   const fd=new FormData(); fd.append('file',f); $('#ib').disabled=true;
+   try{const r=await j(`/api/import/${$('#ik').value}?dry_run=${dry}`,{method:'POST',body:fd});
+    $('#t').innerHTML=`<div class="toast">${dry?'<b>Preview (nothing saved):</b> ':'<b>Imported:</b> '}${r.rows} rows read · ${r.created} new · ${r.updated} updated · ${r.skipped} skipped${r.errors.length?' · '+r.errors.length+' problems':''}</div>`+(r.errors.length?tbl([['row','Row in file'],['message','Problem']],r.errors):'')+(dry&&!r.errors.length?'<p class="hint">Looks good. Untick "Preview only" and press Run to import.</p>':'');
+   }finally{$('#ib').disabled=false}});
  } else if(tab=='devices'){
   m.innerHTML=`<p class="hint">Devices appear here automatically the first time they contact the server. Online = heard from in the last 90 seconds.</p><div id="t"></div>`;
   listCache=devs;

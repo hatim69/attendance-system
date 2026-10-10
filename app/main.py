@@ -9,7 +9,7 @@ from datetime import date, datetime
 import os
 import re
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from . import adms, app_api, auth, config, db, fkweb, hub, reports, zk_poller
+from . import adms, app_api, auth, config, db, fkweb, hub, importer, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 security = HTTPBasic(auto_error=False)
@@ -304,6 +304,31 @@ def delete_leave(leave_id: int):
     c.execute("DELETE FROM leaves WHERE id=?", (leave_id,))
     c.commit()
     return {"ok": True}
+
+
+MAX_IMPORT_BYTES = 15 * 1024 * 1024
+
+
+@app.post("/api/import/{kind}", dependencies=admin)
+async def import_file(kind: str, file: UploadFile = File(...), dry_run: bool = True):
+    data = await file.read(MAX_IMPORT_BYTES + 1)
+    if len(data) > MAX_IMPORT_BYTES:
+        raise HTTPException(413, "File too large (max 15 MB)")
+    try:
+        return importer.run(kind, file.filename or "", data, dry_run)
+    except importer.ImportError_ as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # corrupt xlsx etc.: report, never a stack trace
+        logging.exception("import failed")
+        raise HTTPException(400, f"Could not read the file: {type(e).__name__}")
+
+
+@app.get("/api/import/{kind}/template.csv", dependencies=admin)
+def import_template(kind: str):
+    if kind not in importer.TEMPLATES:
+        raise HTTPException(404)
+    return PlainTextResponse(importer.template_csv(kind), media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename={kind}-template.csv"})
 
 
 @app.get("/api/sites", dependencies=admin)

@@ -317,3 +317,63 @@ def test_muster_timecard_and_grid_totals():
         assert g["totals"]["worked"] == 1
         assert c.get("/api/reports/muster.xlsx?month=2025-08").status_code == 200
         assert c.get("/api/reports/timecard.xlsx?employee=0M1&month=2025-08").status_code == 200
+
+
+def _csv_bytes(rows):
+    import csv as _csv, io as _io
+    b = _io.StringIO()
+    _csv.writer(b).writerows(rows)
+    return b.getvalue().encode()
+
+
+def test_importers():
+    import io as _io
+    from openpyxl import Workbook
+    with TestClient(app) as c:
+        up = lambda kind, name, data, dry: c.post(f"/api/import/{kind}?dry_run={'true' if dry else 'false'}", files={"file": (name, data)})
+        # shifts (vendor-style headers)
+        sh = _csv_bytes([["Shift Name", "Shift Start", "Shift End", "Grace Min", "Weekly Off"],
+                         ["Imp 10-19", "10:00", "19:00", "10", "SUN"], ["Imp Bad", "19:00", "10:00", ""], ["Imp PM", "2:00 PM", "10:00 PM", "", "SAT,SUN"]])
+        r = up("shifts", "s.csv", sh, True).json()
+        assert (r["created"], r["skipped"]) == (2, 1) and r["errors"][0]["row"] == 3 and "after start" in r["errors"][0]["message"]
+        assert not [x for x in c.get("/api/shifts").json() if x["name"].startswith("Imp")]          # dry run wrote nothing
+        assert up("shifts", "s.csv", sh, False).json()["created"] == 2
+        assert {x["name"]: x["start"] for x in c.get("/api/shifts").json() if x["name"].startswith("Imp")} == {"Imp 10-19": "10:00", "Imp PM": "14:00"}
+        # employees via .xlsx, zero-padded ids, unknown shift flagged, existing employee updated without losing its PIN
+        c.post("/api/employees", json={"device_user_id": "9001", "name": "Old Name"})
+        c.post("/api/employees/9001/pin", json={"pin": "1357"})
+        wb = Workbook(); ws = wb.active
+        ws.append(["Emp Code", "Employee Name", "Dept Name", "Shift Name", "Date of Joining"])
+        ws.append(["00009001", "New Name", "Ops", "Imp 10-19", "01/04/2025"])
+        ws.append(["00009002", "Second", "HR", "No Such Shift", ""])
+        ws.append(["", "No Id", "HR", "", ""])
+        buf = _io.BytesIO(); wb.save(buf)
+        r = up("employees", "e.xlsx", buf.getvalue(), False).json()
+        assert (r["created"], r["updated"], r["skipped"]) == (0, 1, 2) and {e["row"] for e in r["errors"]} == {3, 4}
+        e = [x for x in c.get("/api/employees").json() if x["device_user_id"] == "9001"][0]
+        assert (e["name"], e["department"], e["shift"], e["joined"], e["pin_hash"]) == ("New Name", "Ops", "Imp 10-19", "2025-04-01", 1)
+        assert c.post("/api/app/login", json={"employee_id": "9001", "pin": "1357"}).status_code == 200
+        # holidays + leaves (CL -> Casual) + duplicate leave skipped
+        assert up("holidays", "h.csv", _csv_bytes([["Date", "Name"], ["15/08/2025", "Independence Day"]]), False).json()["created"] == 1
+        lv = _csv_bytes([["Emp Code", "From Date", "To Date", "Leave Name", "Reason"], ["9001", "2025-08-11", "2025-08-12", "CL", "trip"], ["777777", "2025-08-11", "2025-08-11", "CL", ""]])
+        r = up("leaves", "l.csv", lv, False).json()
+        assert (r["created"], r["skipped"]) == (1, 1) and "no employee" in r["errors"][0]["message"]
+        assert up("leaves", "l.csv", lv, False).json()["created"] == 0
+        assert c.get("/api/leaves?month=2025-08").json()[0]["type"] == "Casual"
+        # punches: datetime column and "date + several times in one cell"; replays are no-ops
+        pc = _csv_bytes([["Card No", "Attendance DateTime"], ["00009001", "2025-08-18 09:58:20"], ["9001", "2025-08-18 18:30"]])
+        assert up("punches", "p.csv", pc, False).json()["created"] == 2
+        assert up("punches", "p.csv", pc, False).json()["created"] == 0
+        sw = _csv_bytes([["Emp Code", "Date", "Swipe Record"], ["9001", "19/08/2025", "09:58 13:00 18:30"]])
+        r = up("punches", "p2.csv", sw, True).json()
+        assert r["created"] == 3
+        assert not [p for p in c.get("/api/punches?day=2025-08-19").json() if p["device_user_id"] == "9001"]     # dry run
+        assert up("punches", "p2.csv", sw, False).json()["created"] == 3
+        assert [p["method"] for p in c.get("/api/punches?day=2025-08-18").json() if p["device_user_id"] == "9001"] == ["import", "import"]
+        # guards
+        assert up("employees", "x.pdf", b"x", True).status_code == 400
+        assert up("employees", "x.csv", b"id,name\n", True).status_code == 400
+        assert up("nonsense", "x.csv", b"id,name\n1,a", True).status_code == 400
+        assert up("employees", "x.xlsx", b"not really excel", True).status_code == 400
+        t = c.get("/api/import/employees/template.csv")
+        assert t.status_code == 200 and t.text.startswith("id,name,department") and c.get("/api/import/zzz/template.csv").status_code == 404

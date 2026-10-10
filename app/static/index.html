@@ -3,19 +3,21 @@
 <title>Attendance Admin</title>
 <style>
  body{font-family:system-ui,sans-serif;margin:0;background:#f4f5f7;color:#1c1e21}
- header{background:#1f2937;color:#fff;padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
- header a{color:#cbd5e1;cursor:pointer;padding:4px 10px;border-radius:4px}
+ header{background:#1f2937;color:#fff;padding:10px 16px;display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+ header a{color:#cbd5e1;cursor:pointer;padding:5px 10px;border-radius:4px;font-size:14px}
  header a.on{background:#374151;color:#fff}
- main{padding:20px;max-width:1150px;margin:auto;overflow-x:auto}
- table{width:100%;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden}
- th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #eee;vertical-align:middle}
+ main{padding:20px;max-width:1250px;margin:auto;overflow-x:auto}
+ table{width:100%;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden;font-size:14px}
+ th,td{padding:7px 10px;text-align:left;border-bottom:1px solid #eee;vertical-align:middle;white-space:nowrap}
  th{background:#f9fafb;font-size:12px;text-transform:uppercase;color:#6b7280}
- .Present{color:#15803d}.Late{color:#b45309}.Absent{color:#b91c1c}.rejected{text-decoration:line-through;color:#9ca3af}
+ .Present{color:#15803d}.Late{color:#b45309}.HalfDay{color:#c2410c}.Absent{color:#b91c1c;font-weight:600}.Leave{color:#7c3aed}.Holiday,.WeekOff{color:#6b7280}
+ .rejected{text-decoration:line-through;color:#9ca3af}
  .tag{font-size:12px;padding:2px 8px;border-radius:10px;background:#e5e7eb}.tag.warn{background:#fef3c7;color:#92400e}.tag.bad{background:#fee2e2;color:#991b1b}.tag.good{background:#dcfce7;color:#166534}
  .toast{background:#dcfce7;border-left:4px solid #16a34a;padding:10px 14px;margin:6px 0;border-radius:4px}
- input,button{padding:6px 10px;margin:2px;font-size:14px} button{cursor:pointer}
+ input,select,button{padding:6px 10px;margin:2px;font-size:14px} button{cursor:pointer}
  img.th{width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:pointer}
- .bar{margin-bottom:12px}
+ .bar{margin-bottom:12px} .hint{color:#6b7280;font-size:13px;margin:6px 0}
+ #big{position:fixed;inset:0;background:#000c;display:none;align-items:center;justify-content:center} #big img{max-width:90%;max-height:90%;border-radius:8px}
  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:16px}
  .stat{background:#fff;border-radius:10px;padding:16px;box-shadow:0 1px 3px #0001;cursor:pointer;border-left:5px solid var(--c)}
  .stat b{font-size:30px;display:block}.stat span{color:#6b7280;font-size:13px}
@@ -24,40 +26,46 @@
  .bars{display:flex;align-items:flex-end;gap:10px;height:170px;padding:14px 14px 0;overflow-x:auto}.bars div{flex:0 1 90px;min-width:34px;text-align:center;font-size:11px}
  .bars i{display:block;background:#22c55e;border-radius:3px 3px 0 0;margin:0 auto;width:60%}.bars em{display:block;font-style:normal;height:16px}.bars u{text-decoration:none;display:block;height:30px;overflow:hidden}
  .gp{display:flex;gap:10px;padding:10px 14px;border-bottom:1px solid #f3f4f6;align-items:center}.gp img{width:44px;height:44px;border-radius:6px;object-fit:cover}
- .dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:#16a34a}.dot.off{background:#dc2626} .hint{color:#6b7280;font-size:13px;margin:6px 0}
- #big{position:fixed;inset:0;background:#000c;display:none;align-items:center;justify-content:center} #big img{max-width:90%;max-height:90%;border-radius:8px}
+ .dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:#16a34a}.dot.off{background:#dc2626}
+ table.sheet td,table.sheet th{padding:4px 5px;text-align:center;font-size:12px}table.sheet td:first-child,table.sheet th:first-child{text-align:left;position:sticky;left:0;background:#fff}
+ .c-P{color:#15803d}.c-L{color:#b45309;font-weight:600}.c-HD{color:#c2410c;font-weight:600}.c-A{color:#b91c1c;font-weight:700}.c-LV{color:#7c3aed}.c-H,.c-WO{color:#9ca3af}
 </style></head><body>
-<header><b>Attendance</b>
- <a data-t="live" class="on">Dashboard</a><a data-t="punches">Punches</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="devices">Devices</a><a data-t="emp">Employees</a><a data-t="sites">Sites</a>
+<header><b style="margin-right:8px">Attendance</b>
+ <a data-t="live" class="on">Dashboard</a><a data-t="punches">Punches</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="sheet">Sheet</a><a data-t="payroll">Payroll</a>
+ <a data-t="emp">Employees</a><a data-t="shifts">Shifts</a><a data-t="holidays">Holidays</a><a data-t="leave">Leave</a><a data-t="devices">Devices</a><a data-t="sites">Sites</a>
  <span id="conn" style="margin-left:auto;font-size:12px">●</span></header>
 <main id="m"></main><div id="big" onclick="this.style.display='none'"><img></div>
 <script>
 const $=s=>document.querySelector(s), m=$('#m'); let tab='live';
-const enc=v=>encodeURIComponent(v??'').replace(/'/g,'%27');
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const today=()=>new Date().toLocaleDateString('en-CA');
-const j=async(u,o)=>{const r=await fetch(u,o); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||r.status); return d};
+const j=async(u,o)=>{const r=await fetch(u,o); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(typeof d.detail=='string'?d.detail:r.status); return d};
 const post=(u,b)=>j(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+const cls=v=>String(v||'').replace(/ /g,'');
 // cols: [key,label,optional render fn returning trusted HTML]
-const tbl=(cols,rows)=>`<table><tr>${cols.map(c=>`<th>${c[1]}</th>`).join('')}</tr>${rows.map(r=>`<tr>${cols.map(c=>`<td class="${c[0]=='status'?esc(r.status):''}">${c[2]?c[2](r):esc(r[c[0]])}</td>`).join('')}</tr>`).join('')}</table>`;
-const punchCols=[
- ['ts','Time',r=>`<span class="${r.flag=='rejected'?'rejected':''}">${esc(r.ts.slice(11))}</span>`],
- ['name','Name'],['device_user_id','ID'],
- ['method','Via',r=>`<span class="tag">${r.method=='app'?'App':esc(devName(r.source)||r.method)}</span>`],
- ['site','Place',r=>r.method!='app'?'':`${esc(r.site||'—')}${r.distance_m!=null?' · '+Math.round(r.distance_m)+' m':''} ${r.lat!=null?`<a target="_blank" href="https://maps.google.com/?q=${r.lat},${r.lng}">map</a>`:''}`],
- ['selfie','Selfie',r=>r.selfie?`<img class="th" src="/api/selfies/${esc(r.selfie)}" onclick="big(this.src)">`:''],
- ['flag','Status',r=>r.flag=='outside_geofence'?'<span class="tag warn">outside area</span>':r.flag=='rejected'?'<span class="tag bad">rejected</span>':r.flag=='approved'?'<span class="tag good">approved</span>':''],
- ['id','',r=>r.method=='app'?(r.flag=='rejected'?`<button onclick="review(${r.id},'')">Restore</button>`:`<button onclick="review(${r.id},'rejected')">Reject</button>${r.flag=='outside_geofence'?`<button onclick="review(${r.id},'approved')">Approve</button>`:''}`):'']];
-let devs=[];
+const tbl=(cols,rows,extra='')=>`<table ${extra}><tr>${cols.map(c=>`<th>${c[1]}</th>`).join('')}</tr>${rows.map(r=>`<tr>${cols.map(c=>`<td class="${c[0]=='status'?cls(r.status):''}">${c[2]?c[2](r):esc(r[c[0]])}</td>`).join('')}</tr>`).join('')}</table>`;
+let devs=[], emps=[], shifts=[], listCache=[];
 const devName=id=>{const d=devs.find(x=>x.dev_id==id);return d?(d.name||d.dev_id):id};
 const devSel=()=>`<select id="dv"><option value="">All devices</option>${devs.map(d=>`<option value="${esc(d.dev_id)}">${esc(d.name||d.dev_id)}${d.location?' / '+esc(d.location):''}</option>`).join('')}<option value="app">Mobile app</option></select>`;
 const dq=()=>{const v=$('#dv')?$('#dv').value:'';return v?'&device='+encodeURIComponent(v):''};
+const empSel=(id)=>`<select id="${id}">${emps.filter(e=>e.active).map(e=>`<option value="${esc(e.device_user_id)}">${esc(e.name)} (${esc(e.device_user_id)})</option>`).join('')}</select>`;
+const shiftSel=(id)=>`<select id="${id}"><option value="">No shift (flexible)</option>${shifts.map(s=>`<option value="${s.id}">${esc(s.name)} ${s.start}-${s.end}</option>`).join('')}</select>`;
+const punchCols=[
+ ['ts','Time',r=>`<span class="${r.flag=='rejected'?'rejected':''}">${esc(r.ts.slice(11))}</span>`],
+ ['name','Name'],['device_user_id','ID'],
+ ['method','Via',r=>`<span class="tag">${r.method=='app'?'App':r.method=='manual'?'Manual':esc(devName(r.source))}</span>`],
+ ['site','Place',r=>r.method!='app'?'':`${esc(r.site||'—')}${r.distance_m!=null?' · '+Math.round(r.distance_m)+' m':''} ${r.lat!=null?`<a target="_blank" href="https://maps.google.com/?q=${r.lat},${r.lng}">map</a>`:''}`],
+ ['selfie','Selfie',r=>r.selfie?`<img class="th" src="/api/selfies/${esc(r.selfie)}" onclick="big(this.src)">`:''],
+ ['flag','Status',r=>r.flag=='outside_geofence'?'<span class="tag warn">outside area</span>':r.flag=='rejected'?'<span class="tag bad">rejected</span>':r.flag=='approved'?'<span class="tag good">approved</span>':''],
+ ['id','',r=>r.method!='device'?(r.flag=='rejected'?`<button onclick="review(${r.id},'')">Restore</button>`:`<button onclick="review(${r.id},'rejected')">Reject</button>${r.flag=='outside_geofence'?`<button onclick="review(${r.id},'approved')">Approve</button>`:''}`):'']];
+const mins=n=>n?`${Math.floor(n/60)}h ${n%60}m`:'';
 function go(t){document.querySelector(`header a[data-t=${t}]`).click()}
 function big(src){const b=$('#big');b.querySelector('img').src=src;b.style.display='flex'}
 async function review(id,flag){await post(`/api/punches/${id}/review`,{flag});render()}
+const safe=fn=>async(...a)=>{try{await fn(...a)}catch(e){alert(e.message)}};
 async function render(){
  try{
- devs=await j('/api/devices');
+ [devs,emps,shifts]=await Promise.all([j('/api/devices'),j('/api/employees'),j('/api/shifts')]);
  if(tab=='live'){
   const d=await j('/api/dashboard'); const mx=Math.max(1,...d.departments.map(x=>x.present));
   m.innerHTML=`<div id="feed"></div>
@@ -71,40 +79,76 @@ async function render(){
    <div class="panel" style="--c:#f59e0b"><h4>Machine connection status</h4>${tbl([['n','S.N.',r=>r._i],['name','Machine',r=>esc(r.name||r.dev_id)],['location','Location'],['total_logs','Logs received'],['last_punch','Last punching time',r=>esc(r.last_punch||'—')],['online','Connected',r=>`<span class="dot ${r.online?'':'off'}"></span>`]],d.devices.map((x,i)=>({...x,_i:i+1})))}</div></div>
    <div class="panel" style="--c:#0891b2"><h4>GPS punches (today)</h4>${d.gps_punches.map(g=>`<div class="gp">${g.selfie?`<img src="/api/selfies/${esc(g.selfie)}" onclick="big(this.src)">`:''}<div><b>${esc(g.device_user_id)}: ${esc(g.name)}</b><div class="hint">${esc(g.ts.slice(11,16))} · ${esc(g.site||'outside sites')}${g.flag=='outside_geofence'?' ⚠':''} · <a target="_blank" href="https://maps.google.com/?q=${g.lat},${g.lng}">map</a></div></div></div>`).join('')||'<p class="hint" style="padding:14px">No app punches today</p>'}</div></div>`;
  } else if(tab=='punches'){
-  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()}</div><div id="t"></div>`;
+  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()}</div>
+   <div class="bar"><b>Manual punch:</b> ${empSel('mp_e')} <input type="datetime-local" id="mp_t" value="${today()}T09:00"><button id="mp_b">Add</button> <span class="hint">for corrections, e.g. a forgotten scan</span></div><div id="t"></div>`;
   const load=async()=>$('#t').innerHTML=tbl(punchCols,await j('/api/punches?day='+$('#d').value+dq()));
-  $('#d').onchange=load; $('#dv').onchange=load; load();
+  $('#d').onchange=load; $('#dv').onchange=load;
+  $('#mp_b').onclick=safe(async()=>{const r=await post('/api/punches',{device_user_id:$('#mp_e').value,ts:$('#mp_t').value.replace('T',' ')+':00'});if(!r.stored)alert('Not saved: a punch within a minute of that time already exists');load()}); load();
  } else if(tab=='daily'){
-  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()} <a href="#" id="csv">Download CSV</a></div><div id="t"></div>`;
-  const load=async()=>$('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['first_in','In'],['last_out','Out'],['hours','Hours'],['status','Status']],await j('/api/reports/daily?day='+$('#d').value+dq()));
-  $('#d').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/daily.csv?day='+$('#d').value+dq()}; load();
+  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()} <select id="f"><option value="">All</option><option>Present</option><option>Late</option><option>Half Day</option><option>Absent</option><option>Leave</option></select> <a href="#" id="csv">Download CSV</a></div><div id="t"></div>`;
+  const load=async()=>{let r=await j('/api/reports/daily?day='+$('#d').value+dq()); if($('#f').value)r=r.filter(x=>x.status==$('#f').value);
+   $('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['shift','Shift'],['first_in','In'],['last_out','Out'],['hours','Hours'],['late_min','Late',r=>mins(r.late_min)],['early_min','Early out',r=>mins(r.early_min)],['ot_min','Overtime',r=>mins(r.ot_min)],['status','Status'],['note','Note']],r)};
+  $('#d').onchange=load; $('#dv').onchange=load; $('#f').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/daily.csv?day='+$('#d').value+dq()}; load();
  } else if(tab=='monthly'){
   m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> ${devSel()} <a href="#" id="csv">Download CSV</a></div><div id="t"></div>`;
-  const load=async()=>$('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['days_present','Days present'],['total_hours','Total hours']],await j('/api/reports/monthly?month='+$('#mo').value+dq()));
+  const load=async()=>$('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['shift','Shift'],['days_present','Present'],['late_days','Late days'],['half_days','Half'],['absent','Absent'],['leave','Leave'],['holidays','Hol.'],['weekly_offs','W.off'],['total_hours','Hours'],['overtime_hours','OT hrs'],['late_minutes','Late min'],['paid_days','Paid days']],await j('/api/reports/monthly?month='+$('#mo').value+dq()));
   $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/monthly.csv?month='+$('#mo').value+dq()}; load();
+ } else if(tab=='sheet'){
+  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> ${devSel()} <a href="#" id="csv">Download CSV</a> <span class="hint">P present · L late · HD half day · A absent · LV leave · H holiday · WO weekly off</span></div><div id="t"></div>`;
+  const load=async()=>{const g=await j('/api/reports/grid?month='+$('#mo').value+dq());
+   $('#t').innerHTML=`<table class="sheet"><tr><th>Employee</th>${g.days.map(d=>`<th>${d}</th>`).join('')}</tr>${g.rows.map(r=>`<tr><td>${esc(r.name)}</td>${r.codes.map(c=>`<td class="c-${c}">${c}</td>`).join('')}</tr>`).join('')}</table>`};
+  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/grid.csv?month='+$('#mo').value+dq()}; load();
+ } else if(tab=='payroll'){
+  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <a href="#" id="csv">Download CSV</a></div>
+   <p class="hint">Pay = monthly salary ÷ days in month × paid days (present, paid leave, holidays and weekly offs; half day = 0.5). No tax, PF/ESI or allowances. Run it after the month ends; set salaries in Employees.</p><div id="t"></div>`;
+  const load=async()=>{const r=await j('/api/reports/payroll?month='+$('#mo').value); const tot=r.reduce((a,x)=>a+x.net_pay,0);
+   $('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['monthly_salary','Monthly salary'],['days_in_month','Days'],['paid_days','Paid days'],['unpaid_days','Unpaid days'],['net_pay','Net pay']],r)+`<p><b>Total net pay: ${tot.toFixed(2)}</b>${r.length&&!r[0].month_complete?' <span class="tag warn">month not finished: days still to come are not counted</span>':''}</p>`};
+  $('#mo').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/payroll.csv?month='+$('#mo').value}; load();
+ } else if(tab=='shifts'){
+  m.innerHTML=`<div class="bar"><input type="hidden" id="sid"><input id="sn" placeholder="Shift name"> start <input type="time" id="ss" value="09:00"> end <input type="time" id="se" value="18:00"> grace min <input id="sg" size=3 value="10"> half-day below (hrs) <input id="sh" size=3 value="4"> overtime after (min) <input id="so" size=3 value="30"> weekly off <input id="sw" size=10 value="SUN" placeholder="SUN or SAT,SUN"> <button id="s">Save shift</button></div>
+   <p class="hint">Create a shift for each timing you use, then assign it to each employee in Employees. Employees without a shift are "flexible": never late, no overtime. Overnight shifts are not supported yet.</p><div id="t"></div>`;
+  listCache=shifts;
+  $('#t').innerHTML=tbl([['name','Name'],['start','Start'],['end','End'],['grace_min','Grace'],['half_day_hours','Half-day hrs'],['ot_after_min','OT after'],['weekly_off','Weekly off'],['employees','Employees'],['x','',r=>`<button onclick="editShift(${listCache.indexOf(r)})">Edit</button><button onclick="delShift(${r.id})">Delete</button>`]],shifts.map(s=>s));
+  $('#s').onclick=safe(async()=>{await post('/api/shifts',{id:$('#sid').value?+$('#sid').value:null,name:$('#sn').value,start:$('#ss').value,end:$('#se').value,grace_min:+$('#sg').value,half_day_hours:+$('#sh').value,ot_after_min:+$('#so').value,weekly_off:$('#sw').value});render()});
+ } else if(tab=='holidays'){
+  m.innerHTML=`<div class="bar"><input type="number" id="y" value="${today().slice(0,4)}" style="width:80px"> <input type="date" id="hd"><input id="hn" placeholder="Holiday name"><button id="s">Add</button></div><div id="t"></div>`;
+  const load=async()=>{const h=await j('/api/holidays?year='+$('#y').value);listCache=h;$('#t').innerHTML=tbl([['date','Date'],['name','Name'],['x','',r=>`<button onclick="delHoliday(${listCache.indexOf(r)})">Delete</button>`]],h)};
+  $('#y').onchange=load; $('#s').onclick=safe(async()=>{await post('/api/holidays',{date:$('#hd').value,name:$('#hn').value});load()}); load();
+ } else if(tab=='leave'){
+  m.innerHTML=`<div class="bar">${empSel('le')} from <input type="date" id="lf" value="${today()}"> to <input type="date" id="lt" value="${today()}"> <select id="ly"><option>Casual</option><option>Sick</option><option>Paid</option><option>Unpaid</option><option>Other</option></select><input id="ln" placeholder="Note"><button id="s">Add leave</button></div>
+   <div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <span class="hint">Unpaid leave is not paid in Payroll; all other types are.</span></div><div id="t"></div>`;
+  const load=async()=>{const l=await j('/api/leaves?month='+$('#mo').value);listCache=l;$('#t').innerHTML=tbl([['name','Employee'],['start_date','From'],['end_date','To'],['type','Type'],['note','Note'],['x','',r=>`<button onclick="delLeave(${listCache.indexOf(r)})">Delete</button>`]],l)};
+  $('#mo').onchange=load; $('#s').onclick=safe(async()=>{await post('/api/leaves',{device_user_id:$('#le').value,start_date:$('#lf').value,end_date:$('#lt').value,type:$('#ly').value,note:$('#ln').value});load()}); load();
  } else if(tab=='devices'){
   m.innerHTML=`<p class="hint">Devices appear here automatically the first time they contact the server. Online = heard from in the last 90 seconds.</p><div id="t"></div>`;
-  $('#t').innerHTML=tbl([['name','Name',r=>esc(r.name||r.dev_id)],['location','Location'],['dev_id','Device ID'],['model','Model',r=>esc(r.model)+(r.firmware?' <span class="hint">'+esc(r.firmware)+'</span>':'')],['online','Status',r=>r.online?'<span class="tag good">Online</span>':'<span class="tag bad">Offline</span>'],['last_seen','Last seen'],['x','',r=>`<button onclick="renameDev('${enc(r.dev_id)}','${enc(r.name)}','${enc(r.location)}')">Edit</button>`]],devs);
+  listCache=devs;
+  $('#t').innerHTML=tbl([['name','Name',r=>esc(r.name||r.dev_id)],['location','Location'],['dev_id','Device ID'],['model','Model',r=>esc(r.model)+(r.firmware?' <span class="hint">'+esc(r.firmware)+'</span>':'')],['online','Status',r=>r.online?'<span class="tag good">Online</span>':'<span class="tag bad">Offline</span>'],['last_seen','Last seen'],['x','',r=>`<button onclick="renameDev(${listCache.indexOf(r)})">Edit</button>`]],devs);
  } else if(tab=='emp'){
-  m.innerHTML=`<div class="bar"><input id="i" placeholder="Employee / device ID"><input id="n" placeholder="Name"><input id="dp" placeholder="Department"><button id="s">Save</button></div>
-   <p class="hint">Use the same ID that is enrolled on the fingerprint device. Set a PIN so the person can use the phone app.</p><div id="t"></div>`;
-  const load=async()=>{$('#t').innerHTML=tbl([['device_user_id','ID'],['name','Name'],['department','Dept'],['active','Active'],
-    ['pin','App PIN',r=>`<button onclick="setPin('${enc(r.device_user_id)}')">${r.pin_hash?'Change':'Set'} PIN</button>`],
-    ['x','',r=>`<button onclick="edit('${enc(r.device_user_id)}','${enc(r.name)}','${enc(r.department)}')">Edit</button>`]],await j('/api/employees'))};
-  $('#s').onclick=async()=>{await post('/api/employees',{device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value});load()}; load();
+  m.innerHTML=`<div class="bar"><input id="i" placeholder="Employee / device ID" size=14><input id="n" placeholder="Name"><input id="dp" placeholder="Department" size=12> ${shiftSel('es')} <input id="sal" placeholder="Monthly salary" size=10 type="number"> joined <input type="date" id="jd"><button id="s">Save</button></div>
+   <p class="hint">Use the same ID that is enrolled on the fingerprint device. Assign each person a shift, and set a joining date for anyone who joined this month (days before it are not counted). Set a PIN so the person can use the phone app.</p><div id="t"></div>`;
+  listCache=emps;
+  $('#t').innerHTML=tbl([['device_user_id','ID'],['name','Name'],['department','Dept'],['shift','Shift'],['salary','Salary'],['joined','Joined'],['active','Active'],
+    ['pin','App PIN',r=>`<button onclick="setPin(${listCache.indexOf(r)})">${r.pin_hash?'Change':'Set'} PIN</button>`],
+    ['x','',r=>`<button onclick="editEmp(${listCache.indexOf(r)})">Edit</button>`]],emps);
+  $('#s').onclick=safe(async()=>{await post('/api/employees',{device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value,shift_id:$('#es').value?+$('#es').value:null,salary:+($('#sal').value||0),joined:$('#jd').value});render()});
  } else {
   m.innerHTML=`<div class="bar"><input id="sn" placeholder="Site name"><input id="la" placeholder="Latitude" size=10><input id="lo" placeholder="Longitude" size=10><input id="ra" placeholder="Radius (m)" value="150" size=6><button id="gps">Use my location</button><button id="s">Add site</button></div>
    <p class="hint">App punches must be within the radius of a site. With no sites, locations are recorded but never blocked. Tip: stand at the office, open this page on your phone and tap "Use my location".</p><div id="t"></div>`;
-  const load=async()=>$('#t').innerHTML=tbl([['name','Name'],['lat','Latitude'],['lng','Longitude'],['radius_m','Radius (m)'],['id','',r=>`<button onclick="delSite(${r.id})">Remove</button>`]],await j('/api/sites'));
+  const load=async()=>{const st=await j('/api/sites');listCache=st;$('#t').innerHTML=tbl([['name','Name'],['lat','Latitude'],['lng','Longitude'],['radius_m','Radius (m)'],['id','',r=>`<button onclick="delSite(${r.id})">Remove</button>`]],st)};
   $('#gps').onclick=()=>navigator.geolocation.getCurrentPosition(p=>{$('#la').value=p.coords.latitude.toFixed(6);$('#lo').value=p.coords.longitude.toFixed(6)},e=>alert('Location unavailable: '+e.message));
-  $('#s').onclick=async()=>{try{await post('/api/sites',{name:$('#sn').value,lat:+$('#la').value,lng:+$('#lo').value,radius_m:+$('#ra').value});load()}catch(e){alert(e.message)}}; load();
+  $('#s').onclick=safe(async()=>{await post('/api/sites',{name:$('#sn').value,lat:+$('#la').value,lng:+$('#lo').value,radius_m:+$('#ra').value});load()}); load();
  }
  }catch(e){m.innerHTML=`<p class="Absent">Error: ${esc(e.message)}</p>`}
 }
-async function renameDev(id,n,l){id=decodeURIComponent(id);const name=prompt('Device name (e.g. Mumbai Office):',decodeURIComponent(n));if(name===null)return;const loc=prompt('Location:',decodeURIComponent(l));if(loc===null)return;try{await post(`/api/devices/${encodeURIComponent(id)}/info`,{name,location:loc});render()}catch(e){alert(e.message)}}
-function edit(i,n,d){tab='emp';document.querySelector('#i').value=decodeURIComponent(i);$('#n').value=decodeURIComponent(n);$('#dp').value=decodeURIComponent(d)}
-async function setPin(id){id=decodeURIComponent(id);const p=prompt('New PIN for '+id+' (4-8 digits):'); if(!p)return; try{await post(`/api/employees/${encodeURIComponent(id)}/pin`,{pin:p});alert('PIN saved');render()}catch(e){alert(e.message)}}
-async function delSite(id){if(confirm('Remove this site?')){await j('/api/sites/'+id,{method:'DELETE'});render()}}
+// row actions use list indexes (never put text in inline handlers)
+function editEmp(i){const e=listCache[i];$('#i').value=e.device_user_id;$('#n').value=e.name;$('#dp').value=e.department;$('#es').value=e.shift_id??'';$('#sal').value=e.salary||'';$('#jd').value=e.joined||''}
+function editShift(i){const s=listCache[i];$('#sid').value=s.id;$('#sn').value=s.name;$('#ss').value=s.start;$('#se').value=s.end;$('#sg').value=s.grace_min;$('#sh').value=s.half_day_hours;$('#so').value=s.ot_after_min;$('#sw').value=s.weekly_off}
+const delShift=safe(async id=>{if(confirm('Delete this shift? Its employees become flexible.')){await j('/api/shifts/'+id,{method:'DELETE'});render()}});
+const delHoliday=safe(async i=>{if(confirm('Delete this holiday?')){await j('/api/holidays/'+listCache[i].date,{method:'DELETE'});render()}});
+const delLeave=safe(async i=>{if(confirm('Delete this leave?')){await j('/api/leaves/'+listCache[i].id,{method:'DELETE'});render()}});
+const delSite=safe(async id=>{if(confirm('Remove this site?')){await j('/api/sites/'+id,{method:'DELETE'});render()}});
+const setPin=safe(async i=>{const e=listCache[i];const p=prompt('New PIN for '+e.name+' (4-8 digits):');if(!p)return;await post(`/api/employees/${encodeURIComponent(e.device_user_id)}/pin`,{pin:p});alert('PIN saved');render()});
+const renameDev=safe(async i=>{const d=listCache[i];const name=prompt('Device name (e.g. Mumbai Office):',d.name);if(name===null)return;const loc=prompt('Location:',d.location);if(loc===null)return;await post(`/api/devices/${encodeURIComponent(d.dev_id)}/info`,{name,location:loc});render()});
 document.querySelectorAll('header a').forEach(a=>a.onclick=()=>{document.querySelectorAll('header a').forEach(x=>x.classList.remove('on'));a.classList.add('on');tab=a.dataset.t;render()});
 function connect(){
  const ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/ws');

@@ -12,8 +12,10 @@ from app.main import app  # noqa: E402
 
 def test_end_to_end():
     with TestClient(app) as c:
-        c.post("/api/employees", json={"device_user_id": "1", "name": "Alice", "department": "Eng"})
-        c.post("/api/employees", json={"device_user_id": "2", "name": "Bob"})
+        c.post("/api/shifts", json={"name": "Day 9-18", "start": "09:00", "end": "18:00"})
+        sid = [x for x in c.get("/api/shifts").json() if x["name"] == "Day 9-18"][0]["id"]
+        c.post("/api/employees", json={"device_user_id": "1", "name": "Alice", "department": "Eng", "shift_id": sid})
+        c.post("/api/employees", json={"device_user_id": "2", "name": "Bob", "shift_id": sid})
         assert c.get("/iclock/cdata?SN=X&options=all").text.startswith("GET OPTION")
         body = "1\t2025-03-03 08:55:00\t0\t1\n1\t2025-03-03 08:55:20\t0\t1\n1\t2025-03-03 17:30:00\t1\t1\n"
         r = c.post("/iclock/cdata?SN=X&table=ATTLOG", content=body)
@@ -156,8 +158,8 @@ def test_devices_registry_and_filter(tmp_path, monkeypatch):
     with TestClient(app) as c:
         port = fkweb.bound_port
         post(port, "receive_cmd", "DEV-A", b'{"fk_name":"M61BH","fk_info":{"firmware":"v3"}}')
-        post(port, "realtime_glog", "DEV-A", b'{"user_id":"A1","io_time":"20270101090000"}')
-        post(port, "realtime_glog", "DEV-B", b'{"user_id":"B1","io_time":"20270101090100"}')
+        post(port, "realtime_glog", "DEV-A", b'{"user_id":"A1","io_time":"20250106090000"}')
+        post(port, "realtime_glog", "DEV-B", b'{"user_id":"B1","io_time":"20250106090100"}')
         devs = {d["dev_id"]: d for d in c.get("/api/devices").json()}
         assert devs["DEV-A"]["model"] == "M61BH" and devs["DEV-A"]["firmware"] == "v3"
         assert devs["DEV-A"]["online"] is True and "DEV-B" in devs
@@ -166,8 +168,8 @@ def test_devices_registry_and_filter(tmp_path, monkeypatch):
         # per-device filtering of punches and reports
         c.post("/api/employees", json={"device_user_id": "A1", "name": "Ann"})
         c.post("/api/employees", json={"device_user_id": "B1", "name": "Bob"})
-        assert [p["device_user_id"] for p in c.get("/api/punches?day=2027-01-01&device=DEV-A").json()] == ["A1"]
-        rows = {r["name"]: r["status"] for r in c.get("/api/reports/daily?day=2027-01-01&device=DEV-B").json()}
+        assert [p["device_user_id"] for p in c.get("/api/punches?day=2025-01-06&device=DEV-A").json()] == ["A1"]
+        rows = {r["name"]: r["status"] for r in c.get("/api/reports/daily?day=2025-01-06&device=DEV-B").json()}
         assert rows["Bob"] != "Absent" and rows["Ann"] == "Absent"
         # stale heartbeat -> offline
         db_conn = __import__("app.db", fromlist=["conn"]).conn()
@@ -176,20 +178,76 @@ def test_devices_registry_and_filter(tmp_path, monkeypatch):
         assert {d["dev_id"]: d["online"] for d in c.get("/api/devices").json()}["DEV-B"] is False
         # allow-list: unknown devices are neither registered nor allowed to punch
         monkeypatch.setattr(config, "FKWEB_DEVICES", ["DEV-A"])
-        post(port, "realtime_glog", "DEV-EVIL", b'{"user_id":"E1","io_time":"20270101100000"}')
+        post(port, "realtime_glog", "DEV-EVIL", b'{"user_id":"E1","io_time":"20250106100000"}')
         assert "DEV-EVIL" not in {d["dev_id"] for d in c.get("/api/devices").json()}
-        assert not [p for p in c.get("/api/punches?day=2027-01-01").json() if p["device_user_id"] == "E1"]
+        assert not [p for p in c.get("/api/punches?day=2025-01-06").json() if p["device_user_id"] == "E1"]
 
 
 def test_dashboard_summary(monkeypatch):
     with TestClient(app) as c:
-        c.post("/api/employees", json={"device_user_id": "D1", "name": "Dee", "department": "HR"})
-        c.post("/api/employees", json={"device_user_id": "D2", "name": "Dan", "department": "IT"})
-        c.post("/api/employees", json={"device_user_id": "D3", "name": "Dot", "department": "IT"})
-        c.post("/api/punches", json={"device_user_id": "D1", "ts": "2027-02-02 08:50:00"})
-        c.post("/api/punches", json={"device_user_id": "D2", "ts": "2027-02-02 10:30:00"})
-        d = c.get("/api/dashboard?day=2027-02-02").json()
+        c.post("/api/shifts", json={"name": "Dash 9-18", "start": "09:00", "end": "18:00"})
+        sid = [x for x in c.get("/api/shifts").json() if x["name"] == "Dash 9-18"][0]["id"]
+        for uid, nm, dp in (("D1", "Dee", "HR"), ("D2", "Dan", "IT"), ("D3", "Dot", "IT")):
+            c.post("/api/employees", json={"device_user_id": uid, "name": nm, "department": dp, "shift_id": sid})
+        c.post("/api/punches", json={"device_user_id": "D1", "ts": "2025-02-03 08:50:00"})
+        c.post("/api/punches", json={"device_user_id": "D2", "ts": "2025-02-03 10:30:00"})
+        d = c.get("/api/dashboard?day=2025-02-03").json()
         assert (d["present"], d["late"]) == (2, 1)
         assert d["absent"] == d["total"] - 2
         assert {"name": "HR", "present": 1} in d["departments"] and {"name": "IT", "present": 1} in d["departments"]
         assert isinstance(d["devices"], list) and isinstance(d["gps_punches"], list)
+
+
+def test_shift_engine_holidays_leave_payroll():
+    """Different shifts per person; late/half-day/overtime; leave, holiday, weekly off; payroll."""
+    with TestClient(app) as c:
+        mk = lambda n, st, en, **k: c.post("/api/shifts", json={"name": n, "start": st, "end": en, **k}).status_code
+        assert mk("Early", "07:00", "15:00") == 200 and mk("Late", "12:00", "20:00", weekly_off="SAT,SUN") == 200
+        assert mk("Bad", "25:00", "15:00") == 400 and mk("Bad", "10:00", "09:00") == 400
+        assert mk("Bad", "10:00", "11:00", weekly_off="FUNDAY") == 400
+        sid = {x["name"]: x["id"] for x in c.get("/api/shifts").json()}
+        for uid, nm, sh, sal in (("S1", "Early Bird", "Early", 31000), ("S2", "Night Owl", "Late", 31000), ("S3", "Flex", None, 0)):
+            c.post("/api/employees", json={"device_user_id": uid, "name": nm, "shift_id": sid.get(sh), "salary": sal})
+        c.post("/api/holidays", json={"date": "2025-06-03", "name": "Test Holiday"})   # Tuesday
+        assert c.post("/api/holidays", json={"date": "2025-13-45", "name": "x"}).status_code == 400
+        c.post("/api/leaves", json={"device_user_id": "S1", "start_date": "2025-06-04", "end_date": "2025-06-05", "type": "Sick"})
+        assert c.post("/api/leaves", json={"device_user_id": "NOPE", "start_date": "2025-06-04", "end_date": "2025-06-04"}).status_code == 404
+        P = lambda uid, ts: c.post("/api/punches", json={"device_user_id": uid, "ts": ts})
+        # Mon 2 Jun: S1 on time, leaves late (overtime 1h); S2 (shift 12-20) arrives 12:05 = on time (grace); S3 flexible at 15:00 never late
+        P("S1", "2025-06-02 07:05:00"); P("S1", "2025-06-02 16:00:00")
+        P("S2", "2025-06-02 12:05:00"); P("S2", "2025-06-02 20:00:00")
+        P("S3", "2025-06-02 15:00:00"); P("S3", "2025-06-02 19:00:00")
+        # Fri 6 Jun: S1 arrives 08:00 (60 min late), leaves 10:00 (2 h = half day)
+        P("S1", "2025-06-06 08:00:00"); P("S1", "2025-06-06 10:00:00")
+        d = {r["device_user_id"]: r for r in c.get("/api/reports/daily?day=2025-06-02").json()}
+        assert d["S1"]["status"] == "Present" and d["S1"]["ot_min"] == 60 and d["S1"]["early_min"] == 0
+        assert d["S2"]["status"] == "Present" and d["S3"]["status"] == "Present" and d["S3"]["late_min"] == 0
+        d = {r["device_user_id"]: r for r in c.get("/api/reports/daily?day=2025-06-06").json()}
+        assert d["S1"]["status"] == "Half Day" and d["S1"]["late_min"] == 60 and d["S1"]["early_min"] == 300
+        assert d["S2"]["status"] == "Absent" and d["S3"]["status"] == "Absent"
+        st = lambda day: {r["device_user_id"]: r["status"] for r in c.get("/api/reports/daily?day=" + day).json()}
+        assert st("2025-06-03")["S1"] == "Holiday" and st("2025-06-04")["S1"] == "Leave" and st("2025-06-01")["S1"] == "Weekly Off"
+        assert st("2025-06-07")["S2"] == "Weekly Off" and st("2025-06-07")["S1"] == "Absent"   # Saturday: S2 off, S1 not
+        # monthly + grid + payroll (June 2025 has 30 days)
+        m = {r["device_user_id"]: r for r in c.get("/api/reports/monthly?month=2025-06").json()}
+        s1 = m["S1"]
+        assert (s1["days_present"], s1["half_days"], s1["leave"], s1["holidays"], s1["overtime_hours"]) == (2, 1, 2, 1, 1.0)
+        g = {r["device_user_id"]: r["codes"] for r in c.get("/api/reports/grid?month=2025-06").json()["rows"]}
+        assert g["S1"][0] == "WO" and g["S1"][1] == "P" and g["S1"][2] == "H" and g["S1"][3] == "LV" and g["S1"][5] == "HD"
+        pay = {r["device_user_id"]: r for r in c.get("/api/reports/payroll?month=2025-06").json()}
+        # S1: 1 full + 0.5 half + 2 paid leave + 1 holiday + 4 Sundays (1,8,15,22,29 = 5) = 9.5 paid days
+        assert pay["S1"]["paid_days"] == 1 + 0.5 + 2 + 1 + 5 and pay["S1"]["net_pay"] == round(31000 / 30 * 9.5, 2)
+        assert "net_pay" in c.get("/api/reports/payroll.csv?month=2025-06").text
+        # deleting a shift leaves the employee flexible instead of breaking
+        c.delete(f"/api/shifts/{sid['Early']}")
+        assert [e for e in c.get("/api/employees").json() if e["device_user_id"] == "S1"][0]["shift_id"] is None
+
+
+def test_joining_date_excludes_earlier_days():
+    with TestClient(app) as c:
+        assert c.post("/api/employees", json={"device_user_id": "J1", "name": "Joiner", "joined": "2025-09-15"}).status_code == 200
+        assert c.post("/api/employees", json={"device_user_id": "J2", "name": "Bad", "joined": "soon"}).status_code == 400
+        before = {r["device_user_id"]: r["status"] for r in c.get("/api/reports/daily?day=2025-09-10").json()}
+        after = {r["device_user_id"]: r["status"] for r in c.get("/api/reports/daily?day=2025-09-16").json()}
+        assert before["J1"] == "" and after["J1"] == "Absent"
+        assert [e for e in c.get("/api/employees").json() if e["device_user_id"] == "J1"][0]["joined"] == "2025-09-15"

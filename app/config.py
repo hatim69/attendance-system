@@ -15,9 +15,8 @@ FKWEB_PORT = int(os.getenv("FKWEB_PORT", "80"))
 # Optional allow-list of device ids (the dev_id header, e.g. RSS202506120926). The FkWeb port is plain HTTP
 # and public on a hosted server, so set this to stop strangers injecting punches.
 FKWEB_DEVICES = [d.strip() for d in os.getenv("FKWEB_DEVICES", "").split(",") if d.strip()]
-# Shift rules used by reports
-SHIFT_START = os.getenv("SHIFT_START", "09:00")
-GRACE_MINUTES = int(os.getenv("GRACE_MINUTES", "10"))
+# Weekly off for employees who have no shift assigned (shifts carry their own). Comma list, e.g. "SUN" or "SAT,SUN".
+WEEKLY_OFF = os.getenv("WEEKLY_OFF", "SUN")
 # Ignore repeated punches by the same person within this many seconds
 DEBOUNCE_SECONDS = int(os.getenv("DEBOUNCE_SECONDS", "60"))
 # Admin dashboard login (HTTP Basic, user: admin). REQUIRED when hosted on the internet.

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime
 
 import os
+import re
 
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
@@ -54,6 +55,33 @@ class EmployeeIn(BaseModel):
     name: str
     department: str = ""
     active: bool = True
+    shift_id: int | None = None
+    salary: float = 0
+    joined: str = ""  # optional YYYY-MM-DD; days before it are not counted
+
+
+class ShiftIn(BaseModel):
+    id: int | None = None
+    name: str
+    start: str
+    end: str
+    grace_min: int = 10
+    half_day_hours: float = 4
+    ot_after_min: int = 30
+    weekly_off: str = "SUN"  # comma list of MON..SUN, empty for none
+
+
+class HolidayIn(BaseModel):
+    date: str
+    name: str
+
+
+class LeaveIn(BaseModel):
+    device_user_id: str
+    start_date: str
+    end_date: str
+    type: str = "Casual"
+    note: str = ""
 
 
 class DeviceIn(BaseModel):
@@ -85,16 +113,20 @@ class PunchIn(BaseModel):
 @app.get("/api/employees", dependencies=admin)
 def list_employees():
     return [dict(r) for r in db.conn().execute(
-        "SELECT id, device_user_id, name, department, active, pin_hash IS NOT NULL AS pin_hash FROM employees ORDER BY name")]
+        "SELECT e.id, e.device_user_id, e.name, e.department, e.active, e.pin_hash IS NOT NULL AS pin_hash, e.shift_id, "
+        "e.salary, COALESCE(e.joined,'') joined, COALESCE(s.name,'') shift FROM employees e LEFT JOIN shifts s ON s.id=e.shift_id ORDER BY e.name")]
 
 
 @app.post("/api/employees", dependencies=admin)
 def upsert_employee(e: EmployeeIn):
+    if e.joined:
+        _valid_date(e.joined)
     c = db.conn()
     c.execute(
-        "INSERT INTO employees(device_user_id,name,department,active) VALUES (?,?,?,?) "
-        "ON CONFLICT(device_user_id) DO UPDATE SET name=excluded.name, department=excluded.department, active=excluded.active",
-        (e.device_user_id, e.name, e.department, int(e.active)),
+        "INSERT INTO employees(device_user_id,name,department,active,shift_id,salary,joined) VALUES (?,?,?,?,?,?,?) "
+        "ON CONFLICT(device_user_id) DO UPDATE SET name=excluded.name, department=excluded.department, "
+        "active=excluded.active, shift_id=excluded.shift_id, salary=excluded.salary, joined=excluded.joined",
+        (e.device_user_id, e.name, e.department, int(e.active), e.shift_id, e.salary, e.joined or None),
     )
     c.commit()
     return {"ok": True}
@@ -149,7 +181,7 @@ def dashboard(day: str | None = None):
     rows = reports.daily(day)
     depts: dict[str, int] = {}
     for r in rows:
-        if r["status"] != "Absent":
+        if r["status"] in reports.WORKED:
             depts[r["department"] or "Unassigned"] = depts.get(r["department"] or "Unassigned", 0) + 1
     c = db.conn()
     stats = {r["source"]: (r["n"], r["last"]) for r in c.execute(
@@ -163,11 +195,109 @@ def dashboard(day: str | None = None):
         "FROM punches p LEFT JOIN employees e ON e.device_user_id=p.device_user_id LEFT JOIN sites s ON s.id=p.site_id "
         "WHERE p.method='app' AND date(p.ts)=? AND COALESCE(p.flag,'')!='rejected' ORDER BY p.ts DESC LIMIT 10", (day,))]
     return {"day": day, "total": len(rows),
-            "present": sum(r["status"] != "Absent" for r in rows),
+            "present": sum(r["status"] in reports.WORKED for r in rows),
             "absent": sum(r["status"] == "Absent" for r in rows),
             "late": sum(r["status"] == "Late" for r in rows),
             "departments": [{"name": k, "present": v} for k, v in sorted(depts.items())],
             "devices": devices, "gps_punches": gps}
+
+
+def _valid_date(d: str):
+    try:
+        date.fromisoformat(d)
+    except ValueError:
+        raise HTTPException(400, f"Invalid date {d!r} (use YYYY-MM-DD)")
+
+
+@app.get("/api/shifts", dependencies=admin)
+def list_shifts():
+    return [dict(r) for r in db.conn().execute(
+        "SELECT s.*, (SELECT COUNT(*) FROM employees e WHERE e.shift_id=s.id AND e.active=1) employees FROM shifts s ORDER BY s.name")]
+
+
+@app.post("/api/shifts", dependencies=admin)
+def save_shift(sh: ShiftIn):
+    if not (re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", sh.start) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", sh.end)):
+        raise HTTPException(400, "Times must be HH:MM (24-hour)")
+    if sh.end <= sh.start:
+        raise HTTPException(400, "Shift end must be after start (overnight shifts are not supported yet)")
+    offs = [o.strip().upper() for o in sh.weekly_off.split(",") if o.strip()]
+    if any(o not in reports.WEEKDAYS for o in offs):
+        raise HTTPException(400, "Weekly off must be a comma list of MON,TUE,WED,THU,FRI,SAT,SUN")
+    c = db.conn()
+    vals = (sh.name.strip(), sh.start, sh.end, sh.grace_min, sh.half_day_hours, sh.ot_after_min, ",".join(offs))
+    if sh.id:
+        c.execute("UPDATE shifts SET name=?, start=?, end=?, grace_min=?, half_day_hours=?, ot_after_min=?, weekly_off=? WHERE id=?",
+                  vals + (sh.id,))
+    else:
+        c.execute("INSERT INTO shifts(name,start,end,grace_min,half_day_hours,ot_after_min,weekly_off) VALUES (?,?,?,?,?,?,?)", vals)
+    c.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/shifts/{shift_id}", dependencies=admin)
+def delete_shift(shift_id: int):
+    c = db.conn()
+    c.execute("UPDATE employees SET shift_id=NULL WHERE shift_id=?", (shift_id,))
+    c.execute("DELETE FROM shifts WHERE id=?", (shift_id,))
+    c.commit()
+    return {"ok": True}
+
+
+@app.get("/api/holidays", dependencies=admin)
+def list_holidays(year: str | None = None):
+    year = year or now_local().strftime("%Y")
+    return [dict(r) for r in db.conn().execute("SELECT * FROM holidays WHERE substr(date,1,4)=? ORDER BY date", (year,))]
+
+
+@app.post("/api/holidays", dependencies=admin)
+def save_holiday(h: HolidayIn):
+    _valid_date(h.date)
+    c = db.conn()
+    c.execute("INSERT INTO holidays(date,name) VALUES (?,?) ON CONFLICT(date) DO UPDATE SET name=excluded.name", (h.date, h.name))
+    c.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/holidays/{day}", dependencies=admin)
+def delete_holiday(day: str):
+    c = db.conn()
+    c.execute("DELETE FROM holidays WHERE date=?", (day,))
+    c.commit()
+    return {"ok": True}
+
+
+@app.get("/api/leaves", dependencies=admin)
+def list_leaves(month: str | None = None):
+    month = month or now_local().strftime("%Y-%m")
+    return [dict(r) for r in db.conn().execute(
+        "SELECT l.*, COALESCE(e.name, l.device_user_id) name FROM leaves l LEFT JOIN employees e ON e.device_user_id=l.device_user_id "
+        "WHERE substr(l.start_date,1,7)<=? AND substr(l.end_date,1,7)>=? ORDER BY l.start_date DESC", (month, month))]
+
+
+@app.post("/api/leaves", dependencies=admin)
+def add_leave(l: LeaveIn):
+    _valid_date(l.start_date)
+    _valid_date(l.end_date)
+    if l.end_date < l.start_date:
+        raise HTTPException(400, "End date is before start date")
+    if l.type not in reports.LEAVE_TYPES:
+        raise HTTPException(400, "Leave type must be one of " + ", ".join(reports.LEAVE_TYPES))
+    c = db.conn()
+    if not c.execute("SELECT 1 FROM employees WHERE device_user_id=?", (l.device_user_id,)).fetchone():
+        raise HTTPException(404, "No such employee")
+    c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note) VALUES (?,?,?,?,?)",
+              (l.device_user_id, l.start_date, l.end_date, l.type, l.note))
+    c.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/leaves/{leave_id}", dependencies=admin)
+def delete_leave(leave_id: int):
+    c = db.conn()
+    c.execute("DELETE FROM leaves WHERE id=?", (leave_id,))
+    c.commit()
+    return {"ok": True}
 
 
 @app.get("/api/sites", dependencies=admin)
@@ -233,38 +363,61 @@ def manual_punch(p: PunchIn):
     return {"stored": rec is not None}
 
 
+def _csv(rows: list[dict], filename: str) -> PlainTextResponse:
+    buf = io.StringIO()
+    if rows:
+        w = csv.DictWriter(buf, fieldnames=rows[0].keys())
+        w.writeheader()
+        w.writerows(rows)
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+def _day(day): return day or now_local().date().isoformat()
+def _month(month): return month or now_local().strftime("%Y-%m")
+
+
 @app.get("/api/reports/daily", dependencies=admin)
 def report_daily(day: str | None = None, device: str | None = None):
-    return reports.daily(day or now_local().date().isoformat(), device)
+    return reports.daily(_day(day), device)
+
+
+@app.get("/api/reports/daily.csv", dependencies=admin)
+def report_daily_csv(day: str | None = None, device: str | None = None):
+    return _csv(reports.daily(_day(day), device), "attendance-daily.csv")
 
 
 @app.get("/api/reports/monthly", dependencies=admin)
 def report_monthly(month: str | None = None, device: str | None = None):
-    return reports.monthly(month or now_local().strftime("%Y-%m"), device)
-
-
-@app.get("/api/reports/daily.csv", dependencies=admin)
-def report_daily_csv(day: str | None = None):
-    rows = reports.daily(day or now_local().date().isoformat())
-    buf = io.StringIO()
-    if rows:
-        w = csv.DictWriter(buf, fieldnames=rows[0].keys())
-        w.writeheader()
-        w.writerows(rows)
-    return PlainTextResponse(buf.getvalue(), media_type="text/csv",
-                             headers={"Content-Disposition": "attachment; filename=attendance.csv"})
+    return reports.monthly(_month(month), device)
 
 
 @app.get("/api/reports/monthly.csv", dependencies=admin)
-def report_monthly_csv(month: str | None = None):
-    rows = reports.monthly(month or now_local().strftime("%Y-%m"))
-    buf = io.StringIO()
-    if rows:
-        w = csv.DictWriter(buf, fieldnames=rows[0].keys())
-        w.writeheader()
-        w.writerows(rows)
-    return PlainTextResponse(buf.getvalue(), media_type="text/csv",
-                             headers={"Content-Disposition": "attachment; filename=attendance-monthly.csv"})
+def report_monthly_csv(month: str | None = None, device: str | None = None):
+    return _csv(reports.monthly(_month(month), device), "attendance-monthly.csv")
+
+
+@app.get("/api/reports/grid", dependencies=admin)
+def report_grid(month: str | None = None, device: str | None = None):
+    return reports.grid(_month(month), device)
+
+
+@app.get("/api/reports/grid.csv", dependencies=admin)
+def report_grid_csv(month: str | None = None, device: str | None = None):
+    g = reports.grid(_month(month), device)
+    rows = [{"ID": r["device_user_id"], "Name": r["name"], "Department": r["department"],
+             **{str(d): c for d, c in zip(g["days"], r["codes"])}} for r in g["rows"]]
+    return _csv(rows, "attendance-sheet.csv")
+
+
+@app.get("/api/reports/payroll", dependencies=admin)
+def report_payroll(month: str | None = None, device: str | None = None):
+    return reports.payroll(_month(month), device)
+
+
+@app.get("/api/reports/payroll.csv", dependencies=admin)
+def report_payroll_csv(month: str | None = None, device: str | None = None):
+    return _csv(reports.payroll(_month(month), device), "payroll.csv")
 
 
 @app.post("/api/devices/sync", dependencies=admin)

@@ -32,6 +32,28 @@ CREATE TABLE IF NOT EXISTS devices (
     firmware TEXT DEFAULT '',
     last_seen TEXT
 );
+CREATE TABLE IF NOT EXISTS shifts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    start TEXT NOT NULL,              -- "HH:MM"
+    end TEXT NOT NULL,                -- "HH:MM" (same day; overnight shifts are not supported yet)
+    grace_min INTEGER NOT NULL DEFAULT 10,
+    half_day_hours REAL NOT NULL DEFAULT 4,
+    ot_after_min INTEGER NOT NULL DEFAULT 30,   -- overtime counts once out-time is this many minutes past shift end
+    weekly_off TEXT NOT NULL DEFAULT 'SUN'      -- comma list: MON,TUE,WED,THU,FRI,SAT,SUN
+);
+CREATE TABLE IF NOT EXISTS holidays (
+    date TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS leaves (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_user_id TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'Casual',        -- 'Unpaid' is unpaid, anything else paid
+    note TEXT DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS sites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -68,8 +90,10 @@ def init():
     for col, decl in PUNCH_COLUMNS.items():
         if col not in have:
             c.execute(f"ALTER TABLE punches ADD COLUMN {col} {decl}")
-    if "pin_hash" not in {r["name"] for r in c.execute("PRAGMA table_info(employees)")}:
-        c.execute("ALTER TABLE employees ADD COLUMN pin_hash TEXT")
+    emp_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
+    for col, decl in {"pin_hash": "TEXT", "shift_id": "INTEGER", "salary": "REAL NOT NULL DEFAULT 0", "joined": "TEXT"}.items():
+        if col not in emp_cols:
+            c.execute(f"ALTER TABLE employees ADD COLUMN {col} {decl}")
     c.commit()
 
 

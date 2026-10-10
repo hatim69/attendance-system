@@ -15,6 +15,8 @@ Open http://localhost:8000. Test without hardware: `python scripts/simulate_devi
 
 **Push mode (true real-time, ADMS):** on the device: Menu → Comm/COMM → Cloud Server Setting → Server Address = this server's IP, Port = 8000, enable Proxy off. The device POSTs to `/iclock/cdata`. Needs firmware with ADMS support.
 
+**FkWeb mode (Realtime / FK-series devices, e.g. T304F mini):** the device POSTs to the *Webserver URL* set in its Comm menu. Run the app on the TCP port set in the device (e.g. `--port 5005`) and set the URL to `http://<server-pc-ip>` (write down the old value first). Raw requests are logged to `fkweb_raw.log`; punch parsing is best-effort until verified with real traffic.
+
 Use either or both (duplicates are ignored).
 
 ## Config (env vars)

@@ -12,7 +12,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import adms, config, db, hub, reports, zk_poller
+from . import adms, config, db, fkweb, hub, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 security = HTTPBasic(auto_error=False)
@@ -36,6 +36,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Attendance System", lifespan=lifespan)
 app.include_router(adms.router)  # device-facing, no auth (devices can't do Basic auth)
 admin = [Depends(require_admin)]
+
+
+@app.middleware("http")
+async def fkweb_middleware(request, call_next):
+    # FkWeb devices (Realtime/FK series) POST to arbitrary paths with a request_code header.
+    if "request_code" in request.headers:
+        return await fkweb.handle(request)
+    return await call_next(request)
 
 
 class EmployeeIn(BaseModel):

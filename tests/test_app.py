@@ -27,3 +27,16 @@ def test_end_to_end():
         assert c.get("/api/reports/monthly?month=2025-03").json()[0]["days_present"] == 1
         with c.websocket_connect("/ws") as ws:
             ws.send_text("hi")
+
+
+def test_fkweb_logs_and_acks(tmp_path, monkeypatch):
+    from app import fkweb
+    monkeypatch.setattr(fkweb, "RAW_LOG", str(tmp_path / "raw.log"))
+    with TestClient(app) as c:
+        h = {"request_code": "realtime_glog", "dev_id": "D1", "trans_id": "7"}
+        r = c.post("/", headers=h, content=b'{"UserID": "5", "Time": "2025-03-04 08:00:00"}')
+        assert r.status_code == 200 and r.headers["response_code"] == "OK" and r.headers["trans_id"] == "7"
+        assert c.get("/api/punches?day=2025-03-04").json()[0]["device_user_id"] == "5"
+        r = c.post("/x", headers={"request_code": "unknown_thing"}, content=b"\x01\x02")
+        assert r.status_code == 200
+    assert len((tmp_path / "raw.log").read_text().splitlines()) == 2

@@ -14,6 +14,8 @@ Hostinger panel -> VPS -> **Firewall**: create a rule set allowing inbound **TCP
 ```
 curl -fsSL https://raw.githubusercontent.com/hatim69/attendance-system/claude/eager-wright-hkels3/deploy/install.sh | DOMAIN=srv1949824.hstgr.cloud bash
 ```
+If the VPS already runs **nginx** (other websites), the installer detects it and shares the server: it adds ONE new nginx site file for this system, tests the whole nginx config before applying anything, reloads (not restarts) nginx, and never touches your other sites. Fingerprint devices must then use the hostname URL (`http://<DOMAIN>`), not the bare IP. To remove it again: `rm /etc/nginx/sites-enabled/attendance-system && nginx -t && systemctl reload nginx && cd /opt/attendance-system && docker compose -f docker-compose.nginx.yml down`.
+
 It installs Docker, fetches the code, creates `.env` with a random admin password and secret key, starts everything and prints the login and the device URL. Safe to re-run (keeps your data and `.env`).
 
 ## 3b. Manual steps (what the installer does)

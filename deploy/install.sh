@@ -82,6 +82,29 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
   run ufw allow 22/tcp; run ufw allow 80/tcp; run ufw allow 443/tcp
 fi
 
+say "4/5 Checking ports 80 and 443 are free"
+busy=""
+if [ "$DRY_RUN" != 1 ]; then
+  for port in 80 443; do
+    # ignore our own containers (re-runs); anything else listening here blocks the install
+    owner="$(ss -ltnpH "sport = :$port" 2>/dev/null | grep -v docker-proxy || true)"
+    [ -n "$owner" ] && busy="$busy\n  port $port: $owner"
+  done
+fi
+if [ -n "$busy" ]; then
+  echo "Something else is already using a port the system needs:"; printf "$busy\n"
+  if [ "${FREE_PORTS:-0}" = 1 ]; then
+    echo "FREE_PORTS=1: stopping common web servers (nginx, apache2, httpd, lighttpd, caddy, openlitespeed)"
+    for svc in nginx apache2 httpd lighttpd caddy lshttpd openlitespeed; do systemctl disable --now "$svc" 2>/dev/null || true; done
+    sleep 2
+  else
+    echo
+    echo "If that is a web server you do not need on this VPS, stop it and run this installer again with FREE_PORTS=1, e.g."
+    echo "  curl -fsSL https://raw.githubusercontent.com/hatim69/attendance-system/$BRANCH/deploy/install.sh | FREE_PORTS=1 DOMAIN=$DOMAIN bash"
+    exit 1
+  fi
+fi
+
 say "4/5 Building and starting (a few minutes the first time)"
 run docker compose up -d --build
 
@@ -105,7 +128,7 @@ cat <<DONE
   Dashboard : https://$DOMAIN/
   Phone app : https://$DOMAIN/m/
   Login     : admin
-  Password  : ${NEW_PASSWORD:-(unchanged, see $DIR/.env)}
+  Password  : ${NEW_PASSWORD:-$(sed -n 's/^admin password (first login): //p' /root/attendance-admin-password.txt 2>/dev/null | head -1)}
   (also saved in /root/attendance-admin-password.txt, readable only by root)
 
   FINGERPRINT DEVICES: set each device's Webserver URL to  http://$IP   (plain http, mode FkWeb), then restart the device.

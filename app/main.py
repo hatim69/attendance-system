@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from . import access, adms, app_api, auth, config, db, fkweb, hub, importer, reports, zk_poller
+from . import access, adms, app_api, auth, config, db, fkweb, hub, importer, payslip, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 
@@ -675,6 +675,98 @@ def report_timecard(employee: str, month: str | None = None):
 @app.get("/api/reports/timecard.xlsx", dependencies=[Depends(access.need("manager"))])
 def report_timecard_xlsx(employee: str, month: str | None = None):
     return _xlsx(reports.timecard(_month(month), db.canon_id(employee)), "time-card.xlsx", "Time Card")
+
+
+MONTH_RE = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
+
+
+def _valid_month(m: str) -> str:
+    if not MONTH_RE.fullmatch(m or ""):
+        raise HTTPException(400, "Month must look like 2026-09")
+    return m
+
+
+def _published(month: str) -> bool:
+    row = db.conn().execute("SELECT published FROM payroll_months WHERE month=?", (month,)).fetchone()
+    return bool(row and row["published"])
+
+
+class AdjustmentIn(BaseModel):
+    month: str
+    device_user_id: str
+    label: str
+    amount: float  # positive = extra pay, negative = deduction
+
+
+@app.get("/api/payroll/{month}/status", dependencies=[Depends(access.need("hr"))])
+def payroll_status(month: str):
+    row = db.conn().execute("SELECT * FROM payroll_months WHERE month=?", (_valid_month(month),)).fetchone()
+    return dict(row) if row else {"month": month, "published": 0, "published_by": "", "published_at": None}
+
+
+@app.post("/api/payroll/{month}/publish")
+async def payroll_publish(month: str, u: dict = Depends(access.need("hr"))):
+    """Make payslips for a finished month visible to employees in the phone app."""
+    _valid_month(month)
+    if reports._month_days(month)[2] >= now_local().date().isoformat():
+        raise HTTPException(400, "Publish only after the month has ended, so attendance is final")
+    c = db.conn()
+    c.execute("INSERT INTO payroll_months(month, published, published_by, published_at) VALUES (?,1,?,?) "
+              "ON CONFLICT(month) DO UPDATE SET published=1, published_by=excluded.published_by, published_at=excluded.published_at",
+              (month, u["username"], now_local().strftime("%Y-%m-%d %H:%M:%S")))
+    c.commit()
+    return {"ok": True}
+
+
+@app.post("/api/payroll/{month}/unpublish", dependencies=[Depends(access.need("hr"))])
+def payroll_unpublish(month: str):
+    c = db.conn()
+    c.execute("UPDATE payroll_months SET published=0 WHERE month=?", (_valid_month(month),))
+    c.commit()
+    return {"ok": True}
+
+
+@app.get("/api/payroll/adjustments", dependencies=[Depends(access.need("hr"))])
+def list_adjustments(month: str):
+    return [dict(r) for r in db.conn().execute(
+        "SELECT a.*, COALESCE(e.name, a.device_user_id) name FROM payroll_adjustments a "
+        "LEFT JOIN employees e ON e.device_user_id=a.device_user_id WHERE a.month=? ORDER BY a.id", (_valid_month(month),))]
+
+
+@app.post("/api/payroll/adjustments", dependencies=[Depends(access.need("hr"))])
+def add_adjustment(a: AdjustmentIn):
+    _valid_month(a.month)
+    uid = db.canon_id(a.device_user_id)
+    if not a.label.strip() or a.amount == 0 or abs(a.amount) > 10_000_000:
+        raise HTTPException(400, "Give a label and a non-zero amount")
+    if _published(a.month):
+        raise HTTPException(400, "This month is published. Unpublish it before changing amounts.")
+    c = db.conn()
+    if not c.execute("SELECT 1 FROM employees WHERE device_user_id=?", (uid,)).fetchone():
+        raise HTTPException(404, "No such employee")
+    c.execute("INSERT INTO payroll_adjustments(month,device_user_id,label,amount) VALUES (?,?,?,?)", (a.month, uid, a.label.strip()[:60], a.amount))
+    c.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/payroll/adjustments/{adj_id}", dependencies=[Depends(access.need("hr"))])
+def delete_adjustment(adj_id: int):
+    c = db.conn()
+    row = c.execute("SELECT month FROM payroll_adjustments WHERE id=?", (adj_id,)).fetchone()
+    if row and _published(row["month"]):
+        raise HTTPException(400, "This month is published. Unpublish it before changing amounts.")
+    c.execute("DELETE FROM payroll_adjustments WHERE id=?", (adj_id,))
+    c.commit()
+    return {"ok": True}
+
+
+@app.get("/api/payslips/{uid}/{month}.pdf", dependencies=[Depends(access.need("hr"))])
+def payslip_pdf(uid: str, month: str):
+    d = reports.payslip(_valid_month(month), db.canon_id(uid))
+    if not d:
+        raise HTTPException(404, "No payroll for this employee and month")
+    return Response(payslip.build_pdf(d), media_type="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename=payslip-{uid}-{month}.pdf"})
 
 
 @app.get("/api/reports/payroll", dependencies=[Depends(access.need("hr"))])

@@ -69,6 +69,19 @@ CREATE TABLE IF NOT EXISTS audit (
     action TEXT NOT NULL,
     status INTEGER
 );
+CREATE TABLE IF NOT EXISTS payroll_months (
+    month TEXT PRIMARY KEY,                    -- YYYY-MM; employees can open their payslip only once it is published
+    published INTEGER NOT NULL DEFAULT 0,
+    published_by TEXT DEFAULT '',
+    published_at TEXT
+);
+CREATE TABLE IF NOT EXISTS payroll_adjustments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    month TEXT NOT NULL,
+    device_user_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    amount REAL NOT NULL                       -- positive = extra pay, negative = deduction
+);
 CREATE TABLE IF NOT EXISTS sites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

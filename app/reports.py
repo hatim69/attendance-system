@@ -185,17 +185,53 @@ def timecard(month: str, employee_id: str, device: str | None = None) -> list[di
     return rows
 
 
+def _adjustments(month: str) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
+    for r in db.conn().execute("SELECT * FROM payroll_adjustments WHERE month=? ORDER BY id", (month,)):
+        out.setdefault(r["device_user_id"], []).append(dict(r))
+    return out
+
+
 def payroll(month: str, device: str | None = None) -> list[dict]:
-    """Simple pay sheet: monthly salary / calendar days x paid days. No tax, PF/ESI or allowances."""
+    """Simple pay sheet: monthly salary / calendar days x paid days, plus any manual adjustments (bonus, advance...).
+    No tax, PF/ESI or allowances."""
     days, _, d2 = _month_days(month)
     complete = d2 < now_local().date().isoformat()
     sal = {r["device_user_id"]: r["salary"] for r in db.conn().execute("SELECT device_user_id, salary FROM employees")}
+    adj = _adjustments(month)
     out = []
     for r in monthly(month, device):
         base = sal.get(r["device_user_id"], 0) or 0
-        per_day = base / len(days)
+        extra = round(sum(a["amount"] for a in adj.get(r["device_user_id"], [])), 2)
         out.append({"device_user_id": r["device_user_id"], "name": r["name"], "department": r["department"],
                     "monthly_salary": base, "days_in_month": len(days), "paid_days": r["paid_days"],
                     "unpaid_days": round(len(days) - r["paid_days"], 2) if complete else "",
-                    "net_pay": round(per_day * r["paid_days"], 2), "month_complete": complete})
+                    "adjustments": extra, "net_pay": round(base / len(days) * r["paid_days"] + extra, 2),
+                    "month_complete": complete})
     return out
+
+
+def payslip(month: str, uid: str) -> dict | None:
+    """Everything a payslip shows for one employee and month (None if the employee has no payroll row)."""
+    row = next((r for r in payroll(month) if r["device_user_id"] == uid), None)
+    summ = next((r for r in monthly(month) if r["device_user_id"] == uid), None)
+    emp = db.conn().execute("SELECT * FROM employees WHERE device_user_id=?", (uid,)).fetchone()
+    if not row or not summ or not emp:
+        return None
+    base, n = row["monthly_salary"], row["days_in_month"]
+    adjs = _adjustments(month).get(uid, [])
+    earnings = [("Salary for the month", round(base, 2))] + [(a["label"], round(a["amount"], 2)) for a in adjs if a["amount"] > 0]
+    lop = round(base - base / n * row["paid_days"], 2)
+    deductions = ([(f"Loss of pay ({round(n - row['paid_days'], 2):g} unpaid days)", lop)] if lop > 0 else []) + \
+                 [(a["label"], round(-a["amount"], 2)) for a in adjs if a["amount"] < 0]
+    return {
+        "company": config.COMPANY_NAME, "address": config.COMPANY_ADDRESS, "month": month,
+        "employee": {"code": uid, "name": emp["name"], "department": emp["department"], "designation": emp["designation"],
+                     "branch": emp["branch"], "joined": emp["joined"] or ""},
+        "attendance": {"days_in_month": n, "paid_days": row["paid_days"], "present": summ["days_present"], "late_days": summ["late_days"],
+                       "half_days": summ["half_days"], "absent": summ["absent"], "leave": summ["leave"],
+                       "holidays": summ["holidays"], "weekly_offs": summ["weekly_offs"], "overtime_hours": summ["overtime_hours"]},
+        "earnings": earnings, "deductions": deductions,
+        "gross": round(sum(a for _, a in earnings), 2), "total_deductions": round(sum(a for _, a in deductions), 2),
+        "net_pay": row["net_pay"],
+    }

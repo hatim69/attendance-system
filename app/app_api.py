@@ -2,10 +2,11 @@
 import os
 import re
 
+from fastapi.responses import Response
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from . import auth, config, db, geo, hub
+from . import auth, config, db, geo, hub, payslip, reports
 from .timeutil import now_local
 
 router = APIRouter(prefix="/api/app")
@@ -98,3 +99,24 @@ async def punch(lat: float = Form(...), lng: float = Form(...), accuracy: float 
     hub.publish(rec)
     return {"ok": True, "time": rec["ts"], "type": "Check out" if count % 2 else "Check in",
             "site": site["name"] if site and inside else None, "flag": flag}
+
+
+@router.get("/payslips")
+def my_payslips(emp: dict = Depends(current_employee)):
+    """Months HR has published that include this employee's pay (newest first)."""
+    out = []
+    for m in db.conn().execute("SELECT month FROM payroll_months WHERE published=1 ORDER BY month DESC LIMIT 12"):
+        d = reports.payslip(m["month"], emp["device_user_id"])
+        if d and d["employee"] and emp["salary"]:
+            out.append({"month": m["month"], "net_pay": d["net_pay"]})
+    return out
+
+
+@router.get("/payslip/{month}.pdf")
+def my_payslip_pdf(month: str, emp: dict = Depends(current_employee)):
+    row = db.conn().execute("SELECT published FROM payroll_months WHERE month=?", (month,)).fetchone()
+    d = reports.payslip(month, emp["device_user_id"]) if row and row["published"] else None
+    if not d or not emp["salary"]:
+        raise HTTPException(404, "No payslip available for that month")
+    return Response(payslip.build_pdf(d), media_type="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename=payslip-{month}.pdf", "Cache-Control": "private, no-store"})

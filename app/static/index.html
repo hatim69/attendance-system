@@ -106,12 +106,20 @@ async function render(){
   m.innerHTML=`<div class="bar">${empSel('tce')} <input type="month" id="mo" value="${today().slice(0,7)}"> <a href="#" id="xlsx">Excel</a></div><div id="t"></div>`;
   const load=async()=>$('#t').innerHTML=tbl([['date','Date'],['weekday','Day'],['day_type','Day type'],['schedule','Schedule'],['in','In',r=>esc(r.in)],['out','Out',r=>esc(r.out)],['hours','Hours'],['late_min','Late',r=>mins(r.late_min)],['early_min','Early out',r=>mins(r.early_min)],['overtime_min','Overtime',r=>mins(r.overtime_min)],['status','Status'],['note','Note']],await j('/api/reports/timecard?employee='+encodeURIComponent($('#tce').value)+'&month='+$('#mo').value));
   $('#tce').onchange=load; $('#mo').onchange=load; $('#xlsx').onclick=e=>{e.target.href='/api/reports/timecard.xlsx?employee='+encodeURIComponent($('#tce').value)+'&month='+$('#mo').value}; if($('#tce').value)load();
+
  } else if(tab=='payroll'){
-  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a></div>
-   <p class="hint">Pay = monthly salary ÷ days in month × paid days (present, paid leave, holidays and weekly offs; half day = 0.5). No tax, PF/ESI or allowances. Run it after the month ends; set salaries in Employees.</p><div id="t"></div>`;
-  const load=async()=>{const r=await j('/api/reports/payroll?month='+$('#mo').value); const tot=r.reduce((a,x)=>a+x.net_pay,0);
-   $('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['monthly_salary','Monthly salary'],['days_in_month','Days'],['paid_days','Paid days'],['unpaid_days','Unpaid days'],['net_pay','Net pay']],r)+`<p><b>Total net pay: ${tot.toFixed(2)}</b>${r.length&&!r[0].month_complete?' <span class="tag warn">month not finished: days still to come are not counted</span>':''}</p>`};
-  $('#mo').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/payroll.csv?month='+$('#mo').value}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/payroll.xlsx?month='+$('#mo').value}; load();
+  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a> <span id="pub"></span></div>
+   <p class="hint">Pay = monthly salary ÷ days in month × paid days (present, paid leave, holidays and weekly offs; half day = 0.5) plus your adjustments. No tax or PF/ESI. Check the month, add adjustments, then <b>Publish</b> so employees can download their own payslip in the phone app. Set salaries in Employees.</p>
+   <div class="bar"><b>Adjustment:</b> ${empSel('ae')} <input id="al" placeholder="Label (e.g. Bonus, Advance)" size=22> <input id="aa" type="number" placeholder="Amount (+ pay / − deduct)" size=20> <button id="ab">Add</button></div>
+   <div id="adj"></div><div id="t"></div>`;
+  const load=async()=>{const mo=$('#mo').value;const [r,st,adj]=await Promise.all([j('/api/reports/payroll?month='+mo),j(`/api/payroll/${mo}/status`),j('/api/payroll/adjustments?month='+mo)]);
+   const tot=r.reduce((a,x)=>a+x.net_pay,0);
+   $('#pub').innerHTML=st.published?`<span class="tag good">Published${st.published_by?' by '+esc(st.published_by):''}</span> <button id="unp">Unpublish</button>`:`<span class="tag">Not published</span> <button id="pb">Publish payslips</button>`;
+   if(st.published)$('#unp').onclick=safe(async()=>{await post(`/api/payroll/${mo}/unpublish`,{});load()}); else $('#pb').onclick=safe(async()=>{if(confirm('Publish payslips for '+mo+'? Employees will be able to download them.')){await post(`/api/payroll/${mo}/publish`,{});load()}});
+   listCache=adj; $('#adj').innerHTML=adj.length?tbl([['name','Employee'],['label','Adjustment'],['amount','Amount'],['x','',r=>`<button onclick="delAdj(${listCache.indexOf(r)})">Remove</button>`]],adj):'';
+   $('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['monthly_salary','Monthly salary'],['days_in_month','Days'],['paid_days','Paid days'],['unpaid_days','Unpaid days'],['adjustments','Adjustments'],['net_pay','Net pay'],['pdf','Payslip',x=>`<a target="_blank" href="/api/payslips/${encodeURIComponent(x.device_user_id)}/${mo}.pdf">PDF</a>`]],r)+`<p><b>Total net pay: ${tot.toFixed(2)}</b>${r.length&&!r[0].month_complete?' <span class="tag warn">month not finished: days still to come are not counted</span>':''}</p>`};
+  $('#mo').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/payroll.csv?month='+$('#mo').value}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/payroll.xlsx?month='+$('#mo').value};
+  $('#ab').onclick=safe(async()=>{await post('/api/payroll/adjustments',{month:$('#mo').value,device_user_id:$('#ae').value,label:$('#al').value,amount:+$('#aa').value});$('#al').value='';$('#aa').value='';load()}); load();
  } else if(tab=='shifts'){
   m.innerHTML=`<div class="bar"><input type="hidden" id="sid"><input id="sn" placeholder="Shift name"> start <input type="time" id="ss" value="09:00"> end <input type="time" id="se" value="18:00"> grace min <input id="sg" size=3 value="10"> half-day below (hrs) <input id="sh" size=3 value="4"> overtime after (min) <input id="so" size=3 value="30"> weekly off <input id="sw" size=10 value="SUN" placeholder="SUN or SAT,SUN"> <button id="s">Save shift</button></div>
    <p class="hint">Create a shift for each timing you use, then assign it to each employee in Employees. Employees without a shift are "flexible": never late, no overtime. Overnight shifts are not supported yet.</p><div id="t"></div>`;
@@ -130,12 +138,12 @@ async function render(){
  } else if(tab=='import'){
   m.innerHTML=`<p class="hint">Load data exported from another system (Excel .xlsx or .csv). Column names are matched automatically (for example "Emp Code", "Card No" and "ID" all work). Recommended order: <b>Shifts → Employees → Holidays → Leave → Punches</b>. Preview first: nothing is saved until you untick "Preview only".</p>
    <div class="bar"><select id="ik"><option value="shifts">Shifts</option><option value="employees">Employees</option><option value="holidays">Holidays</option><option value="leaves">Leave</option><option value="punches">Punches (attendance history)</option></select>
-   <input type="file" id="if" accept=".csv,.xlsx,.txt"> <label><input type="checkbox" id="idry" checked> Preview only</label> <button id="ib">Run</button> <a href="#" id="itpl">Download template</a></div><div id="t"></div>`;
+   <input type="file" id="if" accept=".csv,.xlsx,.txt"> <label><input type="checkbox" id="idry" checked> Preview only</label> <label title="For the InActive / resigned employee list: keeps their records but hides them from reports"><input type="checkbox" id="iina"> These are resigned staff</label> <button id="ib">Run</button> <a href="#" id="itpl">Download template</a></div><div id="t"></div>`;
   $('#itpl').onclick=e=>{e.target.href='/api/import/'+$('#ik').value+'/template.csv'};
   $('#ib').onclick=safe(async()=>{const f=$('#if').files[0]; if(!f){alert('Choose a file first');return}
    const dry=$('#idry').checked; if(!dry&&!confirm('Import for real? This writes to the database.'))return;
    const fd=new FormData(); fd.append('file',f); $('#ib').disabled=true;
-   try{const r=await j(`/api/import/${$('#ik').value}?dry_run=${dry}`,{method:'POST',body:fd});
+   try{const r=await j(`/api/import/${$('#ik').value}?dry_run=${dry}&inactive=${$('#iina').checked&&$('#ik').value=='employees'}`,{method:'POST',body:fd});
     $('#t').innerHTML=`<div class="toast">${dry?'<b>Preview (nothing saved):</b> ':'<b>Imported:</b> '}${r.rows} rows read · ${r.created} new · ${r.updated} updated · ${r.skipped} skipped${r.errors.length?' · '+r.errors.length+' problems':''}</div>`+(r.errors.length?tbl([['row','Row in file'],['message','Problem']],r.errors):'')+(dry&&!r.errors.length?'<p class="hint">Looks good. Untick "Preview only" and press Run to import.</p>':'');
    }finally{$('#ib').disabled=false}});
  } else if(tab=='users'){
@@ -151,14 +159,19 @@ async function render(){
   m.innerHTML=`<p class="hint">Devices appear here automatically the first time they contact the server. Online = heard from in the last 90 seconds.</p><div id="t"></div>`;
   listCache=devs;
   $('#t').innerHTML=tbl([['name','Name',r=>esc(r.name||r.dev_id)],['location','Location'],['dev_id','Device ID'],['model','Model',r=>esc(r.model)+(r.firmware?' <span class="hint">'+esc(r.firmware)+'</span>':'')],['online','Status',r=>r.online?'<span class="tag good">Online</span>':'<span class="tag bad">Offline</span>'],['last_seen','Last seen'],['x','',r=>`<button onclick="renameDev(${listCache.indexOf(r)})">Edit</button>`]],devs);
+
  } else if(tab=='emp'){
-  m.innerHTML=`<div class="bar"><input id="i" placeholder="Employee / device ID" size=14><input id="n" placeholder="Name"><input id="dp" placeholder="Department" size=12> ${shiftSel('es')} <input id="sal" placeholder="Monthly salary" size=10 type="number"> joined <input type="date" id="jd"><button id="s">Save</button></div>
-   <p class="hint">Use the same ID that is enrolled on the fingerprint device. Assign each person a shift, and set a joining date for anyone who joined this month (days before it are not counted). Set a PIN so the person can use the phone app.</p><div id="t"></div>`;
+  m.innerHTML=`<div class="bar"><input id="i" placeholder="Employee / device ID" size=14><input id="n" placeholder="Name"><input id="dp" placeholder="Department" size=12><input id="dg" placeholder="Designation" size=12><input id="br" placeholder="Branch" size=10><input id="mb" placeholder="Mobile" size=11><input id="fn" placeholder="Father's name" size=12> ${shiftSel('es')} <input id="sal" placeholder="Monthly salary" size=10 type="number"> joined <input type="date" id="jd"> <label><input type="checkbox" id="ac" checked>Active</label><button id="s">Save</button></div>
+   <div class="bar"><b>Bulk:</b> tick people below, then ${shiftSel('bs')} <button id="bb">Assign shift to selected</button> <span class="hint">Use "No shift" to make them flexible. IDs ignore leading zeros (00217315 = 217315).</span></div>
+   <p class="hint">Use the same ID that is enrolled on the fingerprint device. Set a PIN so the person can use the phone app.</p><div id="t"></div>`;
   listCache=emps;
-  $('#t').innerHTML=tbl([['device_user_id','ID'],['name','Name'],['department','Dept'],['shift','Shift'],['salary','Salary'],['joined','Joined'],['active','Active'],
+  $('#t').innerHTML=tbl([['sel','<input type="checkbox" id="all">',r=>`<input type="checkbox" class="sel" value="${esc(r.device_user_id)}">`],['device_user_id','ID'],['name','Name'],['department','Dept'],['designation','Designation'],['branch','Branch'],['shift','Shift'],['salary','Salary'],['joined','Joined'],['active','Active'],
     ['pin','App PIN',r=>`<button onclick="setPin(${listCache.indexOf(r)})">${r.pin_hash?'Change':'Set'} PIN</button>`],
     ['x','',r=>`<button onclick="editEmp(${listCache.indexOf(r)})">Edit</button>`]],emps);
-  $('#s').onclick=safe(async()=>{await post('/api/employees',{device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value,shift_id:$('#es').value?+$('#es').value:null,salary:+($('#sal').value||0),joined:$('#jd').value});render()});
+  $('#all').onclick=e=>document.querySelectorAll('.sel').forEach(c=>c.checked=e.target.checked);
+  $('#bb').onclick=safe(async()=>{const ids=[...document.querySelectorAll('.sel:checked')].map(c=>c.value);if(!ids.length){alert('Tick at least one employee');return}
+   const r=await post('/api/employees/bulk-shift',{ids,shift_id:$('#bs').value?+$('#bs').value:null});alert(r.updated+' employees updated');render()});
+  $('#s').onclick=safe(async()=>{await post('/api/employees',{device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value,designation:$('#dg').value,branch:$('#br').value,mobile:$('#mb').value,father_name:$('#fn').value,active:$('#ac').checked,shift_id:$('#es').value?+$('#es').value:null,salary:+($('#sal').value||0),joined:$('#jd').value});render()});
  } else {
   m.innerHTML=`<div class="bar"><input id="sn" placeholder="Site name"><input id="la" placeholder="Latitude" size=10><input id="lo" placeholder="Longitude" size=10><input id="ra" placeholder="Radius (m)" value="150" size=6><button id="gps">Use my location</button><button id="s">Add site</button></div>
    <p class="hint">App punches must be within the radius of a site. With no sites, locations are recorded but never blocked. Tip: stand at the office, open this page on your phone and tap "Use my location".</p><div id="t"></div>`;
@@ -171,7 +184,8 @@ async function render(){
 // row actions use list indexes (never put text in inline handlers)
 function editUser(i){const u=listCache[i];$('#un').value=u.username;$('#ud').value=u.display_name;$('#up').value='';$('#ur').value=u.role;$('#ut').value=u.department;$('#ua').checked=!!u.active}
 const delUser=safe(async i=>{if(confirm('Delete user '+listCache[i].username+'?')){await j('/api/users/'+encodeURIComponent(listCache[i].username),{method:'DELETE'});render()}});
-function editEmp(i){const e=listCache[i];$('#i').value=e.device_user_id;$('#n').value=e.name;$('#dp').value=e.department;$('#es').value=e.shift_id??'';$('#sal').value=e.salary||'';$('#jd').value=e.joined||''}
+const delAdj=safe(async i=>{await j('/api/payroll/adjustments/'+listCache[i].id,{method:'DELETE'});render()});
+function editEmp(i){const e=listCache[i];$('#i').value=e.device_user_id;$('#n').value=e.name;$('#dp').value=e.department;$('#dg').value=e.designation||'';$('#br').value=e.branch||'';$('#mb').value=e.mobile||'';$('#fn').value=e.father_name||'';$('#ac').checked=!!e.active;$('#es').value=e.shift_id??'';$('#sal').value=e.salary||'';$('#jd').value=e.joined||'';window.scrollTo(0,0)}
 function editShift(i){const s=listCache[i];$('#sid').value=s.id;$('#sn').value=s.name;$('#ss').value=s.start;$('#se').value=s.end;$('#sg').value=s.grace_min;$('#sh').value=s.half_day_hours;$('#so').value=s.ot_after_min;$('#sw').value=s.weekly_off}
 const delShift=safe(async id=>{if(confirm('Delete this shift? Its employees become flexible.')){await j('/api/shifts/'+id,{method:'DELETE'});render()}});
 const delHoliday=safe(async i=>{if(confirm('Delete this holiday?')){await j('/api/holidays/'+listCache[i].date,{method:'DELETE'});render()}});

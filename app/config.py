@@ -32,3 +32,6 @@ PUBLIC_DOMAIN = os.getenv("PUBLIC_DOMAIN", "")
 # When true the app refuses to start without any login (set in docker-compose so a missing ADMIN_PASSWORD can never
 # leave a hosted dashboard open to the internet).
 REQUIRE_LOGIN = os.getenv("REQUIRE_LOGIN", "") not in ("", "0", "false")
+# Shown on payslips
+COMPANY_NAME = os.getenv("COMPANY_NAME", "")
+COMPANY_ADDRESS = os.getenv("COMPANY_ADDRESS", "")

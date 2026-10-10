@@ -531,3 +531,52 @@ def test_management_role_and_bulk_shift_and_new_employee_fields(tmp_path, monkey
         gina = [x for x in admin.get("/api/employees").json() if x["device_user_id"] == "77"][0]
         assert (gina["active"], gina["designation"], gina["branch"], gina["mobile"]) == (0, "Clerk", "Pune", "12345")
         assert "77" not in {x["device_user_id"] for x in admin.get("/api/reports/monthly?month=2025-09").json()}
+
+
+def test_payslips_publish_adjustments_and_self_service(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "pay.db"))
+    monkeypatch.setattr(config, "COMPANY_NAME", "Test Travels Pvt Ltd")
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "Pay 9-6", "start": "09:00", "end": "18:00"})
+        sid = c.get("/api/shifts").json()[0]["id"]
+        c.post("/api/employees", json={"device_user_id": "P1", "name": "Priya", "shift_id": sid, "salary": 30000, "designation": "Exec"})
+        c.post("/api/employees", json={"device_user_id": "P2", "name": "NoSalary", "shift_id": sid})
+        for uid in ("P1", "P2"):
+            c.post(f"/api/employees/{uid}/pin", json={"pin": "1234"})
+        # June 2025 (30 days, 5 Sundays): present Mon 2 Jun only, rest absent -> paid = 1 + 5 Sundays = 6 days
+        c.post("/api/punches", json={"device_user_id": "P1", "ts": "2025-06-02 09:00:00"})
+        c.post("/api/punches", json={"device_user_id": "P1", "ts": "2025-06-02 18:00:00"})
+        row = [r for r in c.get("/api/reports/payroll?month=2025-06").json() if r["device_user_id"] == "P1"][0]
+        assert row["paid_days"] == 6 and row["net_pay"] == 6000.0
+        # adjustments: bonus +500, advance -200 -> net 6300; validation
+        post = lambda **k: c.post("/api/payroll/adjustments", json={"month": "2025-06", "device_user_id": "P1", **k})
+        assert post(label="Bonus", amount=500).status_code == 200 and post(label="Advance", amount=-200).status_code == 200
+        assert post(label="", amount=5).status_code == 400 and post(label="x", amount=0).status_code == 400
+        assert c.post("/api/payroll/adjustments", json={"month": "2025-6", "device_user_id": "P1", "label": "x", "amount": 1}).status_code == 400
+        assert c.post("/api/payroll/adjustments", json={"month": "2025-06", "device_user_id": "NOPE", "label": "x", "amount": 1}).status_code == 404
+        d = c.get("/api/payslips/P1/2025-06.pdf")
+        assert d.status_code == 200 and d.content.startswith(b"%PDF") and b"Test Travels Pvt Ltd" in d.content and b"Bonus" in d.content
+        slip = __import__("app.reports", fromlist=["payslip"]).payslip("2025-06", "P1")
+        assert slip["net_pay"] == 6300.0 and slip["gross"] == 30500.0 and slip["total_deductions"] == 24200.0
+        # employees see nothing until HR publishes, and only a finished month can be published
+        tok = c.post("/api/app/login", json={"employee_id": "P1", "pin": "1234"}).json()["token"]
+        auth = {"Authorization": "Bearer " + tok}
+        assert c.get("/api/app/payslips", headers=auth).json() == []
+        assert c.get("/api/app/payslip/2025-06.pdf", headers=auth).status_code == 404
+        from app.timeutil import now_local
+        assert c.post(f"/api/payroll/{now_local().strftime('%Y-%m')}/publish").status_code == 400
+        assert c.post("/api/payroll/2025-06/publish").status_code == 200
+        assert c.get("/api/payroll/2025-06/status").json()["published"] == 1
+        assert c.get("/api/app/payslips", headers=auth).json() == [{"month": "2025-06", "net_pay": 6300.0}]
+        mine = c.get("/api/app/payslip/2025-06.pdf", headers=auth)
+        assert mine.status_code == 200 and mine.content.startswith(b"%PDF") and b"Priya" in mine.content
+        # a published month is frozen; an employee can never fetch someone else's slip or a month that is not published
+        assert post(label="Late fix", amount=50).status_code == 400
+        assert c.get("/api/app/payslip/2025-05.pdf", headers=auth).status_code == 404
+        tok2 = c.post("/api/app/login", json={"employee_id": "P2", "pin": "1234"}).json()["token"]
+        assert c.get("/api/app/payslips", headers={"Authorization": "Bearer " + tok2}).json() == []       # no salary set
+        assert c.get("/api/app/payslip/2025-06.pdf", headers={"Authorization": "Bearer " + tok2}).status_code == 404
+        assert c.get("/api/app/payslips").status_code == 401
+        # unpublish hides it again and unfreezes edits
+        c.post("/api/payroll/2025-06/unpublish")
+        assert c.get("/api/app/payslips", headers=auth).json() == [] and post(label="Late fix", amount=50).status_code == 200

@@ -83,6 +83,33 @@ def conn() -> sqlite3.Connection:
     return c
 
 
+def canon_id(value) -> str:
+    """Canonical employee/punch id: trimmed, and for all-digit ids leading zeros are ignored, so 00217315 and 217315
+    are the same person (the vendor system treated them as two employees)."""
+    v = str(value or "").strip()
+    return (v.lstrip("0") or "0") if v.isdigit() else v
+
+
+def _canonicalize(c):
+    """One-time (idempotent) merge of ids that differ only by leading zeros."""
+    ids = {r[0] for r in c.execute("SELECT device_user_id FROM employees UNION SELECT device_user_id FROM punches "
+                                   "UNION SELECT device_user_id FROM leaves")}
+    for old in sorted(i for i in ids if canon_id(i) != i):
+        new = canon_id(old)
+        c.execute("UPDATE OR IGNORE punches SET device_user_id=? WHERE device_user_id=?", (new, old))
+        c.execute("DELETE FROM punches WHERE device_user_id=?", (old,))   # exact duplicates of already-present punches
+        c.execute("UPDATE leaves SET device_user_id=? WHERE device_user_id=?", (new, old))
+        keep = c.execute("SELECT 1 FROM employees WHERE device_user_id=?", (new,)).fetchone()
+        if keep:   # both rows exist: fill any gaps in the canonical row from the old one, then drop the old one
+            c.execute("UPDATE employees SET pin_hash=COALESCE(pin_hash,(SELECT pin_hash FROM employees WHERE device_user_id=?)), "
+                      "shift_id=COALESCE(shift_id,(SELECT shift_id FROM employees WHERE device_user_id=?)), "
+                      "joined=COALESCE(joined,(SELECT joined FROM employees WHERE device_user_id=?)) WHERE device_user_id=?",
+                      (old, old, old, new))
+            c.execute("DELETE FROM employees WHERE device_user_id=?", (old,))
+        else:
+            c.execute("UPDATE employees SET device_user_id=? WHERE device_user_id=?", (new, old))
+
+
 def init():
     c = conn()
     c.executescript(SCHEMA)
@@ -94,12 +121,14 @@ def init():
     for col, decl in {"pin_hash": "TEXT", "shift_id": "INTEGER", "salary": "REAL NOT NULL DEFAULT 0", "joined": "TEXT"}.items():
         if col not in emp_cols:
             c.execute(f"ALTER TABLE employees ADD COLUMN {col} {decl}")
+    _canonicalize(c)
     c.commit()
 
 
 def add_punch(device_user_id: str, ts: datetime | str, status: int = 0, source: str = "", **extra) -> dict | None:
     """Insert a punch. Returns the stored record, or None if duplicate/debounced.
     extra may hold: method, lat, lng, accuracy, selfie, site_id, distance_m, flag."""
+    device_user_id = canon_id(device_user_id)
     if isinstance(ts, datetime):
         ts = ts.strftime("%Y-%m-%d %H:%M:%S")
     c = conn()

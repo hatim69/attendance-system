@@ -85,25 +85,25 @@ async function render(){
   $('#d').onchange=load; $('#dv').onchange=load;
   $('#mp_b').onclick=safe(async()=>{const r=await post('/api/punches',{device_user_id:$('#mp_e').value,ts:$('#mp_t').value.replace('T',' ')+':00'});if(!r.stored)alert('Not saved: a punch within a minute of that time already exists');load()}); load();
  } else if(tab=='daily'){
-  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()} <select id="f"><option value="">All</option><option>Present</option><option>Late</option><option>Half Day</option><option>Absent</option><option>Leave</option></select> <a href="#" id="csv">Download CSV</a></div><div id="t"></div>`;
+  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()} <select id="f"><option value="">All</option><option>Present</option><option>Late</option><option>Half Day</option><option>Absent</option><option>Leave</option></select> <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a></div><div id="t"></div>`;
   const load=async()=>{let r=await j('/api/reports/daily?day='+$('#d').value+dq()); if($('#f').value)r=r.filter(x=>x.status==$('#f').value);
    $('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['shift','Shift'],['first_in','In'],['last_out','Out'],['hours','Hours'],['late_min','Late',r=>mins(r.late_min)],['early_min','Early out',r=>mins(r.early_min)],['ot_min','Overtime',r=>mins(r.ot_min)],['status','Status'],['note','Note']],r)};
-  $('#d').onchange=load; $('#dv').onchange=load; $('#f').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/daily.csv?day='+$('#d').value+dq()}; load();
+  $('#d').onchange=load; $('#dv').onchange=load; $('#f').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/daily.csv?day='+$('#d').value+dq()}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/daily.xlsx?day='+$('#d').value+dq()}; load();
  } else if(tab=='monthly'){
-  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> ${devSel()} <a href="#" id="csv">Download CSV</a></div><div id="t"></div>`;
+  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> ${devSel()} <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a></div><div id="t"></div>`;
   const load=async()=>$('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['shift','Shift'],['days_present','Present'],['late_days','Late days'],['half_days','Half'],['absent','Absent'],['leave','Leave'],['holidays','Hol.'],['weekly_offs','W.off'],['total_hours','Hours'],['overtime_hours','OT hrs'],['late_minutes','Late min'],['paid_days','Paid days']],await j('/api/reports/monthly?month='+$('#mo').value+dq()));
-  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/monthly.csv?month='+$('#mo').value+dq()}; load();
+  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/monthly.csv?month='+$('#mo').value+dq()}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/monthly.xlsx?month='+$('#mo').value+dq()}; load();
  } else if(tab=='sheet'){
-  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> ${devSel()} <a href="#" id="csv">Download CSV</a> <span class="hint">P present · L late · HD half day · A absent · LV leave · H holiday · WO weekly off</span></div><div id="t"></div>`;
+  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> ${devSel()} <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a> <span class="hint">P present · L late · HD half day · A absent · LV leave · H holiday · WO weekly off</span></div><div id="t"></div>`;
   const load=async()=>{const g=await j('/api/reports/grid?month='+$('#mo').value+dq());
    $('#t').innerHTML=`<table class="sheet"><tr><th>Employee</th>${g.days.map(d=>`<th>${d}</th>`).join('')}</tr>${g.rows.map(r=>`<tr><td>${esc(r.name)}</td>${r.codes.map(c=>`<td class="c-${c}">${c}</td>`).join('')}</tr>`).join('')}</table>`};
-  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/grid.csv?month='+$('#mo').value+dq()}; load();
+  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/grid.csv?month='+$('#mo').value+dq()}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/grid.xlsx?month='+$('#mo').value+dq()}; load();
  } else if(tab=='payroll'){
-  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <a href="#" id="csv">Download CSV</a></div>
+  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a></div>
    <p class="hint">Pay = monthly salary ÷ days in month × paid days (present, paid leave, holidays and weekly offs; half day = 0.5). No tax, PF/ESI or allowances. Run it after the month ends; set salaries in Employees.</p><div id="t"></div>`;
   const load=async()=>{const r=await j('/api/reports/payroll?month='+$('#mo').value); const tot=r.reduce((a,x)=>a+x.net_pay,0);
    $('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['monthly_salary','Monthly salary'],['days_in_month','Days'],['paid_days','Paid days'],['unpaid_days','Unpaid days'],['net_pay','Net pay']],r)+`<p><b>Total net pay: ${tot.toFixed(2)}</b>${r.length&&!r[0].month_complete?' <span class="tag warn">month not finished: days still to come are not counted</span>':''}</p>`};
-  $('#mo').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/payroll.csv?month='+$('#mo').value}; load();
+  $('#mo').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/payroll.csv?month='+$('#mo').value}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/payroll.xlsx?month='+$('#mo').value}; load();
  } else if(tab=='shifts'){
   m.innerHTML=`<div class="bar"><input type="hidden" id="sid"><input id="sn" placeholder="Shift name"> start <input type="time" id="ss" value="09:00"> end <input type="time" id="se" value="18:00"> grace min <input id="sg" size=3 value="10"> half-day below (hrs) <input id="sh" size=3 value="4"> overtime after (min) <input id="so" size=3 value="30"> weekly off <input id="sw" size=10 value="SUN" placeholder="SUN or SAT,SUN"> <button id="s">Save shift</button></div>
    <p class="hint">Create a shift for each timing you use, then assign it to each employee in Employees. Employees without a shift are "flexible": never late, no overtime. Overnight shifts are not supported yet.</p><div id="t"></div>`;

@@ -30,7 +30,7 @@ def sync_device(addr: str) -> int:
                 c.execute(
                     "INSERT INTO employees(device_user_id, name) VALUES (?,?) "
                     "ON CONFLICT(device_user_id) DO NOTHING",
-                    (str(u.user_id), u.name or f"User {u.user_id}"),
+                    (db.canon_id(u.user_id), u.name or f"User {u.user_id}"),
                 )
             c.commit()
             recent = datetime.now() - timedelta(minutes=5)

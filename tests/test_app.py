@@ -59,7 +59,7 @@ def test_fkweb_real_device_capture(tmp_path, monkeypatch):
         r = post(port, "receive_cmd", b'{"fk_name":"M61BH"}', "trans_id: 40\r\n")
         assert "response_code: ERROR_NO_CMD" in r and "trans_id: 40" in r
         punches = c.get("/api/punches?day=2026-10-10").json()
-        assert [p["device_user_id"] for p in punches] == ["00217228"]
+        assert [p["device_user_id"] for p in punches] == ["217228"]   # leading zeros ignored
         assert punches[0]["ts"] == "2026-10-10 14:04:44" and punches[0]["source"] == "RSS202506120926"
 
 
@@ -251,3 +251,48 @@ def test_joining_date_excludes_earlier_days():
         after = {r["device_user_id"]: r["status"] for r in c.get("/api/reports/daily?day=2025-09-16").json()}
         assert before["J1"] == "" and after["J1"] == "Absent"
         assert [e for e in c.get("/api/employees").json() if e["device_user_id"] == "J1"][0]["joined"] == "2025-09-15"
+
+
+def test_leading_zero_ids_are_the_same_person():
+    from app import db as appdb
+    assert [appdb.canon_id(x) for x in ("00217315", "217315", " 007 ", "0", "000", "AB-01", "")] == ["217315", "217315", "7", "0", "0", "AB-01", ""]
+    with TestClient(app) as c:
+        c.post("/api/employees", json={"device_user_id": "00555", "name": "Zed"})
+        assert [e["device_user_id"] for e in c.get("/api/employees").json() if e["name"] == "Zed"] == ["555"]
+        c.post("/api/employees/0555/pin", json={"pin": "2468"})                      # any zero-padding works
+        assert c.post("/api/app/login", json={"employee_id": "00000555", "pin": "2468"}).status_code == 200
+        c.post("/api/punches", json={"device_user_id": "0000555", "ts": "2025-04-07 09:00:00"})
+        assert [p["device_user_id"] for p in c.get("/api/punches?day=2025-04-07").json() if p["name"] == "Zed"] == ["555"]
+
+
+def test_duplicate_ids_are_merged_on_startup():
+    """Data created before the rule (or by the vendor import) with 217315 and 00217315 as two people."""
+    from app import db as appdb
+    c = appdb.conn()
+    c.execute("INSERT INTO employees(device_user_id,name,department) VALUES ('00777','Twin Old','Ops')")
+    c.execute("INSERT INTO employees(device_user_id,name,department,pin_hash) VALUES ('777','Twin New','Ops','h$h')")
+    c.execute("INSERT INTO employees(device_user_id,name) VALUES ('00888','Solo')")
+    c.execute("INSERT INTO punches(device_user_id,ts,source) VALUES ('00777','2025-05-05 09:00:00','d1'),('777','2025-05-05 09:00:00','d1'),('777','2025-05-05 17:00:00','d1')")
+    c.execute("INSERT INTO leaves(device_user_id,start_date,end_date) VALUES ('00777','2025-05-06','2025-05-06')")
+    c.commit()
+    appdb.init()
+    emps = {r["device_user_id"]: r["name"] for r in c.execute("SELECT * FROM employees WHERE device_user_id IN ('777','00777','888','00888')")}
+    assert emps == {"777": "Twin New", "888": "Solo"}
+    assert c.execute("SELECT COUNT(*) FROM punches WHERE device_user_id='777'").fetchone()[0] == 2   # the exact duplicate collapsed
+    assert c.execute("SELECT COUNT(*) FROM punches WHERE device_user_id='00777'").fetchone()[0] == 0
+    assert c.execute("SELECT device_user_id FROM leaves WHERE start_date='2025-05-06'").fetchone()[0] == "777"
+    assert c.execute("SELECT pin_hash FROM employees WHERE device_user_id='777'").fetchone()[0] == "h$h"
+
+
+def test_excel_exports_and_formula_injection_guard():
+    import io as _io
+    from openpyxl import load_workbook
+    with TestClient(app) as c:
+        c.post("/api/employees", json={"device_user_id": "X1", "name": "=HYPERLINK(\"http://evil\",\"x\")", "department": "+cmd"})
+        for path in ("daily?day=2025-06-02", "monthly?month=2025-06", "grid?month=2025-06", "payroll?month=2025-06"):
+            r = c.get(f"/api/reports/{path.split('?')[0]}.xlsx?" + path.split("?")[1])
+            assert r.status_code == 200 and r.headers["content-type"].startswith("application/vnd.openxmlformats")
+            rows = list(load_workbook(_io.BytesIO(r.content)).active.iter_rows(values_only=True))
+            assert len(rows) >= 2
+            assert not any(isinstance(v, str) and v[:1] in "=+@" for row in rows for v in row)
+        assert "'=HYPERLINK" in c.get("/api/reports/daily.csv?day=2025-06-02").text

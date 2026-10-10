@@ -20,7 +20,7 @@ class Login(BaseModel):
 
 def current_employee(authorization: str = Header(default="")) -> dict:
     emp_id = auth.read_token(authorization.removeprefix("Bearer ").strip())
-    row = db.conn().execute("SELECT * FROM employees WHERE device_user_id=? AND active=1", (emp_id or "",)).fetchone()
+    row = db.conn().execute("SELECT * FROM employees WHERE device_user_id=? AND active=1", (db.canon_id(emp_id),)).fetchone()
     if not row:
         raise HTTPException(401, "Please log in again")
     return dict(row)
@@ -32,7 +32,7 @@ def active_sites() -> list[dict]:
 
 @router.post("/login")
 def login(body: Login):
-    emp_id = body.employee_id.strip()
+    emp_id = db.canon_id(body.employee_id)
     if auth.locked(emp_id):
         raise HTTPException(429, "Too many wrong PINs. Try again in 5 minutes.")
     row = db.conn().execute("SELECT * FROM employees WHERE device_user_id=? AND active=1", (emp_id,)).fetchone()

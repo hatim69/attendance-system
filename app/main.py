@@ -10,7 +10,7 @@ import os
 import re
 
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -119,6 +119,9 @@ def list_employees():
 
 @app.post("/api/employees", dependencies=admin)
 def upsert_employee(e: EmployeeIn):
+    e.device_user_id = db.canon_id(e.device_user_id)
+    if not e.device_user_id:
+        raise HTTPException(400, "Employee ID is required")
     if e.joined:
         _valid_date(e.joined)
     c = db.conn()
@@ -134,6 +137,7 @@ def upsert_employee(e: EmployeeIn):
 
 @app.delete("/api/employees/{device_user_id}", dependencies=admin)
 def delete_employee(device_user_id: str):
+    device_user_id = db.canon_id(device_user_id)
     c = db.conn()
     c.execute("UPDATE employees SET active=0 WHERE device_user_id=?", (device_user_id,))
     c.commit()
@@ -142,6 +146,7 @@ def delete_employee(device_user_id: str):
 
 @app.post("/api/employees/{device_user_id}/pin", dependencies=admin)
 def set_pin(device_user_id: str, body: PinIn):
+    device_user_id = db.canon_id(device_user_id)
     if not auth.valid_pin(body.pin):
         raise HTTPException(400, "PIN must be 4-8 digits")
     c = db.conn()
@@ -277,6 +282,7 @@ def list_leaves(month: str | None = None):
 
 @app.post("/api/leaves", dependencies=admin)
 def add_leave(l: LeaveIn):
+    l.device_user_id = db.canon_id(l.device_user_id)
     _valid_date(l.start_date)
     _valid_date(l.end_date)
     if l.end_date < l.start_date:
@@ -363,14 +369,45 @@ def manual_punch(p: PunchIn):
     return {"stored": rec is not None}
 
 
+def _safe(v):
+    """Stop spreadsheet formula injection: a text cell starting with = + - @ would be executed by Excel."""
+    return "'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v
+
+
 def _csv(rows: list[dict], filename: str) -> PlainTextResponse:
     buf = io.StringIO()
     if rows:
         w = csv.DictWriter(buf, fieldnames=rows[0].keys())
         w.writeheader()
-        w.writerows(rows)
+        w.writerows([{k: _safe(v) for k, v in r.items()} for r in rows])
     return PlainTextResponse(buf.getvalue(), media_type="text/csv",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+def _xlsx(rows: list[dict], filename: str, title: str = "Report") -> Response:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    wb = Workbook()
+    ws = wb.active
+    ws.title = title[:31]
+    if rows:
+        ws.append(list(rows[0].keys()))
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+        for r in rows:
+            ws.append([_safe(v) for v in r.values()])
+        for col in ws.columns:  # readable column widths
+            ws.column_dimensions[col[0].column_letter].width = min(40, max(len(str(c.value or "")) for c in col) + 2)
+        ws.freeze_panes = "A2"
+    out = io.BytesIO()
+    wb.save(out)
+    return Response(out.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+def _grid_rows(g: dict) -> list[dict]:
+    return [{"ID": r["device_user_id"], "Name": r["name"], "Department": r["department"],
+             **{str(d): c for d, c in zip(g["days"], r["codes"])}} for r in g["rows"]]
 
 
 def _day(day): return day or now_local().date().isoformat()
@@ -404,10 +441,27 @@ def report_grid(month: str | None = None, device: str | None = None):
 
 @app.get("/api/reports/grid.csv", dependencies=admin)
 def report_grid_csv(month: str | None = None, device: str | None = None):
-    g = reports.grid(_month(month), device)
-    rows = [{"ID": r["device_user_id"], "Name": r["name"], "Department": r["department"],
-             **{str(d): c for d, c in zip(g["days"], r["codes"])}} for r in g["rows"]]
-    return _csv(rows, "attendance-sheet.csv")
+    return _csv(_grid_rows(reports.grid(_month(month), device)), "attendance-sheet.csv")
+
+
+@app.get("/api/reports/daily.xlsx", dependencies=admin)
+def report_daily_xlsx(day: str | None = None, device: str | None = None):
+    return _xlsx(reports.daily(_day(day), device), "attendance-daily.xlsx", "Daily")
+
+
+@app.get("/api/reports/monthly.xlsx", dependencies=admin)
+def report_monthly_xlsx(month: str | None = None, device: str | None = None):
+    return _xlsx(reports.monthly(_month(month), device), "attendance-monthly.xlsx", "Monthly")
+
+
+@app.get("/api/reports/grid.xlsx", dependencies=admin)
+def report_grid_xlsx(month: str | None = None, device: str | None = None):
+    return _xlsx(_grid_rows(reports.grid(_month(month), device)), "attendance-sheet.xlsx", "Sheet")
+
+
+@app.get("/api/reports/payroll.xlsx", dependencies=admin)
+def report_payroll_xlsx(month: str | None = None, device: str | None = None):
+    return _xlsx(reports.payroll(_month(month), device), "payroll.xlsx", "Payroll")
 
 
 @app.get("/api/reports/payroll", dependencies=admin)

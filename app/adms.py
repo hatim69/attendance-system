@@ -44,7 +44,7 @@ async def receive(request: Request, SN: str = "", table: str = ""):
                 if f.get("PIN"):
                     c.execute(
                         "INSERT INTO employees(device_user_id, name) VALUES (?,?) ON CONFLICT(device_user_id) DO NOTHING",
-                        (f["PIN"], f.get("Name") or f"User {f['PIN']}"),
+                        (db.canon_id(f["PIN"]), f.get("Name") or f"User {f['PIN']}"),
                     )
         c.commit()
     return _text(f"OK:{count}")

@@ -43,7 +43,7 @@ def parse_body(body: bytes) -> dict:
 
 
 def record_punch(dev_id: str, data: dict) -> dict | None:
-    uid, t = str(data.get("user_id", "")).strip(), str(data.get("io_time", ""))
+    uid, t = db.canon_id(data.get("user_id", "")), str(data.get("io_time", ""))
     if not uid or not re.fullmatch(r"\d{14}", t):
         return None
     ts = datetime.strptime(t, "%Y%m%d%H%M%S")

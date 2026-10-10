@@ -15,12 +15,12 @@ Open http://localhost:8000. Test without hardware: `python scripts/simulate_devi
 
 **Push mode (true real-time, ADMS):** on the device: Menu → Comm/COMM → Cloud Server Setting → Server Address = this server's IP, Port = 8000, enable Proxy off. The device POSTs to `/iclock/cdata`. Needs firmware with ADMS support.
 
-**FkWeb mode (Realtime / FK-series devices, e.g. T304F mini):** the device POSTs to the *Webserver URL* set in its Comm menu. Run the app on the TCP port set in the device (e.g. `--port 5005`) and set the URL to `http://<server-pc-ip>` (write down the old value first). Raw requests are logged to `fkweb_raw.log`; punch parsing is best-effort until verified with real traffic.
+**FkWeb mode (Realtime / FK-series devices, e.g. T304F mini = M61BH):** the device POSTs each scan to the *Webserver URL* in its Comm menu (set it to `http://<server-pc-ip>`). The app runs a built-in listener for this on port 80 (`FKWEB_PORT`, -1 disables). Allow the port in Windows Firewall. The device sends only user IDs, so unknown IDs get a placeholder name you can edit in the Employees tab. Raw requests are logged to `fkweb_raw.log`.
 
 Use either or both (duplicates are ignored).
 
 ## Config (env vars)
-`DB_PATH`, `ZK_DEVICES`, `ZK_PASSWORD`, `ZK_POLL_SECONDS`, `SHIFT_START` (09:00), `GRACE_MINUTES` (10), `DEBOUNCE_SECONDS` (60), `ADMIN_PASSWORD` (enables HTTP Basic auth, user `admin`; device endpoints stay open).
+`DB_PATH`, `FKWEB_PORT` (80), `ZK_DEVICES`, `ZK_PASSWORD`, `ZK_POLL_SECONDS`, `SHIFT_START` (09:00), `GRACE_MINUTES` (10), `DEBOUNCE_SECONDS` (60), `ADMIN_PASSWORD` (enables HTTP Basic auth, user `admin`; device endpoints stay open).
 
 ## Tests
 `pytest`

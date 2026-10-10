@@ -30,20 +30,16 @@ async def lifespan(app: FastAPI):
     db.init()
     hub.bind_loop(asyncio.get_running_loop())
     zk_poller.start()
+    fk_server = await fkweb.start()
     yield
+    if fk_server:
+        fk_server.close()
 
 
 app = FastAPI(title="Attendance System", lifespan=lifespan)
 app.include_router(adms.router)  # device-facing, no auth (devices can't do Basic auth)
 admin = [Depends(require_admin)]
 
-
-@app.middleware("http")
-async def fkweb_middleware(request, call_next):
-    # FkWeb devices (Realtime/FK series) POST to arbitrary paths with a request_code header.
-    if "request_code" in request.headers:
-        return await fkweb.handle(request)
-    return await call_next(request)
 
 
 class EmployeeIn(BaseModel):

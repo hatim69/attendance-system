@@ -12,3 +12,6 @@ GRACE_MINUTES = int(os.getenv("GRACE_MINUTES", "10"))
 DEBOUNCE_SECONDS = int(os.getenv("DEBOUNCE_SECONDS", "60"))
 # If set, the dashboard/API requires HTTP Basic auth (user: admin). Device endpoints stay open.
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+# Raw TCP port for FkWeb devices (Realtime/FK series). They post to the 'Webserver URL' on port 80.
+# -1 disables the listener, 0 picks a free port (tests).
+FKWEB_PORT = int(os.getenv("FKWEB_PORT", "80"))

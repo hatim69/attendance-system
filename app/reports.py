@@ -23,8 +23,19 @@ def _load():
     frag, args = access.scope_sql("department")
     emps = [dict(r) for r in c.execute("SELECT * FROM employees WHERE active=1" + frag + " ORDER BY name", args)]
     holidays = {r["date"]: r["name"] for r in c.execute("SELECT * FROM holidays")}
-    leaves = [dict(r) for r in c.execute("SELECT * FROM leaves")]
-    return shifts, emps, holidays, leaves
+    leaves = [dict(r) for r in c.execute("SELECT * FROM leaves WHERE status='approved'")]
+    changes: dict[str, list[dict]] = {}
+    for r in c.execute("SELECT * FROM shift_changes ORDER BY id"):
+        changes.setdefault(r["device_user_id"], []).append(dict(r))
+    return shifts, emps, holidays, leaves, changes
+
+
+def shift_on(e: dict, d: str, shifts: dict, changes: dict) -> dict | None:
+    """The shift an employee works on date `d`: the latest date-range change that covers it, else their normal shift."""
+    for ch in reversed(changes.get(e["device_user_id"], [])):
+        if ch["start_date"] <= d <= ch["end_date"]:
+            return shifts.get(ch["shift_id"])
+    return shifts.get(e["shift_id"])
 
 
 def _punch_map(d1: str, d2: str, device: str | None) -> dict:
@@ -93,11 +104,11 @@ def _month_days(month: str) -> tuple[list[str], str, str]:
 
 def daily(date: str, device: str | None = None) -> list[dict]:
     """One row per active employee for `date` (YYYY-MM-DD)."""
-    shifts, emps, holidays, leaves = _load()
+    shifts, emps, holidays, leaves, changes = _load()
     pm, today = _punch_map(date, date, device), now_local().date().isoformat()
     rows = []
     for e in emps:
-        sh = shifts.get(e["shift_id"])
+        sh = shift_on(e, date, shifts, changes)
         r = evaluate(e, sh, date, pm.get((e["device_user_id"], date)), holidays, leaves, today)
         r.update(device_user_id=e["device_user_id"], name=e["name"], department=e["department"],
                  designation=e["designation"], branch=e["branch"], shift=sh["name"] if sh else "")
@@ -106,12 +117,12 @@ def daily(date: str, device: str | None = None) -> list[dict]:
 
 
 def _month_results(month: str, device: str | None):
-    shifts, emps, holidays, leaves = _load()
+    shifts, emps, holidays, leaves, changes = _load()
     days, d1, d2 = _month_days(month)
     pm, today = _punch_map(d1, d2, device), now_local().date().isoformat()
     for e in emps:
-        sh = shifts.get(e["shift_id"])
-        yield e, sh, [evaluate(e, sh, d, pm.get((e["device_user_id"], d)), holidays, leaves, today) for d in days]
+        yield e, shifts.get(e["shift_id"]), [
+            evaluate(e, shift_on(e, d, shifts, changes), d, pm.get((e["device_user_id"], d)), holidays, leaves, today) for d in days]
 
 
 def _summary(e: dict, sh: dict | None, res: list[dict]) -> dict:
@@ -166,15 +177,16 @@ def muster(month: str, device: str | None = None) -> list[dict]:
 
 def timecard(month: str, employee_id: str, device: str | None = None) -> list[dict]:
     """One employee's day-by-day card for the month."""
-    shifts, emps, holidays, leaves = _load()
+    shifts, emps, holidays, leaves, changes = _load()
     e = next((x for x in emps if x["device_user_id"] == employee_id), None)
     if not e:
         return []
-    sh, (days, d1, d2) = shifts.get(e["shift_id"]), _month_days(month)
+    days, d1, d2 = _month_days(month)
     pm, today = _punch_map(d1, d2, device), now_local().date().isoformat()
-    offs = [o.strip().upper() for o in (sh["weekly_off"] if sh else config.WEEKLY_OFF).split(",") if o.strip()]
     rows = []
     for d in days:
+        sh = shift_on(e, d, shifts, changes)
+        offs = [o.strip().upper() for o in (sh["weekly_off"] if sh else config.WEEKLY_OFF).split(",") if o.strip()]
         r = evaluate(e, sh, d, pm.get((employee_id, d)), holidays, leaves, today)
         wd = WEEKDAYS[Date.fromisoformat(d).weekday()]
         rows.append({"date": d, "weekday": wd.title(),

@@ -440,7 +440,8 @@ def test_logins_roles_scope_and_audit(tmp_path, monkeypatch):
         assert {r["Code"] for r in mgr.get("/api/reports/muster?month=2025-09").json()} == {"A1", "C1"}
         assert mgr.get("/api/reports/payroll?month=2025-09").status_code == 403
         assert mgr.post("/api/employees", json={"device_user_id": "Z", "name": "z"}).status_code == 403
-        assert mgr.post("/api/punches", json={"device_user_id": "A1", "ts": "2025-09-02 09:00:00"}).status_code == 403
+        assert mgr.post("/api/punches", json={"device_user_id": "A1", "ts": "2025-09-02 09:00:00"}).status_code == 200   # own team
+        assert mgr.post("/api/punches", json={"device_user_id": "B1", "ts": "2025-09-02 09:00:00"}).status_code == 403   # not their team
         assert mgr.get("/api/audit").status_code == 403 and mgr.get("/api/import/employees/template.csv").status_code == 403
         assert mgr.get("/api/dashboard").json()["total"] == 2
         with __import__("pytest").raises(Exception):
@@ -489,7 +490,7 @@ def test_require_login_refuses_open_hosting(tmp_path, monkeypatch):
             pass
 
 
-def test_management_role_and_bulk_shift_and_new_employee_fields(tmp_path, monkeypatch):
+def test_management_is_admin_level_and_bulk_shift_and_new_employee_fields(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "mgmt.db"))
     monkeypatch.setattr(config, "ADMIN_PASSWORD", "admin-password-123")
     H = {"X-Requested-With": "fetch"}
@@ -510,14 +511,15 @@ def test_management_role_and_bulk_shift_and_new_employee_fields(tmp_path, monkey
         e = {x["device_user_id"]: x for x in admin.get("/api/employees").json()}
         assert e["1"]["shift"] == "Bulk 9-6" and e["1"]["designation"] == "Exec" and e["1"]["father_name"] == "Dad" and e["1"]["salary"] == 40000
         assert admin.post("/api/employees/bulk-shift", json={"ids": ["2"], "shift_id": None}).json() == {"updated": 1}
-        # management: everything read-only across ALL departments, never salaries or payroll
+        # management has admin power: sees everything including salaries, can run payroll and manage users
         boss = TestClient(app); boss.headers.update(H)
         assert boss.post("/api/auth/login", json={"username": "boss", "password": "boss-password-1"}).status_code == 200
         emps = boss.get("/api/employees").json()
-        assert {x["device_user_id"] for x in emps} == {"1", "2", "3"} and all(x["salary"] == 0 for x in emps)
-        assert boss.get("/api/reports/payroll?month=2025-09").status_code == 403
-        assert boss.post("/api/employees/bulk-shift", json={"ids": ["1"], "shift_id": sid}).status_code == 403
+        assert {x["device_user_id"] for x in emps} == {"1", "2", "3"} and all(x["salary"] == 40000 for x in emps)
+        assert boss.get("/api/reports/payroll?month=2025-09").status_code == 200
+        assert boss.post("/api/employees/bulk-shift", json={"ids": ["1"], "shift_id": sid}).status_code == 200
         assert boss.get("/api/dashboard").json()["total"] == 3
+        assert boss.get("/api/users").status_code == 200 and boss.get("/api/audit").status_code == 200
         # team lead: own department only
         lead = TestClient(app); lead.headers.update(H)
         lead.post("/api/auth/login", json={"username": "lead", "password": "lead-password-1"})
@@ -580,3 +582,95 @@ def test_payslips_publish_adjustments_and_self_service(tmp_path, monkeypatch):
         # unpublish hides it again and unfreezes edits
         c.post("/api/payroll/2025-06/unpublish")
         assert c.get("/api/app/payslips", headers=auth).json() == [] and post(label="Late fix", amount=50).status_code == 200
+
+
+def test_team_lead_powers_manual_grants_shift_changes_and_punch_fixes(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "tl.db"))
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "admin-password-123")
+    H = {"X-Requested-With": "fetch"}
+
+    def login(u, p):
+        cl = TestClient(app); cl.headers.update(H)
+        assert cl.post("/api/auth/login", json={"username": u, "password": p}).status_code == 200
+        return cl
+
+    with TestClient(app) as admin:
+        admin.headers.update(H)
+        admin.post("/api/auth/login", json={"username": "admin", "password": "admin-password-123"})
+        mk = lambda **k: admin.post("/api/users", json=k)
+        assert mk(username="lead", password="lead-password-1", role="manager", department="Ops").status_code == 200
+        assert mk(username="lead2", password="lead-password-2", role="manager", department="Ops", permissions="leave,employees").status_code == 200
+        assert mk(username="lead3", password="lead-password-3", role="manager", department="Ops", permissions="payroll_edit").status_code == 400   # not grantable
+        assert mk(username="lead4", password="lead-password-4", role="manager", department="Ops", permissions="import").status_code == 400
+        assert mk(username="hrx", password="hr-password-1x", role="hr", permissions="employees,leave").status_code == 200       # HR with abilities removed
+        assert mk(username="hry", password="hr-password-2y", role="hr", permissions="sites").status_code == 200                 # HR given an extra
+        assert mk(username="hrz", password="hr-password-3z", role="hr", permissions="bogus").status_code == 400
+        admin.post("/api/shifts", json={"name": "Early 7-4", "start": "07:00", "end": "16:00"})
+        admin.post("/api/shifts", json={"name": "Late 12-9", "start": "12:00", "end": "21:00"})
+        sh = {x["name"]: x["id"] for x in admin.get("/api/shifts").json()}
+        for uid, dp in (("1", "Ops"), ("2", "Ops"), ("3", "Sales")):
+            admin.post("/api/employees", json={"device_user_id": uid, "name": f"E{uid}", "department": dp, "shift_id": sh["Early 7-4"]})
+        lead, lead2 = login("lead", "lead-password-1"), login("lead2", "lead-password-2")
+        hrx, hry = login("hrx", "hr-password-1x"), login("hry", "hr-password-2y")
+
+        # --- team lead: shift change for own team only, new shifts yes, editing shared shifts no
+        r = lead.post("/api/shift-changes", json={"ids": ["1", "2"], "start_date": "2025-07-07", "end_date": "2025-07-08", "shift_id": sh["Late 12-9"]})
+        assert r.status_code == 200 and r.json() == {"created": 2}
+        assert lead.post("/api/shift-changes", json={"ids": ["3"], "start_date": "2025-07-07", "end_date": "2025-07-08", "shift_id": sh["Late 12-9"]}).status_code == 403
+        assert lead.post("/api/shifts", json={"name": "Lead's own 10-7", "start": "10:00", "end": "19:00"}).status_code == 200
+        assert lead.post("/api/shifts", json={"id": sh["Early 7-4"], "name": "Hacked", "start": "01:00", "end": "02:00"}).status_code == 403
+        assert lead.delete(f"/api/shifts/{sh['Early 7-4']}").status_code == 403
+        assert lead.post("/api/employees/bulk-shift", json={"ids": ["1"], "shift_id": sh["Late 12-9"]}).status_code == 403
+        assert {c["name"] for c in lead.get("/api/shift-changes?month=2025-07").json()} == {"E1", "E2"}
+        # the engine uses the changed shift on those dates only: 13:00 arrival is late on the early shift, fine on the late shift
+        for day in ("2025-07-07", "2025-07-09"):
+            lead.post("/api/punches", json={"device_user_id": "1", "ts": f"{day} 12:05:00"})
+            lead.post("/api/punches", json={"device_user_id": "1", "ts": f"{day} 21:00:00"})
+        st = lambda d: {r["device_user_id"]: r for r in admin.get(f"/api/reports/daily?day={d}").json()}["1"]
+        assert (st("2025-07-07")["status"], st("2025-07-07")["shift"]) == ("Present", "Late 12-9")
+        assert (st("2025-07-09")["status"], st("2025-07-09")["shift"]) == ("Late", "Early 7-4")
+        cid = lead.get("/api/shift-changes?month=2025-07").json()[0]["id"]
+        assert lead.delete(f"/api/shift-changes/{cid}").status_code == 200
+
+        # --- team lead: fix punch-in / punch-out for own team (day entry and single-punch correction)
+        r = lead.post("/api/punches/day", json={"employee_id": "2", "date": "2025-07-10", "in_time": "09:00", "out_time": "18:30", "remark": "forgot to punch"})
+        assert r.status_code == 200 and r.json() == {"stored": 2}
+        assert lead.post("/api/punches/day", json={"employee_id": "3", "date": "2025-07-10", "in_time": "09:00"}).status_code == 403
+        assert lead.post("/api/punches/day", json={"employee_id": "2", "date": "2025-07-10", "in_time": "9am"}).status_code == 400
+        assert lead.post("/api/punches/day", json={"employee_id": "2", "date": "2025-07-10"}).status_code == 400
+        assert lead.post("/api/punches/day", json={"employee_id": "2", "date": "2999-01-01", "in_time": "09:00"}).status_code == 400
+        assert lead.post("/api/punches/day", json={"employee_id": "2", "date": "2025-07-10", "in_time": "09:00"}).status_code == 409   # already there
+        pun = [p for p in admin.get("/api/punches?day=2025-07-10").json() if p["device_user_id"] == "2"]
+        assert {p["note"] for p in pun} == {"forgot to punch"} and {p["method"] for p in pun} == {"manual"}
+        out = [p for p in pun if p["ts"].endswith("18:30:00")][0]
+        assert lead.post(f"/api/punches/{out['id']}/correct", json={"ts": "2025-07-10 17:45", "remark": "left early"}).status_code == 200
+        assert lead.post(f"/api/punches/{out['id']}/correct", json={"ts": "garbage"}).status_code == 400
+        row = [r for r in admin.get("/api/reports/daily?day=2025-07-10").json() if r["device_user_id"] == "2"][0]
+        assert (row["first_in"], row["last_out"]) == ("09:00:00", "17:45:00")
+        after = admin.get("/api/punches?day=2025-07-10").json()
+        assert [p["flag"] for p in after if p["id"] == out["id"]] == ["rejected"]            # the old punch is kept, marked rejected
+        assert any(p["note"].startswith("corrected from 18:30") for p in after)
+        assert lead.post("/api/punches/99999/correct", json={"ts": "2025-07-10 10:00"}).status_code == 404
+
+        # --- manual grants: lead2 can manage leave / employees, but only for the own team, and nothing beyond the grant
+        assert lead2.post("/api/leaves", json={"device_user_id": "1", "start_date": "2025-07-14", "end_date": "2025-07-14", "type": "Paid"}).status_code == 200
+        assert lead2.post("/api/leaves", json={"device_user_id": "3", "start_date": "2025-07-14", "end_date": "2025-07-14", "type": "Paid"}).status_code == 403
+        assert lead.post("/api/leaves", json={"device_user_id": "1", "start_date": "2025-07-15", "end_date": "2025-07-15", "type": "Paid"}).status_code == 403   # no grant
+        assert lead2.post("/api/payroll/adjustments", json={"month": "2025-07", "device_user_id": "1", "label": "x", "amount": 1}).status_code == 403
+        assert lead2.get("/api/reports/payroll?month=2025-07").status_code == 403           # payroll view not granted
+        assert lead2.post("/api/import/employees?dry_run=true", files={"file": ("x.csv", b"id,name\n1,a")}).status_code == 403
+        assert lead2.post("/api/sites", json={"name": "s", "lat": 1, "lng": 1}).status_code == 403
+        # employees grant: allowed inside the team, refused outside it
+        assert lead2.post("/api/employees", json={"device_user_id": "1", "name": "Renamed", "department": "Ops"}).status_code == 200
+        assert lead2.post("/api/employees", json={"device_user_id": "3", "name": "Nope", "department": "Sales"}).status_code == 403
+        assert lead2.post("/api/employees", json={"device_user_id": "9", "name": "Sneaky", "department": "Sales"}).status_code == 403
+        assert lead2.post("/api/employees", json={"device_user_id": "1", "name": "Moved", "department": "Sales"}).status_code == 403   # cannot move out
+        assert lead2.post("/api/employees/bulk-shift", json={"ids": ["1", "3"], "shift_id": sh["Late 12-9"]}).status_code == 403
+
+        # --- HR with abilities removed / added
+        assert hrx.post("/api/employees", json={"device_user_id": "7", "name": "Seven", "department": "Ops"}).status_code == 200
+        assert hrx.post("/api/holidays", json={"date": "2025-08-15", "name": "x"}).status_code == 403        # holidays removed
+        assert hrx.get("/api/reports/payroll?month=2025-07").status_code == 403                               # payroll removed
+        assert hrx.post("/api/punches/day", json={"employee_id": "1", "date": "2025-07-10", "in_time": "09:00"}).status_code == 403   # punches removed
+        assert hry.post("/api/sites", json={"name": "HQ", "lat": 1.0, "lng": 1.0}).status_code == 200        # extra granted... 
+        assert hry.get("/api/reports/payroll?month=2025-07").status_code == 403                                # ...and an explicit list means only that

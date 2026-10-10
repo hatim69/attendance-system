@@ -9,7 +9,16 @@ from fastapi import HTTPException, Request
 
 from . import auth, config, db
 
-LEVEL = {"manager": 1, "management": 1, "hr": 2, "admin": 3}   # manager = team lead (one department)
+# manager = team lead (one department); management has the same power as admin
+LEVEL = {"manager": 1, "hr": 2, "admin": 3, "management": 3}
+# Abilities that can be switched on or off per person. admin and management always have all of them.
+#   hr: starts with HR_DEFAULT (permissions "*"); untick to remove, tick sites/devices to add.
+#   manager (team lead): has team-scoped shift changes and punch fixes by role; anything below is a manual extra
+#   and still only applies to their own team (MANAGER_GRANTABLE).
+HR_DEFAULT = ["employees", "shifts", "leave", "holidays", "punches", "import", "payroll", "payroll_edit"]
+ALL_PERMS = HR_DEFAULT + ["sites", "devices"]
+MANAGER_GRANTABLE = ["employees", "shifts", "leave", "holidays", "payroll"]
+HR_PERMS = ALL_PERMS    # kept for older imports
 COOKIE = "att_session"
 SESSION_TTL = 12 * 3600
 SAFE = {"GET", "HEAD", "OPTIONS"}
@@ -45,8 +54,8 @@ def session_user(request_or_ws) -> dict | None:
     return dict(row) if row else None
 
 
-def need(role: str):
-    """Dependency factory: require at least `role`. Async so the department scope set here is visible to the handler."""
+def need(role: str, perm: str | None = None):
+    """Dependency factory: require at least `role`; an HR user must also hold `perm` when one is given. Async so the department scope set here is visible to the handler."""
     async def dep(request: Request) -> dict:
         if open_mode():
             request.state.user = "(open)"
@@ -59,8 +68,8 @@ def need(role: str):
         request.state.user = user["username"]            # recorded in the audit log even when the request is refused
         if request.method not in SAFE and request.headers.get("x-requested-with") != "fetch":
             raise HTTPException(403, "Missing request header")       # CSRF guard: browsers cannot send this cross-site
-        if LEVEL[user["role"]] < LEVEL[role]:
-            raise HTTPException(403, "Your role does not allow this")
+        if not allowed(user, role, perm):
+            raise HTTPException(403, "Your account does not have access to this" + (f" ({perm})" if perm else ""))
         scope_dept.set((user["department"] or "\u0000") if user["role"] == "manager" else None)
         salary_visible.set(LEVEL[user["role"]] >= LEVEL["hr"])
         return user
@@ -71,3 +80,40 @@ def scope_sql(column: str) -> tuple[str, list]:
     """SQL fragment limiting rows to the manager's department."""
     d = scope_dept.get()
     return (f" AND {column}=?", [d]) if d is not None else ("", [])
+
+
+def perm_list(user: dict) -> list[str]:
+    raw = (user.get("permissions") or "").strip()
+    if user["role"] == "hr" and raw in ("", "*"):
+        return list(HR_DEFAULT)
+    return [p.strip() for p in raw.split(",") if p.strip() and p.strip() != "*"]
+
+
+def has_perm(user: dict, perm: str) -> bool:
+    if user["role"] in ("admin", "management"):
+        return True
+    return perm in perm_list(user)
+
+
+def allowed(user: dict, role: str, perm: str | None) -> bool:
+    """May this user use a route that needs `role`, optionally gated by ability `perm`?
+    admin/management: always. hr: needs the ability (so it can be removed or added). manager (team lead): open
+    routes by role, or any route whose ability was granted to them manually."""
+    r = user["role"]
+    if r in ("admin", "management"):
+        return True
+    if r == "hr":
+        return has_perm(user, perm) if perm else LEVEL["hr"] >= LEVEL[role]
+    if LEVEL["manager"] >= LEVEL[role]:                   # a route open to team leads (scoped to their team)
+        return True
+    return bool(perm) and has_perm(user, perm)             # manually granted extra
+
+
+def assert_in_scope(employee_id: str):
+    """A team lead may only act on employees in their own department."""
+    d = scope_dept.get()
+    if d is None:
+        return
+    row = db.conn().execute("SELECT department FROM employees WHERE device_user_id=?", (employee_id,)).fetchone()
+    if not row or row["department"] != d:
+        raise HTTPException(403, "That employee is not in your team")

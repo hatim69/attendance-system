@@ -101,6 +101,26 @@ class ReviewIn(BaseModel):
     flag: str  # 'rejected' | 'approved' | ''
 
 
+class ShiftChangeIn(BaseModel):
+    ids: list[str]
+    start_date: str
+    end_date: str
+    shift_id: int
+
+
+class DayPunchIn(BaseModel):
+    employee_id: str
+    date: str
+    in_time: str = ""
+    out_time: str = ""
+    remark: str = ""
+
+
+class CorrectIn(BaseModel):
+    ts: str
+    remark: str = ""
+
+
 class PunchIn(BaseModel):
     device_user_id: str
     ts: str  # "YYYY-MM-DD HH:MM:SS"
@@ -124,11 +144,13 @@ class UserIn(BaseModel):
     role: str = "manager"
     department: str = ""
     active: bool = True
+    permissions: str = "*"   # hr only: comma list of areas (employees,shifts,leave,holidays,punches,import,payroll) or *
 
 
 def _me(u: dict) -> dict:
     return {"username": u["username"], "role": u["role"], "department": u["department"],
-            "display_name": u["display_name"], "open_mode": u["username"] == "(open)"}
+            "display_name": u["display_name"], "open_mode": u["username"] == "(open)",
+            "permissions": u.get("permissions", "*")}
 
 
 @app.post("/api/auth/login")
@@ -178,7 +200,7 @@ async def auth_password(body: PasswordIn, u: dict = Depends(access.need("manager
 
 @app.get("/api/users", dependencies=[Depends(access.need("admin"))])
 def list_users():
-    return [dict(r) for r in db.conn().execute("SELECT username, display_name, role, department, active FROM users ORDER BY username")]
+    return [dict(r) for r in db.conn().execute("SELECT username, display_name, role, department, active, permissions FROM users ORDER BY username")]
 
 
 @app.post("/api/users")
@@ -189,7 +211,20 @@ async def save_user(body: UserIn, u: dict = Depends(access.need("admin"))):
     if body.role not in access.LEVEL:
         raise HTTPException(400, "Role must be admin, hr, management or manager")
     if body.role == "manager" and not body.department.strip():
-        raise HTTPException(400, "A manager needs a department")
+        raise HTTPException(400, "A team lead needs a department")
+    perms = [x.strip() for x in body.permissions.split(",") if x.strip()]
+    if body.role == "manager":
+        perms = [x for x in perms if x != "*"]      # "*" only means "the HR defaults"
+    if body.role == "hr":
+        if perms != ["*"] and any(x not in access.ALL_PERMS for x in perms):
+            raise HTTPException(400, "Abilities must be * or a list of: " + ", ".join(access.ALL_PERMS))
+        perm_text = "*" if perms in ([], ["*"]) else ",".join(perms)
+    elif body.role == "manager":
+        if any(x not in access.MANAGER_GRANTABLE for x in perms):
+            raise HTTPException(400, "A team lead can be granted only: " + ", ".join(access.MANAGER_GRANTABLE))
+        perm_text = ",".join(perms)
+    else:
+        perm_text = "*"      # admin and management always have everything
     if body.password and len(body.password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
     c = db.conn()
@@ -200,13 +235,13 @@ async def save_user(body: UserIn, u: dict = Depends(access.need("admin"))):
         if c.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND username!=?", (name,)).fetchone()[0] == 0:
             raise HTTPException(400, "There must be at least one active admin")
     if row:
-        c.execute("UPDATE users SET display_name=?, role=?, department=?, active=? WHERE username=?",
-                  (body.display_name, body.role, body.department.strip(), int(body.active), name))
+        c.execute("UPDATE users SET display_name=?, role=?, department=?, active=?, permissions=? WHERE username=?",
+                  (body.display_name, body.role, body.department.strip(), int(body.active), perm_text, name))
         if body.password:
             c.execute("UPDATE users SET password_hash=? WHERE username=?", (auth.hash_password(body.password), name))
     else:
-        c.execute("INSERT INTO users(username,display_name,password_hash,role,department,active) VALUES (?,?,?,?,?,?)",
-                  (name, body.display_name, auth.hash_password(body.password), body.role, body.department.strip(), int(body.active)))
+        c.execute("INSERT INTO users(username,display_name,password_hash,role,department,active,permissions) VALUES (?,?,?,?,?,?,?)",
+                  (name, body.display_name, auth.hash_password(body.password), body.role, body.department.strip(), int(body.active), perm_text))
     c.commit()
     return {"ok": True}
 
@@ -255,11 +290,16 @@ def list_employees():
     return rows
 
 
-@app.post("/api/employees", dependencies=[Depends(access.need("hr"))])
+@app.post("/api/employees", dependencies=[Depends(access.need("hr", "employees"))])
 def upsert_employee(e: EmployeeIn):
     e.device_user_id = db.canon_id(e.device_user_id)
     if not e.device_user_id:
         raise HTTPException(400, "Employee ID is required")
+    team = access.scope_dept.get()
+    if team is not None:   # a team lead with the 'employees' ability stays inside their own team
+        existing = db.conn().execute("SELECT department FROM employees WHERE device_user_id=?", (e.device_user_id,)).fetchone()
+        if e.department != team or (existing and existing["department"] != team):
+            raise HTTPException(403, "You can only add or edit people in your own team")
     if e.joined:
         _valid_date(e.joined)
     c = db.conn()
@@ -281,7 +321,7 @@ class BulkShiftIn(BaseModel):
     shift_id: int | None = None
 
 
-@app.post("/api/employees/bulk-shift", dependencies=[Depends(access.need("hr"))])
+@app.post("/api/employees/bulk-shift", dependencies=[Depends(access.need("hr", "employees"))])
 def bulk_shift(body: BulkShiftIn):
     """Assign one shift (or none) to many employees at once."""
     c = db.conn()
@@ -290,23 +330,27 @@ def bulk_shift(body: BulkShiftIn):
     ids = [db.canon_id(i) for i in body.ids]
     if not ids:
         raise HTTPException(400, "Select at least one employee")
+    for i in ids:
+        access.assert_in_scope(i)
     n = c.executemany("UPDATE employees SET shift_id=? WHERE device_user_id=?", [(body.shift_id, i) for i in ids]).rowcount
     c.commit()
     return {"updated": n}
 
 
-@app.delete("/api/employees/{device_user_id}", dependencies=[Depends(access.need("hr"))])
+@app.delete("/api/employees/{device_user_id}", dependencies=[Depends(access.need("hr", "employees"))])
 def delete_employee(device_user_id: str):
     device_user_id = db.canon_id(device_user_id)
+    access.assert_in_scope(device_user_id)
     c = db.conn()
     c.execute("UPDATE employees SET active=0 WHERE device_user_id=?", (device_user_id,))
     c.commit()
     return {"ok": True}
 
 
-@app.post("/api/employees/{device_user_id}/pin", dependencies=[Depends(access.need("hr"))])
+@app.post("/api/employees/{device_user_id}/pin", dependencies=[Depends(access.need("hr", "employees"))])
 def set_pin(device_user_id: str, body: PinIn):
     device_user_id = db.canon_id(device_user_id)
+    access.assert_in_scope(device_user_id)
     if not auth.valid_pin(body.pin):
         raise HTTPException(400, "PIN must be 4-8 digits")
     c = db.conn()
@@ -330,7 +374,7 @@ def list_devices():
     return out
 
 
-@app.post("/api/devices/{dev_id}/info", dependencies=[Depends(access.need("admin"))])
+@app.post("/api/devices/{dev_id}/info", dependencies=[Depends(access.need("admin", "devices"))])
 def update_device(dev_id: str, body: DeviceIn):
     c = db.conn()
     cur = c.execute("UPDATE devices SET name=?, location=? WHERE dev_id=?", (body.name, body.location, dev_id))
@@ -381,8 +425,10 @@ def list_shifts():
         "SELECT s.*, (SELECT COUNT(*) FROM employees e WHERE e.shift_id=s.id AND e.active=1) employees FROM shifts s ORDER BY s.name")]
 
 
-@app.post("/api/shifts", dependencies=[Depends(access.need("hr"))])
-def save_shift(sh: ShiftIn):
+@app.post("/api/shifts")
+async def save_shift(sh: ShiftIn, u: dict = Depends(access.need("manager", "shifts"))):
+    if sh.id and u["role"] == "manager" and not access.has_perm(u, "shifts"):
+        raise HTTPException(403, "Team leads can create new shifts but not change existing ones")
     if not (re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", sh.start) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", sh.end)):
         raise HTTPException(400, "Times must be HH:MM (24-hour)")
     if sh.end <= sh.start:
@@ -401,11 +447,57 @@ def save_shift(sh: ShiftIn):
     return {"ok": True}
 
 
-@app.delete("/api/shifts/{shift_id}", dependencies=[Depends(access.need("hr"))])
+@app.delete("/api/shifts/{shift_id}", dependencies=[Depends(access.need("hr", "shifts"))])
 def delete_shift(shift_id: int):
     c = db.conn()
     c.execute("UPDATE employees SET shift_id=NULL WHERE shift_id=?", (shift_id,))
     c.execute("DELETE FROM shifts WHERE id=?", (shift_id,))
+    c.commit()
+    return {"ok": True}
+
+
+@app.get("/api/shift-changes", dependencies=[Depends(access.need("manager"))])
+def list_shift_changes(month: str | None = None):
+    month = _valid_month(month or now_local().strftime("%Y-%m"))
+    frag, args = access.scope_sql("e.department")
+    return [dict(r) for r in db.conn().execute(
+        "SELECT c.*, COALESCE(e.name, c.device_user_id) name, s.name shift, s.start, s.end FROM shift_changes c "
+        "JOIN employees e ON e.device_user_id=c.device_user_id LEFT JOIN shifts s ON s.id=c.shift_id "
+        "WHERE substr(c.start_date,1,7)<=? AND substr(c.end_date,1,7)>=?" + frag + " ORDER BY c.start_date DESC, c.id DESC",
+        (month, month, *args))]
+
+
+@app.post("/api/shift-changes")
+async def add_shift_change(body: ShiftChangeIn, u: dict = Depends(access.need("manager", "shifts"))):
+    """Put people on a different shift for a date range (a team lead can do this for their own team)."""
+    _valid_date(body.start_date)
+    _valid_date(body.end_date)
+    if body.end_date < body.start_date:
+        raise HTTPException(400, "End date is before start date")
+    c = db.conn()
+    if not c.execute("SELECT 1 FROM shifts WHERE id=?", (body.shift_id,)).fetchone():
+        raise HTTPException(404, "No such shift")
+    ids = [db.canon_id(i) for i in body.ids]
+    if not ids:
+        raise HTTPException(400, "Select at least one employee")
+    for i in ids:
+        if not c.execute("SELECT 1 FROM employees WHERE device_user_id=? AND active=1", (i,)).fetchone():
+            raise HTTPException(404, f"No such employee: {i}")
+        access.assert_in_scope(i)
+    c.executemany("INSERT INTO shift_changes(device_user_id,start_date,end_date,shift_id,created_by) VALUES (?,?,?,?,?)",
+                  [(i, body.start_date, body.end_date, body.shift_id, u["username"]) for i in ids])
+    c.commit()
+    return {"created": len(ids)}
+
+
+@app.delete("/api/shift-changes/{change_id}", dependencies=[Depends(access.need("manager", "shifts"))])
+def delete_shift_change(change_id: int):
+    c = db.conn()
+    row = c.execute("SELECT device_user_id FROM shift_changes WHERE id=?", (change_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such shift change")
+    access.assert_in_scope(row["device_user_id"])
+    c.execute("DELETE FROM shift_changes WHERE id=?", (change_id,))
     c.commit()
     return {"ok": True}
 
@@ -416,7 +508,7 @@ def list_holidays(year: str | None = None):
     return [dict(r) for r in db.conn().execute("SELECT * FROM holidays WHERE substr(date,1,4)=? ORDER BY date", (year,))]
 
 
-@app.post("/api/holidays", dependencies=[Depends(access.need("hr"))])
+@app.post("/api/holidays", dependencies=[Depends(access.need("hr", "holidays"))])
 def save_holiday(h: HolidayIn):
     _valid_date(h.date)
     c = db.conn()
@@ -425,7 +517,7 @@ def save_holiday(h: HolidayIn):
     return {"ok": True}
 
 
-@app.delete("/api/holidays/{day}", dependencies=[Depends(access.need("hr"))])
+@app.delete("/api/holidays/{day}", dependencies=[Depends(access.need("hr", "holidays"))])
 def delete_holiday(day: str):
     c = db.conn()
     c.execute("DELETE FROM holidays WHERE date=?", (day,))
@@ -442,9 +534,10 @@ def list_leaves(month: str | None = None):
         "WHERE substr(l.start_date,1,7)<=? AND substr(l.end_date,1,7)>=?" + frag + " ORDER BY l.start_date DESC", (month, month, *args))]
 
 
-@app.post("/api/leaves", dependencies=[Depends(access.need("hr"))])
+@app.post("/api/leaves", dependencies=[Depends(access.need("hr", "leave"))])
 def add_leave(l: LeaveIn):
     l.device_user_id = db.canon_id(l.device_user_id)
+    access.assert_in_scope(l.device_user_id)
     _valid_date(l.start_date)
     _valid_date(l.end_date)
     if l.end_date < l.start_date:
@@ -460,9 +553,12 @@ def add_leave(l: LeaveIn):
     return {"ok": True}
 
 
-@app.delete("/api/leaves/{leave_id}", dependencies=[Depends(access.need("hr"))])
+@app.delete("/api/leaves/{leave_id}", dependencies=[Depends(access.need("hr", "leave"))])
 def delete_leave(leave_id: int):
     c = db.conn()
+    row = c.execute("SELECT device_user_id FROM leaves WHERE id=?", (leave_id,)).fetchone()
+    if row:
+        access.assert_in_scope(row["device_user_id"])
     c.execute("DELETE FROM leaves WHERE id=?", (leave_id,))
     c.commit()
     return {"ok": True}
@@ -471,7 +567,7 @@ def delete_leave(leave_id: int):
 MAX_IMPORT_BYTES = 15 * 1024 * 1024
 
 
-@app.post("/api/import/{kind}", dependencies=[Depends(access.need("hr"))])
+@app.post("/api/import/{kind}", dependencies=[Depends(access.need("hr", "import"))])
 async def import_file(kind: str, file: UploadFile = File(...), dry_run: bool = True, inactive: bool = False):
     data = await file.read(MAX_IMPORT_BYTES + 1)
     if len(data) > MAX_IMPORT_BYTES:
@@ -485,7 +581,7 @@ async def import_file(kind: str, file: UploadFile = File(...), dry_run: bool = T
         raise HTTPException(400, f"Could not read the file: {type(e).__name__}")
 
 
-@app.get("/api/import/{kind}/template.csv", dependencies=[Depends(access.need("hr"))])
+@app.get("/api/import/{kind}/template.csv", dependencies=[Depends(access.need("hr", "import"))])
 def import_template(kind: str):
     if kind not in importer.TEMPLATES:
         raise HTTPException(404)
@@ -498,7 +594,7 @@ def list_sites():
     return [dict(r) for r in db.conn().execute("SELECT * FROM sites WHERE active=1 ORDER BY name")]
 
 
-@app.post("/api/sites", dependencies=[Depends(access.need("admin"))])
+@app.post("/api/sites", dependencies=[Depends(access.need("admin", "sites"))])
 def add_site(s: SiteIn):
     if not (-90 <= s.lat <= 90 and -180 <= s.lng <= 180 and s.radius_m > 0):
         raise HTTPException(400, "Invalid latitude/longitude/radius")
@@ -508,7 +604,7 @@ def add_site(s: SiteIn):
     return {"ok": True}
 
 
-@app.delete("/api/sites/{site_id}", dependencies=[Depends(access.need("admin"))])
+@app.delete("/api/sites/{site_id}", dependencies=[Depends(access.need("admin", "sites"))])
 def delete_site(site_id: int):
     c = db.conn()
     c.execute("UPDATE sites SET active=0 WHERE id=?", (site_id,))
@@ -522,7 +618,7 @@ def list_punches(day: str | None = None, limit: int = 500, device: str | None = 
     frag, args = access.scope_sql("e.department")
     rows = db.conn().execute(
         "SELECT p.id, p.ts, p.device_user_id, COALESCE(e.name,'Unknown') name, p.status, p.source, p.method, "
-        "p.flag, p.selfie, p.lat, p.lng, p.accuracy, p.distance_m, s.name site FROM punches p "
+        "p.flag, p.note, p.selfie, p.lat, p.lng, p.accuracy, p.distance_m, s.name site FROM punches p "
         "LEFT JOIN employees e ON e.device_user_id=p.device_user_id LEFT JOIN sites s ON s.id=p.site_id "
         "WHERE date(p.ts)=? AND (? IS NULL OR p.source=?)" + frag + " ORDER BY p.ts DESC LIMIT ?",
         (day, device, device, *args, limit),
@@ -530,18 +626,25 @@ def list_punches(day: str | None = None, limit: int = 500, device: str | None = 
     return [dict(r) for r in rows]
 
 
-@app.post("/api/punches/{punch_id}/review", dependencies=[Depends(access.need("hr"))])
+@app.post("/api/punches/{punch_id}/review", dependencies=[Depends(access.need("manager", "punches"))])
 def review_punch(punch_id: int, body: ReviewIn):
     if body.flag not in ("rejected", "approved", ""):
         raise HTTPException(400, "flag must be rejected, approved or empty")
     c = db.conn()
+    row = c.execute("SELECT device_user_id FROM punches WHERE id=?", (punch_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such punch")
+    access.assert_in_scope(row["device_user_id"])
     c.execute("UPDATE punches SET flag=? WHERE id=?", (body.flag, punch_id))
     c.commit()
     return {"ok": True}
 
 
-@app.get("/api/selfies/{year_month}/{filename}", dependencies=[Depends(access.need("hr"))])
+@app.get("/api/selfies/{year_month}/{filename}", dependencies=[Depends(access.need("manager"))])
 def get_selfie(year_month: str, filename: str):
+    owner = db.conn().execute("SELECT device_user_id FROM punches WHERE selfie=?", (f"{year_month}/{filename}",)).fetchone()
+    if owner:
+        access.assert_in_scope(owner["device_user_id"])
     base = os.path.realpath(config.SELFIE_DIR)
     path = os.path.realpath(os.path.join(base, year_month, filename))
     if not path.startswith(base + os.sep) or not os.path.isfile(path):
@@ -549,9 +652,63 @@ def get_selfie(year_month: str, filename: str):
     return FileResponse(path, headers={"Cache-Control": "private, max-age=86400"})
 
 
-@app.post("/api/punches", dependencies=[Depends(access.need("hr"))])
+@app.post("/api/punches/day", dependencies=[Depends(access.need("manager", "punches"))])
+def manual_day(p: DayPunchIn):
+    """Enter or fix a day's punch-in and/or punch-out (HH:MM, 24-hour) for an employee."""
+    uid = db.canon_id(p.employee_id)
+    _valid_date(p.date)
+    if p.date > now_local().date().isoformat():
+        raise HTTPException(400, "You cannot enter punches for a future date")
+    times = [t.strip() for t in (p.in_time, p.out_time) if t.strip()]
+    if not times:
+        raise HTTPException(400, "Enter a punch-in time, a punch-out time, or both")
+    if not db.conn().execute("SELECT 1 FROM employees WHERE device_user_id=?", (uid,)).fetchone():
+        raise HTTPException(404, "No such employee")
+    access.assert_in_scope(uid)
+    stored = 0
+    for kind, t in (("in", p.in_time.strip()), ("out", p.out_time.strip())):
+        if not t:
+            continue
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", t):
+            raise HTTPException(400, "Times must be HH:MM in 24-hour format, e.g. 09:30")
+        rec = db.add_punch(uid, f"{p.date} {t}:00", 0 if kind == "in" else 1, "manual", method="manual", note=(p.remark or "")[:45])
+        if rec:
+            stored += 1
+            hub.publish(rec)
+    if not stored:
+        raise HTTPException(409, "Nothing saved: a punch already exists at (or within a minute of) that time")
+    return {"stored": stored}
+
+
+@app.post("/api/punches/{punch_id}/correct", dependencies=[Depends(access.need("manager", "punches"))])
+def correct_punch(punch_id: int, body: CorrectIn):
+    """Replace a punch's time: the old punch is kept but rejected, and a manual punch is added at the new time."""
+    c = db.conn()
+    row = c.execute("SELECT * FROM punches WHERE id=?", (punch_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such punch")
+    access.assert_in_scope(row["device_user_id"])
+    ts = body.ts.strip().replace("T", " ")
+    ts = ts + ":00" if re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", ts) else ts
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2} ([01]\d|2[0-3]):[0-5]\d:[0-5]\d", ts):
+        raise HTTPException(400, "Time must look like 2026-10-05 09:30")
+    _valid_date(ts[:10])
+    c.execute("UPDATE punches SET flag='rejected' WHERE id=?", (punch_id,))
+    c.commit()
+    rec = db.add_punch(row["device_user_id"], ts, row["status"], "manual", method="manual",
+                       note=(f"corrected from {row['ts'][11:16]}" + (f": {body.remark}" if body.remark else ""))[:45])
+    if rec is None:   # same time already exists: undo, nothing changes
+        c.execute("UPDATE punches SET flag=? WHERE id=?", (row["flag"] or "", punch_id))
+        c.commit()
+        raise HTTPException(409, "A punch already exists at that time")
+    hub.publish(rec)
+    return {"ok": True}
+
+
+@app.post("/api/punches", dependencies=[Depends(access.need("manager", "punches"))])
 def manual_punch(p: PunchIn):
-    rec = db.add_punch(p.device_user_id, p.ts, p.status, "manual")
+    access.assert_in_scope(db.canon_id(p.device_user_id))
+    rec = db.add_punch(p.device_user_id, p.ts, p.status, "manual", method="manual")
     if rec:
         hub.publish(rec)
     return {"stored": rec is not None}
@@ -647,7 +804,7 @@ def report_grid_xlsx(month: str | None = None, device: str | None = None):
     return _xlsx(_grid_rows(reports.grid(_month(month), device)), "attendance-sheet.xlsx", "Sheet")
 
 
-@app.get("/api/reports/payroll.xlsx", dependencies=[Depends(access.need("hr"))])
+@app.get("/api/reports/payroll.xlsx", dependencies=[Depends(access.need("hr", "payroll"))])
 def report_payroll_xlsx(month: str | None = None, device: str | None = None):
     return _xlsx(reports.payroll(_month(month), device), "payroll.xlsx", "Payroll")
 
@@ -698,14 +855,14 @@ class AdjustmentIn(BaseModel):
     amount: float  # positive = extra pay, negative = deduction
 
 
-@app.get("/api/payroll/{month}/status", dependencies=[Depends(access.need("hr"))])
+@app.get("/api/payroll/{month}/status", dependencies=[Depends(access.need("hr", "payroll"))])
 def payroll_status(month: str):
     row = db.conn().execute("SELECT * FROM payroll_months WHERE month=?", (_valid_month(month),)).fetchone()
     return dict(row) if row else {"month": month, "published": 0, "published_by": "", "published_at": None}
 
 
 @app.post("/api/payroll/{month}/publish")
-async def payroll_publish(month: str, u: dict = Depends(access.need("hr"))):
+async def payroll_publish(month: str, u: dict = Depends(access.need("hr", "payroll_edit"))):
     """Make payslips for a finished month visible to employees in the phone app."""
     _valid_month(month)
     if reports._month_days(month)[2] >= now_local().date().isoformat():
@@ -718,7 +875,7 @@ async def payroll_publish(month: str, u: dict = Depends(access.need("hr"))):
     return {"ok": True}
 
 
-@app.post("/api/payroll/{month}/unpublish", dependencies=[Depends(access.need("hr"))])
+@app.post("/api/payroll/{month}/unpublish", dependencies=[Depends(access.need("hr", "payroll_edit"))])
 def payroll_unpublish(month: str):
     c = db.conn()
     c.execute("UPDATE payroll_months SET published=0 WHERE month=?", (_valid_month(month),))
@@ -726,14 +883,14 @@ def payroll_unpublish(month: str):
     return {"ok": True}
 
 
-@app.get("/api/payroll/adjustments", dependencies=[Depends(access.need("hr"))])
+@app.get("/api/payroll/adjustments", dependencies=[Depends(access.need("hr", "payroll"))])
 def list_adjustments(month: str):
     return [dict(r) for r in db.conn().execute(
         "SELECT a.*, COALESCE(e.name, a.device_user_id) name FROM payroll_adjustments a "
         "LEFT JOIN employees e ON e.device_user_id=a.device_user_id WHERE a.month=? ORDER BY a.id", (_valid_month(month),))]
 
 
-@app.post("/api/payroll/adjustments", dependencies=[Depends(access.need("hr"))])
+@app.post("/api/payroll/adjustments", dependencies=[Depends(access.need("hr", "payroll_edit"))])
 def add_adjustment(a: AdjustmentIn):
     _valid_month(a.month)
     uid = db.canon_id(a.device_user_id)
@@ -749,7 +906,7 @@ def add_adjustment(a: AdjustmentIn):
     return {"ok": True}
 
 
-@app.delete("/api/payroll/adjustments/{adj_id}", dependencies=[Depends(access.need("hr"))])
+@app.delete("/api/payroll/adjustments/{adj_id}", dependencies=[Depends(access.need("hr", "payroll_edit"))])
 def delete_adjustment(adj_id: int):
     c = db.conn()
     row = c.execute("SELECT month FROM payroll_adjustments WHERE id=?", (adj_id,)).fetchone()
@@ -760,7 +917,7 @@ def delete_adjustment(adj_id: int):
     return {"ok": True}
 
 
-@app.get("/api/payslips/{uid}/{month}.pdf", dependencies=[Depends(access.need("hr"))])
+@app.get("/api/payslips/{uid}/{month}.pdf", dependencies=[Depends(access.need("hr", "payroll"))])
 def payslip_pdf(uid: str, month: str):
     d = reports.payslip(_valid_month(month), db.canon_id(uid))
     if not d:
@@ -769,17 +926,17 @@ def payslip_pdf(uid: str, month: str):
                     headers={"Content-Disposition": f"inline; filename=payslip-{uid}-{month}.pdf"})
 
 
-@app.get("/api/reports/payroll", dependencies=[Depends(access.need("hr"))])
+@app.get("/api/reports/payroll", dependencies=[Depends(access.need("hr", "payroll"))])
 def report_payroll(month: str | None = None, device: str | None = None):
     return reports.payroll(_month(month), device)
 
 
-@app.get("/api/reports/payroll.csv", dependencies=[Depends(access.need("hr"))])
+@app.get("/api/reports/payroll.csv", dependencies=[Depends(access.need("hr", "payroll"))])
 def report_payroll_csv(month: str | None = None, device: str | None = None):
     return _csv(reports.payroll(_month(month), device), "payroll.csv")
 
 
-@app.post("/api/devices/sync", dependencies=[Depends(access.need("admin"))])
+@app.post("/api/devices/sync", dependencies=[Depends(access.need("admin", "devices"))])
 def sync_now():
     """Trigger an immediate pull from all configured ZK devices."""
     return {a: zk_poller.sync_device(a) for a in config.ZK_DEVICES}

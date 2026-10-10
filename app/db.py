@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'manager',      -- admin | hr | manager
     department TEXT NOT NULL DEFAULT '',       -- managers see only this department
-    active INTEGER NOT NULL DEFAULT 1
+    active INTEGER NOT NULL DEFAULT 1,
+    permissions TEXT NOT NULL DEFAULT '*'      -- hr only: comma list of areas they may use, '*' = all
 );
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +69,14 @@ CREATE TABLE IF NOT EXISTS audit (
     user TEXT NOT NULL,
     action TEXT NOT NULL,
     status INTEGER
+);
+CREATE TABLE IF NOT EXISTS shift_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_user_id TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    shift_id INTEGER NOT NULL,                 -- overrides the employee's normal shift on these dates
+    created_by TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS payroll_months (
     month TEXT PRIMARY KEY,                    -- YYYY-MM; employees can open their payslip only once it is published
@@ -98,6 +107,7 @@ PUNCH_COLUMNS = {
     "selfie": "TEXT",
     "site_id": "INTEGER", "distance_m": "REAL",
     "flag": "TEXT DEFAULT ''",   # '', 'outside_geofence', 'rejected', 'approved'
+    "note": "TEXT DEFAULT ''",   # remark on manual punches / corrections
 }
 
 
@@ -151,6 +161,14 @@ def init():
                        "mobile": "TEXT NOT NULL DEFAULT ''", "father_name": "TEXT NOT NULL DEFAULT ''"}.items():
         if col not in emp_cols:
             c.execute(f"ALTER TABLE employees ADD COLUMN {col} {decl}")
+    leave_cols = {r["name"] for r in c.execute("PRAGMA table_info(leaves)")}
+    for col, decl in {"status": "TEXT NOT NULL DEFAULT 'approved'",   # approved | pending | rejected
+                      "applied_on": "TEXT", "requested_by": "TEXT NOT NULL DEFAULT ''",
+                      "decided_by": "TEXT NOT NULL DEFAULT ''", "decided_at": "TEXT"}.items():
+        if col not in leave_cols:
+            c.execute(f"ALTER TABLE leaves ADD COLUMN {col} {decl}")
+    if "permissions" not in {r["name"] for r in c.execute("PRAGMA table_info(users)")}:
+        c.execute("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '*'")
     _canonicalize(c)
     c.commit()
 
@@ -163,7 +181,8 @@ def add_punch(device_user_id: str, ts: datetime | str, status: int = 0, source: 
         ts = ts.strftime("%Y-%m-%d %H:%M:%S")
     c = conn()
     near = c.execute(
-        "SELECT 1 FROM punches WHERE device_user_id=? AND ABS(strftime('%s', ts) - strftime('%s', ?)) < ? LIMIT 1",
+        "SELECT 1 FROM punches WHERE device_user_id=? AND COALESCE(flag,'')!='rejected' "
+        "AND ABS(strftime('%s', ts) - strftime('%s', ?)) < ? LIMIT 1",
         (device_user_id, ts, config.DEBOUNCE_SECONDS),
     ).fetchone()
     if near:

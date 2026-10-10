@@ -36,6 +36,14 @@
     <button id="punchBtn" class="big" disabled>Check in</button>
   </div>
   <div class="card"><b>Today</b><ul id="today"></ul></div>
+  <div class="card" id="leaveCard"><b>Leave</b>
+    <div id="lbal" class="muted" style="margin:6px 0"></div>
+    <div id="lform" class="hide">
+      <select id="lty" style="width:100%;padding:12px;font-size:16px;border:1px solid #d1d5db;border-radius:10px;margin:4px 0"><option value="Normal">Normal (apply 7+ days ahead)</option><option value="Adhoc">Adhoc (emergency)</option></select>
+      <input id="lfr" type="date"><input id="lto" type="date"><input id="lre" placeholder="Reason (optional)" maxlength="200">
+      <button id="lap">Apply for leave</button>
+    </div>
+    <div id="lmsg"></div><ul id="llist"></ul></div>
   <div class="card hide" id="slipCard"><b>My payslips</b><ul id="slips"></ul></div>
   <button class="link" id="logout">Log out</button>
 </div>
@@ -67,8 +75,21 @@ async function start(){
   $('#siteInfo').textContent=me.sites.length?'Allowed at: '+me.sites.map(s=>s.name).join(', '):'';
   $('#today').innerHTML=me.today.length?me.today.map(p=>`<li><span>${p.status?'Check out':'Check in'}${p.flag=='outside_geofence'?' ⚠':''}</span><span>${p.ts.slice(11,16)}</span></li>`).join(''):'<li class="muted">No punches yet</li>';
   $('#punchBtn').textContent=me.today.length%2?'Check out':'Check in';
-  loadSlips(); await Promise.all([startCam(),locate()]); ready();
+  loadSlips(); loadLeave(); await Promise.all([startCam(),locate()]); ready();
 }
+const fmtD=d=>new Date(d+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'});
+async function loadLeave(){
+  try{const [b,l]=await Promise.all([api('/leave-balance'),api('/leaves')]);
+   $('#lbal').textContent=!b.eligible?`Leave starts on ${fmtD(b.eligible_from)} (3 months after joining).`:`Normal this month: ${b.normal.left} of ${b.normal.quota} left · Adhoc this period: ${b.adhoc.left} of ${b.adhoc.quota} left`;
+   $('#lform').classList.toggle('hide',!b.eligible);
+   $('#llist').innerHTML=l.slice(0,8).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''} · ${x.type}</span><span>${x.status}${x.status=='pending'?` <button class="link" data-c="${x.id}" style="width:auto;padding:0 6px">cancel</button>`:''}</span></li>`).join('')||'<li class="muted">No leave yet</li>';
+   document.querySelectorAll('#llist button').forEach(bt=>bt.onclick=async()=>{if(!confirm('Cancel this application?'))return;try{await api('/leave/'+bt.dataset.c,{method:'DELETE'});loadLeave()}catch(e){msg($('#lmsg'),e.message,'err')}});
+  }catch(e){}
+}
+$('#lap').onclick=async()=>{const m=$('#lmsg'); try{
+  const r=await api('/leave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:$('#lty').value,start_date:$('#lfr').value,end_date:$('#lto').value||$('#lfr').value,reason:$('#lre').value})});
+  msg(m,`Applied for ${r.days} working day(s). HR will approve it.`,'ok'); $('#lre').value=''; loadLeave();
+ }catch(e){msg(m,e.message,'err')}};
 async function loadSlips(){
   try{const l=await api('/payslips'); $('#slipCard').classList.toggle('hide',!l.length);
    $('#slips').innerHTML=l.map(x=>`<li><span>${x.month}</span><span><button class="link" data-m="${x.month}" style="width:auto">Download PDF</button></span></li>`).join('');

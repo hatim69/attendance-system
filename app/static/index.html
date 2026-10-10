@@ -32,7 +32,7 @@
 </style></head><body>
 <header><b style="margin-right:8px">Attendance</b>
  <a data-t="live" class="on">Dashboard</a><a data-t="punches">Punches</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="sheet">Sheet</a><a data-t="timecard">Time Card</a><a data-t="payroll">Payroll</a>
- <a data-t="emp">Employees</a><a data-t="shifts">Shifts</a><a data-t="holidays">Holidays</a><a data-t="leave">Leave</a><a data-t="devices">Devices</a><a data-t="import">Import</a><a data-t="sites">Sites</a><a data-t="users">Users</a><a data-t="audit">Audit</a>
+ <a data-t="emp">Employees</a><a data-t="shifts">Shifts</a><a data-t="shiftchange">Shift Change</a><a data-t="holidays">Holidays</a><a data-t="leave">Leave</a><a data-t="devices">Devices</a><a data-t="import">Import</a><a data-t="sites">Sites</a><a data-t="users">Users</a><a data-t="audit">Audit</a>
  <span style="margin-left:auto;font-size:13px;color:#cbd5e1"><span id="who"></span> <a id="pw">Password</a> <a id="out">Log out</a></span> <span id="conn" style="margin-left:8px;font-size:12px">●</span></header>
 <main id="m"></main><div id="big" onclick="this.style.display='none'"><img></div>
 <script>
@@ -57,12 +57,17 @@ const punchCols=[
  ['site','Place',r=>r.method!='app'?'':`${esc(r.site||'—')}${r.distance_m!=null?' · '+Math.round(r.distance_m)+' m':''} ${r.lat!=null?`<a target="_blank" href="https://maps.google.com/?q=${r.lat},${r.lng}">map</a>`:''}`],
  ['selfie','Selfie',r=>r.selfie?`<img class="th" src="/api/selfies/${esc(r.selfie)}" onclick="big(this.src)">`:''],
  ['flag','Status',r=>r.flag=='outside_geofence'?'<span class="tag warn">outside area</span>':r.flag=='rejected'?'<span class="tag bad">rejected</span>':r.flag=='approved'?'<span class="tag good">approved</span>':''],
- ['id','',r=>r.method!='device'?(r.flag=='rejected'?`<button onclick="review(${r.id},'')">Restore</button>`:`<button onclick="review(${r.id},'rejected')">Reject</button>${r.flag=='outside_geofence'?`<button onclick="review(${r.id},'approved')">Approve</button>`:''}`):'']];
+ ['note','Remark'],
+ ['id','',r=>(r.flag=='rejected'?'':`<button onclick="fixPunch(${r.id})">Fix time</button>`)+(r.method!='device'?(r.flag=='rejected'?`<button onclick="review(${r.id},'')">Restore</button>`:`<button onclick="review(${r.id},'rejected')">Reject</button>${r.flag=='outside_geofence'?`<button onclick="review(${r.id},'approved')">Approve</button>`:''}`):(r.flag=='rejected'?`<button onclick="review(${r.id},'')">Restore</button>`:`<button onclick="review(${r.id},'rejected')">Reject</button>`))]];
+const punchMap={};
 const mins=n=>n?`${Math.floor(n/60)}h ${n%60}m`:'';
 function go(t){document.querySelector(`header a[data-t=${t}]`).click()}
 function big(src){const b=$('#big');b.querySelector('img').src=src;b.style.display='flex'}
 async function review(id,flag){await post(`/api/punches/${id}/review`,{flag});render()}
 const safe=fn=>async(...a)=>{try{await fn(...a)}catch(e){alert(e.message)}};
+const fixPunch=safe(async id=>{const r=punchMap[id];const t=prompt('Correct time for '+r.name+' (YYYY-MM-DD HH:MM, 24-hour):',r.ts.slice(0,16));if(!t)return;const why=prompt('Reason (optional):','')||'';await post(`/api/punches/${id}/correct`,{ts:t.trim(),remark:why});render()});
+const PL={employees:'Employees (add/edit)',shifts:'Shifts (edit shared)',leave:'Leave (record/approve)',holidays:'Holidays',punches:'Punches (fix)',import:'Import',payroll:'Payroll (view)',payroll_edit:'Payroll (edit/publish)',sites:'Sites (GPS)',devices:'Devices'};
+const HRD=['employees','shifts','leave','holidays','punches','import','payroll','payroll_edit'], MG=['employees','shifts','leave','holidays','payroll'];
 async function render(){
  try{
  [devs,emps,shifts]=await Promise.all([j('/api/devices'),j('/api/employees'),j('/api/shifts')]);
@@ -78,12 +83,14 @@ async function render(){
    <div class="panel"><h4>Department wise present</h4><div class="bars">${d.departments.map(x=>`<div><em>${x.present}</em><i style="height:${Math.round(x.present/mx*110)+4}px"></i><u>${esc(x.name)}</u></div>`).join('')||'<p class="hint">No data yet</p>'}</div></div>
    <div class="panel" style="--c:#f59e0b"><h4>Machine connection status</h4>${tbl([['n','S.N.',r=>r._i],['name','Machine',r=>esc(r.name||r.dev_id)],['location','Location'],['total_logs','Logs received'],['last_punch','Last punching time',r=>esc(r.last_punch||'—')],['online','Connected',r=>`<span class="dot ${r.online?'':'off'}"></span>`]],d.devices.map((x,i)=>({...x,_i:i+1})))}</div></div>
    <div class="panel" style="--c:#0891b2"><h4>GPS punches (today)</h4>${d.gps_punches.map(g=>`<div class="gp">${g.selfie?`<img src="/api/selfies/${esc(g.selfie)}" onclick="big(this.src)">`:''}<div><b>${esc(g.device_user_id)}: ${esc(g.name)}</b><div class="hint">${esc(g.ts.slice(11,16))} · ${esc(g.site||'outside sites')}${g.flag=='outside_geofence'?' ⚠':''} · <a target="_blank" href="https://maps.google.com/?q=${g.lat},${g.lng}">map</a></div></div></div>`).join('')||'<p class="hint" style="padding:14px">No app punches today</p>'}</div></div>`;
+
  } else if(tab=='punches'){
   m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()}</div>
-   <div class="bar"><b>Manual punch:</b> ${empSel('mp_e')} <input type="datetime-local" id="mp_t" value="${today()}T09:00"><button id="mp_b">Add</button> <span class="hint">for corrections, e.g. a forgotten scan</span></div><div id="t"></div>`;
-  const load=async()=>$('#t').innerHTML=tbl(punchCols,await j('/api/punches?day='+$('#d').value+dq()));
+   <div class="bar"><b>Enter / fix a day:</b> ${empSel('mp_e')} <input type="date" id="mp_d" value="${today()}"> in <input type="time" id="mp_i"> out <input type="time" id="mp_o"> <input id="mp_r" placeholder="Remark (e.g. forgot to punch)" size=26 maxlength=45> <button id="mp_b">Save</button></div>
+   <p class="hint">Adds manual punches for the day. To change a wrong time, use <b>Fix time</b> on the row: the old punch stays on record as rejected and a corrected one is added. Everything is logged with your name.</p><div id="t"></div>`;
+  const load=async()=>{const rows=await j('/api/punches?day='+$('#d').value+dq()); rows.forEach(r=>punchMap[r.id]=r); $('#t').innerHTML=tbl(punchCols,rows)};
   $('#d').onchange=load; $('#dv').onchange=load;
-  $('#mp_b').onclick=safe(async()=>{const r=await post('/api/punches',{device_user_id:$('#mp_e').value,ts:$('#mp_t').value.replace('T',' ')+':00'});if(!r.stored)alert('Not saved: a punch within a minute of that time already exists');load()}); load();
+  $('#mp_b').onclick=safe(async()=>{const r=await post('/api/punches/day',{employee_id:$('#mp_e').value,date:$('#mp_d').value,in_time:$('#mp_i').value,out_time:$('#mp_o').value,remark:$('#mp_r').value}); $('#d').value=$('#mp_d').value; load()}); load();
  } else if(tab=='daily'){
   m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()} <select id="f"><option value="">All employees</option><option>Present</option><option>Late</option><option>Half Day</option><option>Absent</option><option>Leave</option><option value="early">Early going</option><option value="miss">Miss punch</option><option value="dept">Department summary</option></select> <a href="#" id="csv">CSV</a> <a href="#" id="xlsx">Excel</a></div><div id="t"></div>`;
   const load=async()=>{let r=await j('/api/reports/daily?day='+$('#d').value+dq()); const f=$('#f').value;
@@ -120,6 +127,17 @@ async function render(){
    $('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['monthly_salary','Monthly salary'],['days_in_month','Days'],['paid_days','Paid days'],['unpaid_days','Unpaid days'],['adjustments','Adjustments'],['net_pay','Net pay'],['pdf','Payslip',x=>`<a target="_blank" href="/api/payslips/${encodeURIComponent(x.device_user_id)}/${mo}.pdf">PDF</a>`]],r)+`<p><b>Total net pay: ${tot.toFixed(2)}</b>${r.length&&!r[0].month_complete?' <span class="tag warn">month not finished: days still to come are not counted</span>':''}</p>`};
   $('#mo').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/payroll.csv?month='+$('#mo').value}; $('#xlsx').onclick=e=>{e.target.href='/api/reports/payroll.xlsx?month='+$('#mo').value};
   $('#ab').onclick=safe(async()=>{await post('/api/payroll/adjustments',{month:$('#mo').value,device_user_id:$('#ae').value,label:$('#al').value,amount:+$('#aa').value});$('#al').value='';$('#aa').value='';load()}); load();
+ } else if(tab=='shiftchange'){
+  m.innerHTML=`<p class="hint">Put people on a different shift for a date range (for example a team swap or a one-off timing). It overrides their normal shift on those dates only. Team leads can do this for their own team.</p>
+   <div class="bar">from <input type="date" id="sc_f" value="${today()}"> to <input type="date" id="sc_t" value="${today()}"> ${shiftSel('sc_s')} <button id="sc_b">Apply to selected</button></div>
+   <div class="bar"><label><input type="checkbox" id="sc_all"> Select all</label> ${emps.filter(e=>e.active).map(e=>`<label style="margin-right:12px;white-space:nowrap"><input type="checkbox" class="sc" value="${esc(e.device_user_id)}"> ${esc(e.name)}</label>`).join('')}</div>
+   <div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"></div><div id="t"></div>`;
+  const load=async()=>{const l=await j('/api/shift-changes?month='+$('#mo').value);listCache=l;$('#t').innerHTML=tbl([['name','Employee'],['start_date','From'],['end_date','To'],['shift','Shift',r=>esc(r.shift)+' '+esc(r.start)+'-'+esc(r.end)],['created_by','By'],['x','',r=>`<button onclick="delShiftChange(${listCache.indexOf(r)})">Remove</button>`]],l)};
+  $('#sc_all').onclick=e=>document.querySelectorAll('.sc').forEach(c=>c.checked=e.target.checked);
+  $('#mo').onchange=load;
+  $('#sc_b').onclick=safe(async()=>{const ids=[...document.querySelectorAll('.sc:checked')].map(c=>c.value);if(!ids.length){alert('Tick at least one employee');return}
+   if(!$('#sc_s').value){alert('Choose a shift');return}
+   const r=await post('/api/shift-changes',{ids,start_date:$('#sc_f').value,end_date:$('#sc_t').value,shift_id:+$('#sc_s').value});alert(r.created+' shift changes saved');load()}); load();
  } else if(tab=='shifts'){
   m.innerHTML=`<div class="bar"><input type="hidden" id="sid"><input id="sn" placeholder="Shift name"> start <input type="time" id="ss" value="09:00"> end <input type="time" id="se" value="18:00"> grace min <input id="sg" size=3 value="10"> half-day below (hrs) <input id="sh" size=3 value="4"> overtime after (min) <input id="so" size=3 value="30"> weekly off <input id="sw" size=10 value="SUN" placeholder="SUN or SAT,SUN"> <button id="s">Save shift</button></div>
    <p class="hint">Create a shift for each timing you use, then assign it to each employee in Employees. Employees without a shift are "flexible": never late, no overtime. Overnight shifts are not supported yet.</p><div id="t"></div>`;
@@ -130,11 +148,18 @@ async function render(){
   m.innerHTML=`<div class="bar"><input type="number" id="y" value="${today().slice(0,4)}" style="width:80px"> <input type="date" id="hd"><input id="hn" placeholder="Holiday name"><button id="s">Add</button></div><div id="t"></div>`;
   const load=async()=>{const h=await j('/api/holidays?year='+$('#y').value);listCache=h;$('#t').innerHTML=tbl([['date','Date'],['name','Name'],['x','',r=>`<button onclick="delHoliday(${listCache.indexOf(r)})">Delete</button>`]],h)};
   $('#y').onchange=load; $('#s').onclick=safe(async()=>{await post('/api/holidays',{date:$('#hd').value,name:$('#hn').value});load()}); load();
+
  } else if(tab=='leave'){
-  m.innerHTML=`<div class="bar">${empSel('le')} from <input type="date" id="lf" value="${today()}"> to <input type="date" id="lt" value="${today()}"> <select id="ly"><option>Casual</option><option>Sick</option><option>Paid</option><option>Unpaid</option><option>Other</option></select><input id="ln" placeholder="Note"><button id="s">Add leave</button></div>
-   <div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <span class="hint">Unpaid leave is not paid in Payroll; all other types are.</span></div><div id="t"></div>`;
-  const load=async()=>{const l=await j('/api/leaves?month='+$('#mo').value);listCache=l;$('#t').innerHTML=tbl([['name','Employee'],['start_date','From'],['end_date','To'],['type','Type'],['note','Note'],['x','',r=>`<button onclick="delLeave(${listCache.indexOf(r)})">Delete</button>`]],l)};
-  $('#mo').onchange=load; $('#s').onclick=safe(async()=>{await post('/api/leaves',{device_user_id:$('#le').value,start_date:$('#lf').value,end_date:$('#lt').value,type:$('#ly').value,note:$('#ln').value});load()}); load();
+  m.innerHTML=`<p class="hint"><b>Policy:</b> leave starts 3 months after joining. <b>Normal</b> leave: 2 per month, applied at least 7 days ahead. <b>Adhoc</b> leave: 1 per 3 months, for emergencies without 7 days' notice. Employees apply in the phone app and requests appear below as Pending. Older types (Casual, Sick, Paid, Unpaid, Other) are not limited.</p>
+   <div class="bar">${empSel('le')} from <input type="date" id="lf" value="${today()}"> to <input type="date" id="lt" value="${today()}"> <select id="ly"><option>Normal</option><option>Adhoc</option><option>Casual</option><option>Sick</option><option>Paid</option><option>Unpaid</option><option>Other</option></select><input id="ln" placeholder="Note"> <label title="Record it even if it breaks the policy; logged with your name"><input type="checkbox" id="lo"> override policy</label> <button id="s">Add leave</button> <button id="bal">Show balance</button></div>
+   <div id="balbox"></div>
+   <div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <label><input type="checkbox" id="pendonly"> pending only</label></div><div id="t"></div>`;
+  const load=async()=>{let l=await j('/api/leaves?month='+$('#mo').value);if($('#pendonly').checked)l=l.filter(x=>x.status=='pending');listCache=l;
+   $('#t').innerHTML=tbl([['name','Employee'],['start_date','From'],['end_date','To'],['type','Type'],['status','Status',r=>`<span class="tag ${r.status=='approved'?'good':r.status=='pending'?'warn':'bad'}">${esc(r.status)}</span>`],['applied_on','Applied'],['note','Note'],['x','',r=>(r.status=='pending'?`<button onclick="decideLeave(${listCache.indexOf(r)},'approve')">Approve</button><button onclick="decideLeave(${listCache.indexOf(r)},'reject')">Reject</button>`:'')+`<button onclick="delLeave(${listCache.indexOf(r)})">Delete</button>`]],l)};
+  $('#mo').onchange=load; $('#pendonly').onchange=load;
+  $('#bal').onclick=safe(async()=>{const b=await j('/api/leave-balance?employee='+encodeURIComponent($('#le').value));
+   $('#balbox').innerHTML=`<div class="toast">${b.joined_known?`Leave starts <b>${esc(b.eligible_from)}</b>${b.eligible?'':' (not eligible yet)'}`:'<b>Joining date not set</b>: not restricted. Set it in Employees.'} · Normal this month: <b>${b.normal.left}</b> of ${b.normal.quota} left · Adhoc this period (${esc(b.adhoc.period_start)} to ${esc(b.adhoc.period_end)}): <b>${b.adhoc.left}</b> of ${b.adhoc.quota} left</div>`});
+  $('#s').onclick=safe(async()=>{await post('/api/leaves',{device_user_id:$('#le').value,start_date:$('#lf').value,end_date:$('#lt').value,type:$('#ly').value,note:$('#ln').value,override:$('#lo').checked});load()}); load();
  } else if(tab=='import'){
   m.innerHTML=`<p class="hint">Load data exported from another system (Excel .xlsx or .csv). Column names are matched automatically (for example "Emp Code", "Card No" and "ID" all work). Recommended order: <b>Shifts → Employees → Holidays → Leave → Punches</b>. Preview first: nothing is saved until you untick "Preview only".</p>
    <div class="bar"><select id="ik"><option value="shifts">Shifts</option><option value="employees">Employees</option><option value="holidays">Holidays</option><option value="leaves">Leave</option><option value="punches">Punches (attendance history)</option></select>
@@ -147,11 +172,15 @@ async function render(){
     $('#t').innerHTML=`<div class="toast">${dry?'<b>Preview (nothing saved):</b> ':'<b>Imported:</b> '}${r.rows} rows read · ${r.created} new · ${r.updated} updated · ${r.skipped} skipped${r.errors.length?' · '+r.errors.length+' problems':''}</div>`+(r.errors.length?tbl([['row','Row in file'],['message','Problem']],r.errors):'')+(dry&&!r.errors.length?'<p class="hint">Looks good. Untick "Preview only" and press Run to import.</p>':'');
    }finally{$('#ib').disabled=false}});
  } else if(tab=='users'){
-  m.innerHTML=`<div class="bar"><input id="un" placeholder="Username" size=12><input id="ud" placeholder="Display name" size=14><input id="up" type="password" placeholder="Password (min 8)" size=14> <select id="ur"><option value="manager">Team Lead (read-only, one department)</option><option value="management">Management (read-only, all departments)</option><option value="hr">HR (day-to-day work and payroll)</option><option value="admin">Admin (everything)</option></select><input id="ut" placeholder="Department (managers)" size=14><label><input type="checkbox" id="ua" checked> Active</label><button id="s">Save user</button></div>
-   <p class="hint">Team leads see only their department. Team leads and management are read-only and never see salaries. To change someone's password, enter a new one and save. Leave it empty to keep the current password.</p><div id="t"></div>`;
+  m.innerHTML=`<div class="bar"><input id="un" placeholder="Username" size=12><input id="ud" placeholder="Display name" size=14><input id="up" type="password" placeholder="Password (min 8)" size=14> <select id="ur"><option value="manager">Team Lead (own team: shift changes + punch fixes)</option><option value="hr">HR (day-to-day work)</option><option value="management">Management (full admin power)</option><option value="admin">Admin (everything)</option></select><input id="ut" placeholder="Department (team leads)" size=14><label><input type="checkbox" id="ua" checked> Active</label><button id="s">Save user</button></div>
+   <div class="bar" id="permbox"></div>
+   <p class="hint">Team leads see only their department. Abilities below are added or removed per person: HR starts with the ticked ones and you can untick any; a team lead has only their team-scoped basics unless you tick extras (they still apply to their own team only). To change someone's password, enter a new one and save. Leave it empty to keep the current password.</p><div id="t"></div>`;
+  const drawPerms=(sel)=>{const r=$('#ur').value; const list=r=='hr'?Object.keys(PL):r=='manager'?MG:[];
+   $('#permbox').innerHTML=list.length?`<b>${r=='hr'?'HR abilities':'Extra abilities (added manually)'}:</b> `+list.map(k=>`<label style="margin-right:12px;white-space:nowrap"><input type="checkbox" class="pm" value="${k}" ${sel.includes(k)?'checked':''}> ${PL[k]}</label>`).join(''):'<span class="hint">Admin and Management always have every ability.</span>'};
+  $('#ur').onchange=()=>drawPerms($('#ur').value=='hr'?HRD:[]); drawPerms([]);
   const us=await j('/api/users'); listCache=us;
-  $('#t').innerHTML=tbl([['username','Username'],['display_name','Name'],['role','Role'],['department','Department'],['active','Active'],['x','',r=>`<button onclick="editUser(${listCache.indexOf(r)})">Edit</button><button onclick="delUser(${listCache.indexOf(r)})">Delete</button>`]],us);
-  $('#s').onclick=safe(async()=>{await post('/api/users',{username:$('#un').value,display_name:$('#ud').value,password:$('#up').value,role:$('#ur').value,department:$('#ut').value,active:$('#ua').checked});render()});
+  $('#t').innerHTML=tbl([['username','Username'],['display_name','Name'],['role','Role'],['department','Department'],['permissions','Abilities',r=>esc(r.role=='hr'?(r.permissions=='*'?'all HR':r.permissions):r.role=='manager'?(r.permissions||'team basics'):'everything')],['active','Active'],['x','',r=>`<button onclick="editUser(${listCache.indexOf(r)})">Edit</button><button onclick="delUser(${listCache.indexOf(r)})">Delete</button>`]],us);
+  $('#s').onclick=safe(async()=>{const perms=[...document.querySelectorAll('.pm:checked')].map(c=>c.value).join(',');await post('/api/users',{username:$('#un').value,display_name:$('#ud').value,password:$('#up').value,role:$('#ur').value,department:$('#ut').value,active:$('#ua').checked,permissions:$('#ur').value=='hr'&&perms==HRD.join(',')?'*':perms});render()});
  } else if(tab=='audit'){
   m.innerHTML=`<p class="hint">Every change made through the admin site, newest first (who, what, result). Request contents such as passwords are never logged.</p><div id="t"></div>`;
   $('#t').innerHTML=tbl([['ts','Time'],['user','User'],['action','Action'],['status','Result']],await j('/api/audit'));
@@ -182,13 +211,15 @@ async function render(){
  }catch(e){m.innerHTML=`<p class="Absent">Error: ${esc(e.message)}</p>`}
 }
 // row actions use list indexes (never put text in inline handlers)
-function editUser(i){const u=listCache[i];$('#un').value=u.username;$('#ud').value=u.display_name;$('#up').value='';$('#ur').value=u.role;$('#ut').value=u.department;$('#ua').checked=!!u.active}
+function editUser(i){const u=listCache[i];$('#un').value=u.username;$('#ud').value=u.display_name;$('#up').value='';$('#ur').value=u.role;$('#ut').value=u.department;$('#ua').checked=!!u.active;$('#ur').onchange();const sel=(u.permissions&&u.permissions!='*')?u.permissions.split(','):(u.role=='hr'?HRD:[]);document.querySelectorAll('.pm').forEach(c=>c.checked=sel.includes(c.value))}
 const delUser=safe(async i=>{if(confirm('Delete user '+listCache[i].username+'?')){await j('/api/users/'+encodeURIComponent(listCache[i].username),{method:'DELETE'});render()}});
 const delAdj=safe(async i=>{await j('/api/payroll/adjustments/'+listCache[i].id,{method:'DELETE'});render()});
+const delShiftChange=safe(async i=>{if(confirm('Remove this shift change?')){await j('/api/shift-changes/'+listCache[i].id,{method:'DELETE'});render()}});
 function editEmp(i){const e=listCache[i];$('#i').value=e.device_user_id;$('#n').value=e.name;$('#dp').value=e.department;$('#dg').value=e.designation||'';$('#br').value=e.branch||'';$('#mb').value=e.mobile||'';$('#fn').value=e.father_name||'';$('#ac').checked=!!e.active;$('#es').value=e.shift_id??'';$('#sal').value=e.salary||'';$('#jd').value=e.joined||'';window.scrollTo(0,0)}
 function editShift(i){const s=listCache[i];$('#sid').value=s.id;$('#sn').value=s.name;$('#ss').value=s.start;$('#se').value=s.end;$('#sg').value=s.grace_min;$('#sh').value=s.half_day_hours;$('#so').value=s.ot_after_min;$('#sw').value=s.weekly_off}
 const delShift=safe(async id=>{if(confirm('Delete this shift? Its employees become flexible.')){await j('/api/shifts/'+id,{method:'DELETE'});render()}});
 const delHoliday=safe(async i=>{if(confirm('Delete this holiday?')){await j('/api/holidays/'+listCache[i].date,{method:'DELETE'});render()}});
+const decideLeave=safe(async(i,act)=>{await post(`/api/leaves/${listCache[i].id}/${act}`,{});render()});
 const delLeave=safe(async i=>{if(confirm('Delete this leave?')){await j('/api/leaves/'+listCache[i].id,{method:'DELETE'});render()}});
 const delSite=safe(async id=>{if(confirm('Remove this site?')){await j('/api/sites/'+id,{method:'DELETE'});render()}});
 const setPin=safe(async i=>{const e=listCache[i];const p=prompt('New PIN for '+e.name+' (4-8 digits):');if(!p)return;await post(`/api/employees/${encodeURIComponent(e.device_user_id)}/pin`,{pin:p});alert('PIN saved');render()});
@@ -199,10 +230,18 @@ function connect(){
  ws.onopen=()=>{$('#conn').style.color='#4ade80';ws.send('hi')}; ws.onclose=()=>{$('#conn').style.color='#f87171';setTimeout(connect,2000)};
  ws.onmessage=e=>{const p=JSON.parse(e.data); if(tab!='live')return; const d=document.createElement('div');d.className='toast';d.textContent=`${p.ts.slice(11)}  ${p.name} checked in${p.flag=='outside_geofence'?' (outside area)':''}`;$('#feed').prepend(d);setTimeout(render,500)};
 }
-const HIDE={manager:['payroll','emp','shifts','holidays','leave','import','sites','users','audit'],management:['payroll','emp','shifts','holidays','leave','import','sites','users','audit'],hr:['sites','users','audit'],admin:[]};
+const NEED={payroll:'payroll',emp:'employees',shifts:'shifts',holidays:'holidays',leave:'leave',import:'import',sites:'sites'};
+function visibleTab(t,me){
+ const r=me.role; if(r=='admin'||r=='management')return true;
+ const raw=(me.permissions&&me.permissions!='*')?me.permissions.split(','):[];
+ const eff=r=='hr'?((!me.permissions||me.permissions=='*')?HRD:raw):raw, has=k=>eff.includes(k);
+ if(t=='users'||t=='audit')return false;
+ if(t=='shiftchange')return r=='manager'||has('shifts');
+ return NEED[t]?has(NEED[t]):true;
+}
 (async()=>{try{const me=await j('/api/auth/me');
   $('#who').textContent=me.open_mode?'OPEN MODE (no login)':`${me.display_name||me.username} · ${me.role}${me.role=='manager'?' · '+me.department:''}`;
-  (HIDE[me.role]||[]).forEach(t=>{const a=document.querySelector(`header a[data-t=${t}]`);if(a)a.style.display='none'});
+  document.querySelectorAll('header a[data-t]').forEach(a=>{if(!visibleTab(a.dataset.t,me))a.style.display='none'});
   if(me.open_mode){$('#out').style.display=$('#pw').style.display='none'}
   $('#out').onclick=async()=>{await fetch('/api/auth/logout',{method:'POST',headers:{'X-Requested-With':'fetch'}});location.href='/login'};
   $('#pw').onclick=safe(async()=>{const o=prompt('Current password:');if(!o)return;const n=prompt('New password (min 8 characters):');if(!n)return;await post('/api/auth/password',{old_password:o,new_password:n});alert('Password changed')});

@@ -30,7 +30,8 @@ On the device (Menu -> Comm): set **Webserver URL** to `http://<VPS IP>` or `htt
 Scans then appear in the dashboard within seconds. Set `FKWEB_DEVICES` in `.env` to the device's id (`dev_id` in `data/fkweb_raw.log`) so only your device is accepted, then `docker compose up -d`.
 
 ## 5. First-time setup in the dashboard
-0. **Users**: add logins for your team. Roles: *admin* (everything), *hr* (employees, shifts, leave, punches, reports, payroll, import) and *manager* (read-only, one department only, no salaries). Every action is enforced on the server and recorded in the Audit tab.
+0. **Users**: add logins for your team. Roles: *admin* and *management* (everything), *hr* (day-to-day work; you can remove or add individual abilities per person) and *team lead* (their own team only: change shifts and fix punch-in/out times, plus any extra abilities you tick for them). Every action is enforced on the server and recorded in the Audit tab.
+0b. **Leave policy** (Leave tab and the phone app): starts 3 months after joining; Normal = 2 per month with 7 days' notice; Adhoc = 1 per 3 months for emergencies. Set each employee's **joining date** in Employees so balances are right.
 1. **Sites**: stand at the office, open the dashboard on your phone, tap "Use my location", name it, set the radius, Add.
 2. **Employees**: add each person (ID = their ID on the device), then **Set PIN**.
 3. Give employees their ID + PIN and the `/m/` link.

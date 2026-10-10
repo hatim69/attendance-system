@@ -35,3 +35,6 @@ REQUIRE_LOGIN = os.getenv("REQUIRE_LOGIN", "") not in ("", "0", "false")
 # Shown on payslips
 COMPANY_NAME = os.getenv("COMPANY_NAME", "")
 COMPANY_ADDRESS = os.getenv("COMPANY_ADDRESS", "")
+# Optional safety net: append every scan received from a fingerprint device to this CSV file (the columns match the
+# Import tab, so the file can be loaded later). Leave empty to disable. Example: PUNCH_LOG_FILE=punches_log.csv
+PUNCH_LOG_FILE = os.getenv("PUNCH_LOG_FILE", "")

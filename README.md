@@ -24,5 +24,8 @@ Use either or both (duplicates are ignored).
 ## Config (env vars)
 `DB_PATH`, `SELFIE_DIR`, `TIMEZONE`, `GEOFENCE_MODE`, `SECRET_KEY`, `FKWEB_DEVICES`, `PUBLIC_DOMAIN`, `FKWEB_PORT` (80), `ZK_DEVICES`, `ZK_PASSWORD`, `ZK_POLL_SECONDS`, `WEEKLY_OFF` (SUN, for employees without a shift), `DEBOUNCE_SECONDS` (60), `ADMIN_PASSWORD` (creates the first `admin` login on first start; with no users and no password the dashboard runs in open mode for local use only. Roles: admin > hr > manager. Device endpoints stay open by design).
 
+## Running on a PC (Windows) while gathering data
+`start_local.bat` starts the dashboard on http://localhost:5005 and the device listener on port 80. Options: `start_local.bat update` (fetch the latest code first) and `start_local.bat log` (also append every scan the device sends to `punches_log.csv`, a plain safety-net file whose columns match the Import tab). Environment variable form: `PUNCH_LOG_FILE=punches_log.csv`.
+
 ## Tests
 `pytest`

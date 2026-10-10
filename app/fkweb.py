@@ -9,8 +9,10 @@ normal web servers reject, so this is a small raw TCP server run inside the app.
 
 Every request is also appended to fkweb_raw.log for debugging."""
 import asyncio
+import csv
 import json
 import logging
+import os
 import re
 from datetime import datetime
 
@@ -29,6 +31,24 @@ def _raw(rec: dict):
             f.write(json.dumps(rec) + "\n")
     except OSError:
         pass
+
+
+def _archive(dev_id: str, data: dict, outcome: str):
+    """Append the scan to the plain CSV safety-net file (when PUNCH_LOG_FILE is set). Never raises."""
+    if not config.PUNCH_LOG_FILE:
+        return
+    try:
+        t = str(data.get("io_time", ""))
+        io = datetime.strptime(t, "%Y%m%d%H%M%S").strftime("%Y-%m-%d %H:%M:%S") if re.fullmatch(r"\d{14}", t) else t
+        new = not os.path.exists(config.PUNCH_LOG_FILE) or os.path.getsize(config.PUNCH_LOG_FILE) == 0
+        with open(config.PUNCH_LOG_FILE, "a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if new:
+                w.writerow(["received_at", "device", "id", "datetime", "io_mode", "verify_mode", "stored"])
+            w.writerow([now_local().strftime("%Y-%m-%d %H:%M:%S"), dev_id, str(data.get("user_id", "")).strip(), io,
+                        data.get("io_mode", ""), data.get("verify_mode", ""), outcome])
+    except Exception as e:     # a full disk or a file open in Excel must not stop attendance being recorded
+        log.warning("could not write %s: %s", config.PUNCH_LOG_FILE, e)
 
 
 def parse_body(body: bytes) -> dict:
@@ -82,10 +102,16 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         if code == "realtime_glog":
             if config.FKWEB_DEVICES and headers.get("dev_id") not in config.FKWEB_DEVICES:
                 log.warning("punch from unknown device %r ignored", headers.get("dev_id"))
+                _archive(headers.get("dev_id", ""), data, "ignored-device")
                 writer.write(respond(headers))
                 await writer.drain()
                 return
-            rec = record_punch(headers.get("dev_id", "fkweb"), data)
+            try:
+                rec = record_punch(headers.get("dev_id", "fkweb"), data)
+            except Exception as e:     # keep a copy even if the database write fails
+                _archive(headers.get("dev_id", ""), data, f"db-error:{type(e).__name__}")
+                raise
+            _archive(headers.get("dev_id", ""), data, "yes" if rec else "duplicate")
             log.info("punch %s %s", data.get("user_id"), "stored" if rec else "duplicate/ignored")
             writer.write(respond(headers))
         elif not code and config.PUBLIC_DOMAIN:

@@ -790,3 +790,41 @@ def test_leave_approval_is_scoped_to_the_team(tmp_path, monkeypatch):
         assert tl0.post(f"/api/leaves/{ids['1']}/approve").status_code == 403                                 # no 'leave' ability
         assert tl.post(f"/api/leaves/{ids['1']}/approve").status_code == 200
         assert tl.get("/api/leave-balance?employee=2").status_code == 403 and tl.get("/api/leave-balance?employee=1").status_code == 200
+
+
+def test_punch_log_file_safety_net(tmp_path, monkeypatch):
+    import csv as _csv, socket
+    from app import fkweb
+    log_file = tmp_path / "punches_log.csv"
+    monkeypatch.setattr(config, "PUNCH_LOG_FILE", str(log_file))
+    monkeypatch.setattr(config, "RAW_LOG", str(tmp_path / "raw.log"))
+
+    def post(port, dev, body):
+        raw = (f"POST http://x HTTP/1.0\r\nrequest_code: realtime_glog\r\ndev_id: {dev}\r\nContent-Length: {len(body) + 4}\r\n\r\n").encode() \
+              + len(body).to_bytes(4, "little") + body
+        s = socket.create_connection(("127.0.0.1", port), timeout=5)
+        s.sendall(raw); s.recv(300); s.close()
+
+    with TestClient(app) as c:
+        port = fkweb.bound_port
+        scan = b'{"user_id":"00123456","io_mode":1,"verify_mode":2,"io_time":"20250707091500"}'
+        post(port, "DEV-LOG", scan)
+        post(port, "DEV-LOG", scan)                                                  # same scan again -> duplicate
+        monkeypatch.setattr(config, "FKWEB_DEVICES", ["ONLY-THIS"])
+        post(port, "STRANGER", b'{"user_id":"999","io_mode":1,"io_time":"20250707100000"}')
+    rows = list(_csv.DictReader(open(log_file, newline="")))
+    assert [(r["device"], r["id"], r["datetime"], r["stored"]) for r in rows] == [
+        ("DEV-LOG", "00123456", "2025-07-07 09:15:00", "yes"),
+        ("DEV-LOG", "00123456", "2025-07-07 09:15:00", "duplicate"),
+        ("STRANGER", "999", "2025-07-07 10:00:00", "ignored-device")]
+    assert list(rows[0].keys()) == ["received_at", "device", "id", "datetime", "io_mode", "verify_mode", "stored"]
+    # the file can be loaded back through the Import tab: ids ignore leading zeros, replays are ignored
+    from app import importer
+    res = importer.run("punches", "punches_log.csv", log_file.read_bytes(), True)
+    assert res["rows"] == 3 and res["errors"] == []
+    # disabled by default and a broken path never breaks recording
+    monkeypatch.setattr(config, "PUNCH_LOG_FILE", str(tmp_path / "no" / "such" / "dir" / "x.csv"))
+    monkeypatch.setattr(config, "FKWEB_DEVICES", [])
+    with TestClient(app):
+        post(fkweb.bound_port, "DEV-LOG", b'{"user_id":"777","io_mode":1,"io_time":"20250707110000"}')
+        assert [p["device_user_id"] for p in TestClient(app).get("/api/punches?day=2025-07-07").json() if p["device_user_id"] == "777"] == ["777"]

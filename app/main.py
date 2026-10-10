@@ -143,6 +143,33 @@ def update_device(dev_id: str, body: DeviceIn):
     return {"ok": True}
 
 
+@app.get("/api/dashboard", dependencies=admin)
+def dashboard(day: str | None = None):
+    day = day or now_local().date().isoformat()
+    rows = reports.daily(day)
+    depts: dict[str, int] = {}
+    for r in rows:
+        if r["status"] != "Absent":
+            depts[r["department"] or "Unassigned"] = depts.get(r["department"] or "Unassigned", 0) + 1
+    c = db.conn()
+    stats = {r["source"]: (r["n"], r["last"]) for r in c.execute(
+        "SELECT source, COUNT(*) n, MAX(ts) last FROM punches WHERE method='device' GROUP BY source")}
+    devices = []
+    for d in list_devices():
+        n, last = stats.get(d["dev_id"], (0, None))
+        devices.append({**d, "total_logs": n, "last_punch": last})
+    gps = [dict(r) for r in c.execute(
+        "SELECT p.id, p.ts, p.device_user_id, COALESCE(e.name,'Unknown') name, p.selfie, p.lat, p.lng, p.flag, s.name site "
+        "FROM punches p LEFT JOIN employees e ON e.device_user_id=p.device_user_id LEFT JOIN sites s ON s.id=p.site_id "
+        "WHERE p.method='app' AND date(p.ts)=? AND COALESCE(p.flag,'')!='rejected' ORDER BY p.ts DESC LIMIT 10", (day,))]
+    return {"day": day, "total": len(rows),
+            "present": sum(r["status"] != "Absent" for r in rows),
+            "absent": sum(r["status"] == "Absent" for r in rows),
+            "late": sum(r["status"] == "Late" for r in rows),
+            "departments": [{"name": k, "present": v} for k, v in sorted(depts.items())],
+            "devices": devices, "gps_punches": gps}
+
+
 @app.get("/api/sites", dependencies=admin)
 def list_sites():
     return [dict(r) for r in db.conn().execute("SELECT * FROM sites WHERE active=1 ORDER BY name")]
@@ -168,7 +195,7 @@ def delete_site(site_id: int):
 
 @app.get("/api/punches", dependencies=admin)
 def list_punches(day: str | None = None, limit: int = 500, device: str | None = None):
-    day = day or date.today().isoformat()
+    day = day or now_local().date().isoformat()
     rows = db.conn().execute(
         "SELECT p.id, p.ts, p.device_user_id, COALESCE(e.name,'Unknown') name, p.status, p.source, p.method, "
         "p.flag, p.selfie, p.lat, p.lng, p.accuracy, p.distance_m, s.name site FROM punches p "
@@ -208,17 +235,17 @@ def manual_punch(p: PunchIn):
 
 @app.get("/api/reports/daily", dependencies=admin)
 def report_daily(day: str | None = None, device: str | None = None):
-    return reports.daily(day or date.today().isoformat(), device)
+    return reports.daily(day or now_local().date().isoformat(), device)
 
 
 @app.get("/api/reports/monthly", dependencies=admin)
 def report_monthly(month: str | None = None, device: str | None = None):
-    return reports.monthly(month or date.today().strftime("%Y-%m"), device)
+    return reports.monthly(month or now_local().strftime("%Y-%m"), device)
 
 
 @app.get("/api/reports/daily.csv", dependencies=admin)
 def report_daily_csv(day: str | None = None):
-    rows = reports.daily(day or date.today().isoformat())
+    rows = reports.daily(day or now_local().date().isoformat())
     buf = io.StringIO()
     if rows:
         w = csv.DictWriter(buf, fieldnames=rows[0].keys())
@@ -230,7 +257,7 @@ def report_daily_csv(day: str | None = None):
 
 @app.get("/api/reports/monthly.csv", dependencies=admin)
 def report_monthly_csv(month: str | None = None):
-    rows = reports.monthly(month or date.today().strftime("%Y-%m"))
+    rows = reports.monthly(month or now_local().strftime("%Y-%m"))
     buf = io.StringIO()
     if rows:
         w = csv.DictWriter(buf, fieldnames=rows[0].keys())

@@ -179,3 +179,17 @@ def test_devices_registry_and_filter(tmp_path, monkeypatch):
         post(port, "realtime_glog", "DEV-EVIL", b'{"user_id":"E1","io_time":"20270101100000"}')
         assert "DEV-EVIL" not in {d["dev_id"] for d in c.get("/api/devices").json()}
         assert not [p for p in c.get("/api/punches?day=2027-01-01").json() if p["device_user_id"] == "E1"]
+
+
+def test_dashboard_summary(monkeypatch):
+    with TestClient(app) as c:
+        c.post("/api/employees", json={"device_user_id": "D1", "name": "Dee", "department": "HR"})
+        c.post("/api/employees", json={"device_user_id": "D2", "name": "Dan", "department": "IT"})
+        c.post("/api/employees", json={"device_user_id": "D3", "name": "Dot", "department": "IT"})
+        c.post("/api/punches", json={"device_user_id": "D1", "ts": "2027-02-02 08:50:00"})
+        c.post("/api/punches", json={"device_user_id": "D2", "ts": "2027-02-02 10:30:00"})
+        d = c.get("/api/dashboard?day=2027-02-02").json()
+        assert (d["present"], d["late"]) == (2, 1)
+        assert d["absent"] == d["total"] - 2
+        assert {"name": "HR", "present": 1} in d["departments"] and {"name": "IT", "present": 1} in d["departments"]
+        assert isinstance(d["devices"], list) and isinstance(d["gps_punches"], list)

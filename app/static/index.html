@@ -15,11 +15,20 @@
  .toast{background:#dcfce7;border-left:4px solid #16a34a;padding:10px 14px;margin:6px 0;border-radius:4px}
  input,button{padding:6px 10px;margin:2px;font-size:14px} button{cursor:pointer}
  img.th{width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:pointer}
- .bar{margin-bottom:12px} .hint{color:#6b7280;font-size:13px;margin:6px 0}
+ .bar{margin-bottom:12px}
+ .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:16px}
+ .stat{background:#fff;border-radius:10px;padding:16px;box-shadow:0 1px 3px #0001;cursor:pointer;border-left:5px solid var(--c)}
+ .stat b{font-size:30px;display:block}.stat span{color:#6b7280;font-size:13px}
+ .two{display:grid;grid-template-columns:3fr 2fr;gap:16px}@media(max-width:850px){.two{grid-template-columns:1fr}}
+ .panel{background:#fff;border-radius:10px;box-shadow:0 1px 3px #0001;overflow:hidden;margin-bottom:16px}.panel h4{margin:0;padding:10px 14px;color:#fff;background:var(--c,#2563eb)}
+ .bars{display:flex;align-items:flex-end;gap:10px;height:170px;padding:14px 14px 0;overflow-x:auto}.bars div{flex:0 1 90px;min-width:34px;text-align:center;font-size:11px}
+ .bars i{display:block;background:#22c55e;border-radius:3px 3px 0 0;margin:0 auto;width:60%}.bars em{display:block;font-style:normal;height:16px}.bars u{text-decoration:none;display:block;height:30px;overflow:hidden}
+ .gp{display:flex;gap:10px;padding:10px 14px;border-bottom:1px solid #f3f4f6;align-items:center}.gp img{width:44px;height:44px;border-radius:6px;object-fit:cover}
+ .dot{display:inline-block;width:12px;height:12px;border-radius:50%;background:#16a34a}.dot.off{background:#dc2626} .hint{color:#6b7280;font-size:13px;margin:6px 0}
  #big{position:fixed;inset:0;background:#000c;display:none;align-items:center;justify-content:center} #big img{max-width:90%;max-height:90%;border-radius:8px}
 </style></head><body>
 <header><b>Attendance</b>
- <a data-t="live" class="on">Live</a><a data-t="punches">Punches</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="devices">Devices</a><a data-t="emp">Employees</a><a data-t="sites">Sites</a>
+ <a data-t="live" class="on">Dashboard</a><a data-t="punches">Punches</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="devices">Devices</a><a data-t="emp">Employees</a><a data-t="sites">Sites</a>
  <span id="conn" style="margin-left:auto;font-size:12px">●</span></header>
 <main id="m"></main><div id="big" onclick="this.style.display='none'"><img></div>
 <script>
@@ -43,14 +52,24 @@ let devs=[];
 const devName=id=>{const d=devs.find(x=>x.dev_id==id);return d?(d.name||d.dev_id):id};
 const devSel=()=>`<select id="dv"><option value="">All devices</option>${devs.map(d=>`<option value="${esc(d.dev_id)}">${esc(d.name||d.dev_id)}${d.location?' / '+esc(d.location):''}</option>`).join('')}<option value="app">Mobile app</option></select>`;
 const dq=()=>{const v=$('#dv')?$('#dv').value:'';return v?'&device='+encodeURIComponent(v):''};
+function go(t){document.querySelector(`header a[data-t=${t}]`).click()}
 function big(src){const b=$('#big');b.querySelector('img').src=src;b.style.display='flex'}
 async function review(id,flag){await post(`/api/punches/${id}/review`,{flag});render()}
 async function render(){
  try{
  devs=await j('/api/devices');
  if(tab=='live'){
-  m.innerHTML=`<h3>Live check-ins</h3><div id="feed"></div><h3>Today</h3><div id="log"></div>`;
-  $('#log').innerHTML=tbl(punchCols,await j('/api/punches'));
+  const d=await j('/api/dashboard'); const mx=Math.max(1,...d.departments.map(x=>x.present));
+  m.innerHTML=`<div id="feed"></div>
+  <div class="grid">
+   <div class="stat" style="--c:#16a34a" onclick="go('daily')"><span>Total Employees</span><b>${d.total}</b></div>
+   <div class="stat" style="--c:#2563eb" onclick="go('daily')"><span>Total Present</span><b>${d.present}</b></div>
+   <div class="stat" style="--c:#dc2626" onclick="go('daily')"><span>Total Absent</span><b>${d.absent}</b></div>
+   <div class="stat" style="--c:#f59e0b" onclick="go('daily')"><span>Total Late</span><b>${d.late}</b></div></div>
+  <div class="two"><div>
+   <div class="panel"><h4>Department wise present</h4><div class="bars">${d.departments.map(x=>`<div><em>${x.present}</em><i style="height:${Math.round(x.present/mx*110)+4}px"></i><u>${esc(x.name)}</u></div>`).join('')||'<p class="hint">No data yet</p>'}</div></div>
+   <div class="panel" style="--c:#f59e0b"><h4>Machine connection status</h4>${tbl([['n','S.N.',r=>r._i],['name','Machine',r=>esc(r.name||r.dev_id)],['location','Location'],['total_logs','Logs received'],['last_punch','Last punching time',r=>esc(r.last_punch||'—')],['online','Connected',r=>`<span class="dot ${r.online?'':'off'}"></span>`]],d.devices.map((x,i)=>({...x,_i:i+1})))}</div></div>
+   <div class="panel" style="--c:#0891b2"><h4>GPS punches (today)</h4>${d.gps_punches.map(g=>`<div class="gp">${g.selfie?`<img src="/api/selfies/${esc(g.selfie)}" onclick="big(this.src)">`:''}<div><b>${esc(g.device_user_id)}: ${esc(g.name)}</b><div class="hint">${esc(g.ts.slice(11,16))} · ${esc(g.site||'outside sites')}${g.flag=='outside_geofence'?' ⚠':''} · <a target="_blank" href="https://maps.google.com/?q=${g.lat},${g.lng}">map</a></div></div></div>`).join('')||'<p class="hint" style="padding:14px">No app punches today</p>'}</div></div>`;
  } else if(tab=='punches'){
   m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> ${devSel()}</div><div id="t"></div>`;
   const load=async()=>$('#t').innerHTML=tbl(punchCols,await j('/api/punches?day='+$('#d').value+dq()));

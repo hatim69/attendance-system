@@ -29,3 +29,6 @@ MAX_SELFIE_BYTES = int(os.getenv("MAX_SELFIE_BYTES", str(3 * 1024 * 1024)))
 # Public hostname of the hosted site (e.g. attendance.example.com). Plain-HTTP browser visits to port 80 are redirected
 # to https://<this>. Leave empty to disable the redirect.
 PUBLIC_DOMAIN = os.getenv("PUBLIC_DOMAIN", "")
+# When true the app refuses to start without any login (set in docker-compose so a missing ADMIN_PASSWORD can never
+# leave a hosted dashboard open to the internet).
+REQUIRE_LOGIN = os.getenv("REQUIRE_LOGIN", "") not in ("", "0", "false")

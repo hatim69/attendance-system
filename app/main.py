@@ -25,6 +25,8 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     db.init()
     access.bootstrap()
+    if access.open_mode() and config.REQUIRE_LOGIN:
+        raise RuntimeError("REQUIRE_LOGIN is set but there are no users and ADMIN_PASSWORD is empty. Set ADMIN_PASSWORD in .env.")
     if access.open_mode():
         logging.warning("OPEN MODE: no users and no ADMIN_PASSWORD, so the dashboard needs no login. Set ADMIN_PASSWORD before hosting!")
     hub.bind_loop(asyncio.get_running_loop())

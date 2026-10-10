@@ -478,3 +478,12 @@ def access_cookie():
 def auth_token_for_employee():
     from app import auth
     return auth.make_token("A1", "emp")
+
+
+def test_require_login_refuses_open_hosting(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "open.db"))
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "")
+    monkeypatch.setattr(config, "REQUIRE_LOGIN", True)
+    with __import__("pytest").raises(RuntimeError, match="ADMIN_PASSWORD"):
+        with TestClient(app):
+            pass

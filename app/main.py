@@ -4,7 +4,7 @@ import io
 import logging
 import secrets
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 
 import os
 
@@ -13,6 +13,8 @@ from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+from .timeutil import now_local
 
 from . import adms, app_api, auth, config, db, fkweb, hub, reports, zk_poller
 
@@ -52,6 +54,11 @@ class EmployeeIn(BaseModel):
     name: str
     department: str = ""
     active: bool = True
+
+
+class DeviceIn(BaseModel):
+    name: str = ""
+    location: str = ""
 
 
 class PinIn(BaseModel):
@@ -113,6 +120,29 @@ def set_pin(device_user_id: str, body: PinIn):
     return {"ok": True}
 
 
+ONLINE_SECONDS = 90  # devices poll every ~3 s, so silence for 90 s means offline
+
+
+@app.get("/api/devices", dependencies=admin)
+def list_devices():
+    now, out = now_local(), []
+    for r in db.conn().execute("SELECT * FROM devices ORDER BY COALESCE(NULLIF(name,''), dev_id)"):
+        d = dict(r)
+        d["online"] = bool(d["last_seen"]) and (now - datetime.fromisoformat(d["last_seen"])).total_seconds() <= ONLINE_SECONDS
+        out.append(d)
+    return out
+
+
+@app.post("/api/devices/{dev_id}/info", dependencies=admin)
+def update_device(dev_id: str, body: DeviceIn):
+    c = db.conn()
+    cur = c.execute("UPDATE devices SET name=?, location=? WHERE dev_id=?", (body.name, body.location, dev_id))
+    c.commit()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Unknown device")
+    return {"ok": True}
+
+
 @app.get("/api/sites", dependencies=admin)
 def list_sites():
     return [dict(r) for r in db.conn().execute("SELECT * FROM sites WHERE active=1 ORDER BY name")]
@@ -137,14 +167,14 @@ def delete_site(site_id: int):
 
 
 @app.get("/api/punches", dependencies=admin)
-def list_punches(day: str | None = None, limit: int = 500):
+def list_punches(day: str | None = None, limit: int = 500, device: str | None = None):
     day = day or date.today().isoformat()
     rows = db.conn().execute(
         "SELECT p.id, p.ts, p.device_user_id, COALESCE(e.name,'Unknown') name, p.status, p.source, p.method, "
         "p.flag, p.selfie, p.lat, p.lng, p.accuracy, p.distance_m, s.name site FROM punches p "
         "LEFT JOIN employees e ON e.device_user_id=p.device_user_id LEFT JOIN sites s ON s.id=p.site_id "
-        "WHERE date(p.ts)=? ORDER BY p.ts DESC LIMIT ?",
-        (day, limit),
+        "WHERE date(p.ts)=? AND (? IS NULL OR p.source=?) ORDER BY p.ts DESC LIMIT ?",
+        (day, device, device, limit),
     )
     return [dict(r) for r in rows]
 
@@ -177,13 +207,13 @@ def manual_punch(p: PunchIn):
 
 
 @app.get("/api/reports/daily", dependencies=admin)
-def report_daily(day: str | None = None):
-    return reports.daily(day or date.today().isoformat())
+def report_daily(day: str | None = None, device: str | None = None):
+    return reports.daily(day or date.today().isoformat(), device)
 
 
 @app.get("/api/reports/monthly", dependencies=admin)
-def report_monthly(month: str | None = None):
-    return reports.monthly(month or date.today().strftime("%Y-%m"))
+def report_monthly(month: str | None = None, device: str | None = None):
+    return reports.monthly(month or date.today().strftime("%Y-%m"), device)
 
 
 @app.get("/api/reports/daily.csv", dependencies=admin)

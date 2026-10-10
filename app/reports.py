@@ -3,7 +3,7 @@ from datetime import datetime
 from . import config, db
 
 
-def daily(date: str) -> list[dict]:
+def daily(date: str, device: str | None = None) -> list[dict]:
     """One row per active employee for `date` (YYYY-MM-DD): first in, last out, hours, status."""
     c = db.conn()
     h, m = map(int, config.SHIFT_START.split(":"))
@@ -11,8 +11,8 @@ def daily(date: str) -> list[dict]:
     rows = []
     for e in c.execute("SELECT * FROM employees WHERE active=1 ORDER BY name"):
         p = c.execute(
-            "SELECT MIN(ts) a, MAX(ts) b, COUNT(*) n FROM punches WHERE device_user_id=? AND date(ts)=? AND COALESCE(flag,'')!='rejected'",
-            (e["device_user_id"], date),
+            "SELECT MIN(ts) a, MAX(ts) b, COUNT(*) n FROM punches WHERE device_user_id=? AND date(ts)=? AND COALESCE(flag,'')!='rejected' AND (? IS NULL OR source=?)",
+            (e["device_user_id"], date, device, device),
         ).fetchone()
         first, last, n = p["a"], p["b"], p["n"]
         hours, status = 0.0, "Absent"
@@ -29,15 +29,15 @@ def daily(date: str) -> list[dict]:
     return rows
 
 
-def monthly(month: str) -> list[dict]:
+def monthly(month: str, device: str | None = None) -> list[dict]:
     """Per-employee totals for `month` (YYYY-MM)."""
     c = db.conn()
     out = []
     for e in c.execute("SELECT * FROM employees WHERE active=1 ORDER BY name"):
         days = c.execute(
             "SELECT date(ts) d, MIN(ts) a, MAX(ts) b, COUNT(*) n FROM punches "
-            "WHERE device_user_id=? AND strftime('%Y-%m', ts)=? AND COALESCE(flag,'')!='rejected' GROUP BY date(ts)",
-            (e["device_user_id"], month),
+            "WHERE device_user_id=? AND strftime('%Y-%m', ts)=? AND COALESCE(flag,'')!='rejected' AND (? IS NULL OR source=?) GROUP BY date(ts)",
+            (e["device_user_id"], month, device, device),
         ).fetchall()
         total = sum(
             (datetime.fromisoformat(d["b"]) - datetime.fromisoformat(d["a"])).total_seconds() / 3600

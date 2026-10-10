@@ -24,6 +24,14 @@ CREATE TABLE IF NOT EXISTS punches (
     UNIQUE(source, device_user_id, ts)
 );
 CREATE INDEX IF NOT EXISTS idx_punches_ts ON punches(ts);
+CREATE TABLE IF NOT EXISTS devices (
+    dev_id TEXT PRIMARY KEY,
+    name TEXT DEFAULT '',
+    location TEXT DEFAULT '',
+    model TEXT DEFAULT '',
+    firmware TEXT DEFAULT '',
+    last_seen TEXT
+);
 CREATE TABLE IF NOT EXISTS sites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -98,3 +106,16 @@ def add_punch(device_user_id: str, ts: datetime | str, status: int = 0, source: 
         "method": extra["method"],
         "flag": extra.get("flag", ""),
     }
+
+
+def touch_device(dev_id: str, seen: str, model: str = "", firmware: str = ""):
+    """Register a fingerprint device on first contact and record when it was last heard from."""
+    c = conn()
+    c.execute(
+        "INSERT INTO devices(dev_id, name, model, firmware, last_seen) VALUES (?,?,?,?,?) "
+        "ON CONFLICT(dev_id) DO UPDATE SET last_seen=excluded.last_seen, "
+        "model=CASE WHEN excluded.model!='' THEN excluded.model ELSE model END, "
+        "firmware=CASE WHEN excluded.firmware!='' THEN excluded.firmware ELSE firmware END",
+        (dev_id, dev_id, model, firmware, seen),
+    )
+    c.commit()

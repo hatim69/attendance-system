@@ -15,6 +15,7 @@ import re
 from datetime import datetime
 
 from . import config, db, hub
+from .timeutil import now_local
 
 log = logging.getLogger("fkweb")
 MAX_BODY = 1 << 20
@@ -70,6 +71,11 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         body = await asyncio.wait_for(reader.readexactly(n), timeout=10) if 0 < n <= MAX_BODY else b""
         code = headers.get("request_code", "")
         data = parse_body(body)
+        dev = headers.get("dev_id", "")
+        if dev and (not config.FKWEB_DEVICES or dev in config.FKWEB_DEVICES):
+            info = data.get("fk_info") if isinstance(data.get("fk_info"), dict) else {}
+            db.touch_device(dev, now_local().strftime("%Y-%m-%d %H:%M:%S"), str(data.get("fk_name", "")),
+                            str(info.get("firmware", "")))
         if code != "receive_cmd":  # keep-alive polling every ~3s would flood the log
             _raw({"peer": (writer.get_extra_info("peername") or ("?",))[0], "request_line": lines[0],
                   "request_code": code, "dev_id": headers.get("dev_id"), "data": data})

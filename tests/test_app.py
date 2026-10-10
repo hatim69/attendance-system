@@ -138,3 +138,44 @@ def test_port80_browser_redirect(monkeypatch):
         out = s.recv(300).decode()
         s.close()
     assert out.startswith("HTTP/1.1 301") and "Location: https://att.example.com/m/" in out
+
+
+def test_devices_registry_and_filter(tmp_path, monkeypatch):
+    import socket
+    from app import fkweb
+    monkeypatch.setattr(config, "RAW_LOG", str(tmp_path / "raw.log"))
+
+    def post(port, code, dev, body):
+        raw = (f"POST http://x HTTP/1.0\r\nrequest_code: {code}\r\ndev_id: {dev}\r\nContent-Length: {len(body) + 4}\r\n\r\n"
+               ).encode() + len(body).to_bytes(4, "little") + body
+        s = socket.create_connection(("127.0.0.1", port), timeout=5)
+        s.sendall(raw)
+        s.recv(300)
+        s.close()
+
+    with TestClient(app) as c:
+        port = fkweb.bound_port
+        post(port, "receive_cmd", "DEV-A", b'{"fk_name":"M61BH","fk_info":{"firmware":"v3"}}')
+        post(port, "realtime_glog", "DEV-A", b'{"user_id":"A1","io_time":"20270101090000"}')
+        post(port, "realtime_glog", "DEV-B", b'{"user_id":"B1","io_time":"20270101090100"}')
+        devs = {d["dev_id"]: d for d in c.get("/api/devices").json()}
+        assert devs["DEV-A"]["model"] == "M61BH" and devs["DEV-A"]["firmware"] == "v3"
+        assert devs["DEV-A"]["online"] is True and "DEV-B" in devs
+        assert c.post("/api/devices/DEV-A/info", json={"name": "Mumbai Office", "location": "Mumbai"}).status_code == 200
+        assert c.post("/api/devices/NOPE/info", json={"name": "x"}).status_code == 404
+        # per-device filtering of punches and reports
+        c.post("/api/employees", json={"device_user_id": "A1", "name": "Ann"})
+        c.post("/api/employees", json={"device_user_id": "B1", "name": "Bob"})
+        assert [p["device_user_id"] for p in c.get("/api/punches?day=2027-01-01&device=DEV-A").json()] == ["A1"]
+        rows = {r["name"]: r["status"] for r in c.get("/api/reports/daily?day=2027-01-01&device=DEV-B").json()}
+        assert rows["Bob"] != "Absent" and rows["Ann"] == "Absent"
+        # stale heartbeat -> offline
+        db_conn = __import__("app.db", fromlist=["conn"]).conn()
+        db_conn.execute("UPDATE devices SET last_seen='2020-01-01 00:00:00' WHERE dev_id='DEV-B'")
+        db_conn.commit()
+        assert {d["dev_id"]: d["online"] for d in c.get("/api/devices").json()}["DEV-B"] is False
+        # allow-list: unknown devices are neither registered nor allowed to punch
+        monkeypatch.setattr(config, "FKWEB_DEVICES", ["DEV-A"])
+        post(port, "realtime_glog", "DEV-EVIL", b'{"user_id":"E1","io_time":"20270101100000"}')
+        assert "DEV-EVIL" not in {d["dev_id"] for d in c.get("/api/devices").json()}
+        assert not [p for p in c.get("/api/punches?day=2027-01-01").json() if p["device_user_id"] == "E1"]

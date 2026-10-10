@@ -3,7 +3,7 @@ import calendar
 from datetime import date as Date
 from datetime import datetime
 
-from . import config, db
+from . import access, config, db
 from .timeutil import now_local
 
 WEEKDAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
@@ -20,7 +20,8 @@ def _hm(s: str) -> int:
 def _load():
     c = db.conn()
     shifts = {r["id"]: dict(r) for r in c.execute("SELECT * FROM shifts")}
-    emps = [dict(r) for r in c.execute("SELECT * FROM employees WHERE active=1 ORDER BY name")]
+    frag, args = access.scope_sql("department")
+    emps = [dict(r) for r in c.execute("SELECT * FROM employees WHERE active=1" + frag + " ORDER BY name", args)]
     holidays = {r["date"]: r["name"] for r in c.execute("SELECT * FROM holidays")}
     leaves = [dict(r) for r in c.execute("SELECT * FROM leaves")]
     return shifts, emps, holidays, leaves

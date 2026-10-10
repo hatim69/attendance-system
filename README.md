@@ -22,7 +22,7 @@ Open http://localhost:8000. Test without hardware: `python scripts/simulate_devi
 Use either or both (duplicates are ignored).
 
 ## Config (env vars)
-`DB_PATH`, `SELFIE_DIR`, `TIMEZONE`, `GEOFENCE_MODE`, `SECRET_KEY`, `FKWEB_DEVICES`, `PUBLIC_DOMAIN`, `FKWEB_PORT` (80), `ZK_DEVICES`, `ZK_PASSWORD`, `ZK_POLL_SECONDS`, `WEEKLY_OFF` (SUN, for employees without a shift), `DEBOUNCE_SECONDS` (60), `ADMIN_PASSWORD` (enables HTTP Basic auth, user `admin`; device endpoints stay open).
+`DB_PATH`, `SELFIE_DIR`, `TIMEZONE`, `GEOFENCE_MODE`, `SECRET_KEY`, `FKWEB_DEVICES`, `PUBLIC_DOMAIN`, `FKWEB_PORT` (80), `ZK_DEVICES`, `ZK_PASSWORD`, `ZK_POLL_SECONDS`, `WEEKLY_OFF` (SUN, for employees without a shift), `DEBOUNCE_SECONDS` (60), `ADMIN_PASSWORD` (creates the first `admin` login on first start; with no users and no password the dashboard runs in open mode for local use only. Roles: admin > hr > manager. Device endpoints stay open by design).
 
 ## Tests
 `pytest`

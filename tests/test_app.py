@@ -377,3 +377,104 @@ def test_importers():
         assert up("employees", "x.xlsx", b"not really excel", True).status_code == 400
         t = c.get("/api/import/employees/template.csv")
         assert t.status_code == 200 and t.text.startswith("id,name,department") and c.get("/api/import/zzz/template.csv").status_code == 404
+
+
+def test_logins_roles_scope_and_audit(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "auth.db"))
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "correct-horse-battery")
+    H = {"X-Requested-With": "fetch"}
+    with TestClient(app) as admin:
+        admin.headers.update(H)
+        # locked down from the first request: no login, no data
+        anon = TestClient(app)
+        assert anon.get("/api/employees").status_code == 401 and anon.get("/api/dashboard").status_code == 401
+        assert anon.get("/", follow_redirects=False).headers["location"] == "/login"
+        assert anon.get("/login").status_code == 200 and anon.get("/healthz").status_code == 200
+        with __import__("pytest").raises(Exception):
+            anon.websocket_connect("/ws").__enter__()
+        # login: wrong password, success, session cookie
+        assert admin.post("/api/auth/login", json={"username": "admin", "password": "nope"}).status_code == 401
+        r = admin.post("/api/auth/login", json={"username": "ADMIN", "password": "correct-horse-battery"})
+        assert r.status_code == 200 and r.json()["role"] == "admin" and "httponly" in r.headers["set-cookie"].lower()
+        assert "samesite=strict" in r.headers["set-cookie"].lower()
+        assert admin.get("/", follow_redirects=False).status_code == 200
+        # CSRF guard: a state-changing request without the custom header is refused
+        bare = TestClient(app, cookies=admin.cookies)
+        assert bare.post("/api/employees", json={"device_user_id": "1", "name": "x"}).status_code == 403
+        # employee-app tokens are not admin sessions
+        fake = TestClient(app, cookies={access_cookie(): auth_token_for_employee()})
+        assert fake.get("/api/employees").status_code == 401
+
+        # create users
+        mk = lambda **k: admin.post("/api/users", json=k)
+        assert mk(username="hr1", password="hr-password-1", role="hr").status_code == 200
+        assert mk(username="mgr1", password="mgr-password-1", role="manager", department="Ops").status_code == 200
+        assert mk(username="mgr2", password="mgr-password-2", role="manager").status_code == 400        # needs a department
+        assert mk(username="x", password="short", role="hr").status_code == 400
+        assert mk(username="bad name", password="longenough1", role="hr").status_code == 400
+        assert mk(username="nopass", role="hr").status_code == 400
+        # data: Ops and Sales staff, with salaries
+        for uid, nm, dp in (("A1", "Ann Ops", "Ops"), ("B1", "Bob Sales", "Sales")):
+            admin.post("/api/employees", json={"device_user_id": uid, "name": nm, "department": dp, "salary": 50000})
+            admin.post("/api/punches", json={"device_user_id": uid, "ts": "2025-09-01 09:00:00"})
+
+        def login(user, pw):
+            cl = TestClient(app)
+            cl.headers.update(H)
+            assert cl.post("/api/auth/login", json={"username": user, "password": pw}).status_code == 200
+            return cl
+
+        hr, mgr = login("hr1", "hr-password-1"), login("mgr1", "mgr-password-1")
+        # hr: day-to-day work yes; users / audit / sites / devices no
+        assert hr.post("/api/employees", json={"device_user_id": "C1", "name": "Cy", "department": "Ops"}).status_code == 200
+        assert hr.get("/api/reports/payroll?month=2025-09").status_code == 200
+        assert hr.get("/api/users").status_code == 403 and hr.get("/api/audit").status_code == 403
+        assert hr.post("/api/sites", json={"name": "s", "lat": 1, "lng": 1}).status_code == 403
+        assert hr.post("/api/users", json={"username": "evil", "password": "evil-password", "role": "admin"}).status_code == 403
+        # manager: read-only, own department only, no salaries, no payroll
+        emps = mgr.get("/api/employees").json()
+        assert {e["device_user_id"] for e in emps} == {"A1", "C1"} and all(e["salary"] == 0 for e in emps)
+        assert [r["device_user_id"] for r in mgr.get("/api/reports/daily?day=2025-09-01").json() if r["status"] == "Present"] == ["A1"]
+        assert {p["device_user_id"] for p in mgr.get("/api/punches?day=2025-09-01").json()} == {"A1"}
+        assert {r["device_user_id"] for r in mgr.get("/api/reports/monthly?month=2025-09").json()} == {"A1", "C1"}
+        assert {r["Code"] for r in mgr.get("/api/reports/muster?month=2025-09").json()} == {"A1", "C1"}
+        assert mgr.get("/api/reports/payroll?month=2025-09").status_code == 403
+        assert mgr.post("/api/employees", json={"device_user_id": "Z", "name": "z"}).status_code == 403
+        assert mgr.post("/api/punches", json={"device_user_id": "A1", "ts": "2025-09-02 09:00:00"}).status_code == 403
+        assert mgr.get("/api/audit").status_code == 403 and mgr.get("/api/import/employees/template.csv").status_code == 403
+        assert mgr.get("/api/dashboard").json()["total"] == 2
+        with __import__("pytest").raises(Exception):
+            mgr.websocket_connect("/ws").__enter__()
+        # last-admin and self-delete protection
+        assert admin.delete("/api/users/admin").status_code == 400
+        assert mk(username="admin", role="hr", password="").status_code == 400
+        assert admin.delete("/api/users/hr1").status_code == 200 and hr.get("/api/employees").status_code == 401
+        # password change
+        assert mgr.post("/api/auth/password", json={"old_password": "wrong", "new_password": "brand-new-pass"}).status_code == 403
+        assert mgr.post("/api/auth/password", json={"old_password": "mgr-password-1", "new_password": "brand-new-pass"}).status_code == 200
+        assert TestClient(app).post("/api/auth/login", json={"username": "mgr1", "password": "mgr-password-1"}).status_code == 401
+        # audit: who did what, never bodies/passwords; failed logins recorded
+        log = admin.get("/api/audit").json()
+        acts = [(a["user"], a["action"], a["status"]) for a in log]
+        assert ("admin", "POST /api/users", 200) in acts and ("hr1", "POST /api/employees", 200) in acts
+        assert ("mgr1", "POST /api/employees", 403) in acts and ("admin", "LOGIN failed", 401) in acts
+        assert "correct-horse" not in str(log) and "password" not in " ".join(a["action"] for a in log).replace("/api/auth/password", "")
+        # login lockout
+        spam = TestClient(app)
+        for _ in range(5):
+            spam.post("/api/auth/login", json={"username": "ghost", "password": "x"})
+        assert spam.post("/api/auth/login", json={"username": "ghost", "password": "x"}).status_code == 429
+        # logout kills the session
+        admin.post("/api/auth/logout")
+        admin.cookies.clear()
+        assert admin.get("/api/employees").status_code == 401
+
+
+def access_cookie():
+    from app import access
+    return access.COOKIE
+
+
+def auth_token_for_employee():
+    from app import auth
+    return auth.make_token("A1", "emp")

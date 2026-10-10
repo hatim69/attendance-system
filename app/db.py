@@ -54,6 +54,21 @@ CREATE TABLE IF NOT EXISTS leaves (
     type TEXT NOT NULL DEFAULT 'Casual',        -- 'Unpaid' is unpaid, anything else paid
     note TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS users (
+    username TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'manager',      -- admin | hr | manager
+    department TEXT NOT NULL DEFAULT '',       -- managers see only this department
+    active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    user TEXT NOT NULL,
+    action TEXT NOT NULL,
+    status INTEGER
+);
 CREATE TABLE IF NOT EXISTS sites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -171,4 +186,12 @@ def touch_device(dev_id: str, seen: str, model: str = "", firmware: str = ""):
         "firmware=CASE WHEN excluded.firmware!='' THEN excluded.firmware ELSE firmware END",
         (dev_id, dev_id, model, firmware, seen),
     )
+    c.commit()
+
+
+def audit(user: str, action: str, status: int | None = None):
+    from .timeutil import now_local
+    c = conn()
+    c.execute("INSERT INTO audit(ts,user,action,status) VALUES (?,?,?,?)",
+              (now_local().strftime("%Y-%m-%d %H:%M:%S"), user, action[:300], status))
     c.commit()

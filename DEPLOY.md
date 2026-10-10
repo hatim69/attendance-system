@@ -21,7 +21,7 @@ nano .env                # set DOMAIN, PUBLIC_DOMAIN, ADMIN_PASSWORD, SECRET_KEY
 docker compose up -d --build
 docker compose logs -f   # Ctrl+C to leave; look for "FkWeb listener on port 80"
 ```
-Open `https://attendance.yourdomain.com/` (admin login: user `admin`, your ADMIN_PASSWORD).
+Open `https://attendance.yourdomain.com/` and log in as `admin` with your ADMIN_PASSWORD (used only the first time to create the account; afterwards use the dashboard's Password link).
 Employees open `https://attendance.yourdomain.com/m/` on their phone and use "Add to Home Screen".
 
 ## 3. Point the fingerprint device at the server
@@ -29,6 +29,7 @@ On the device (Menu -> Comm): set **Webserver URL** to `http://attendance.yourdo
 Scans then appear in the dashboard within seconds. Set `FKWEB_DEVICES` in `.env` to the device's id (`dev_id` in `data/fkweb_raw.log`) so only your device is accepted, then `docker compose up -d`.
 
 ## 4. First-time setup in the dashboard
+0. **Users**: add logins for your team. Roles: *admin* (everything), *hr* (employees, shifts, leave, punches, reports, payroll, import) and *manager* (read-only, one department only, no salaries). Every action is enforced on the server and recorded in the Audit tab.
 1. **Sites**: stand at the office, open the dashboard on your phone, tap "Use my location", name it, set the radius, Add.
 2. **Employees**: add each person (ID = their ID on the device), then **Set PIN**.
 3. Give employees their ID + PIN and the `/m/` link.

@@ -41,21 +41,30 @@ def check_pin(pin: str, stored: str | None) -> bool:
     return hmac.compare_digest(cand.hex(), h)
 
 
-def make_token(emp_id: str) -> str:
-    body = base64.urlsafe_b64encode(json.dumps({"e": emp_id, "x": int(time.time()) + TOKEN_TTL}).encode()).decode()
+def make_token(sub: str, kind: str = "emp", ttl: int = TOKEN_TTL) -> str:
+    """Signed token. `kind` keeps employee-app tokens and admin sessions from being interchangeable."""
+    body = base64.urlsafe_b64encode(json.dumps({"s": sub, "k": kind, "x": int(time.time()) + ttl}).encode()).decode()
     sig = hmac.new(_key(), body.encode(), hashlib.sha256).hexdigest()
     return f"{body}.{sig}"
 
 
-def read_token(token: str) -> str | None:
+def read_token(token: str, kind: str = "emp") -> str | None:
     try:
         body, sig = token.rsplit(".", 1)
         if not hmac.compare_digest(sig, hmac.new(_key(), body.encode(), hashlib.sha256).hexdigest()):
             return None
         data = json.loads(base64.urlsafe_b64decode(body.encode()))
-        return data["e"] if data["x"] > time.time() else None
+        return data["s"] if data["k"] == kind and data["x"] > time.time() else None
     except Exception:
         return None
+
+
+def hash_password(pw: str) -> str:
+    return hash_pin(pw)
+
+
+def check_password(pw: str, stored: str | None) -> bool:
+    return check_pin(pw, stored)
 
 
 def locked(emp_id: str) -> bool:

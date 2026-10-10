@@ -19,7 +19,7 @@ class Login(BaseModel):
 
 
 def current_employee(authorization: str = Header(default="")) -> dict:
-    emp_id = auth.read_token(authorization.removeprefix("Bearer ").strip())
+    emp_id = auth.read_token(authorization.removeprefix("Bearer ").strip(), "emp")
     row = db.conn().execute("SELECT * FROM employees WHERE device_user_id=? AND active=1", (db.canon_id(emp_id),)).fetchone()
     if not row:
         raise HTTPException(401, "Please log in again")
@@ -40,7 +40,7 @@ def login(body: Login):
         auth.record_fail(emp_id)
         raise HTTPException(401, "Wrong employee ID or PIN")
     auth.record_ok(emp_id)
-    return {"token": auth.make_token(emp_id), "name": row["name"]}
+    return {"token": auth.make_token(emp_id, "emp"), "name": row["name"]}
 
 
 @router.get("/me")

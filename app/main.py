@@ -9,32 +9,24 @@ from datetime import date, datetime
 import os
 import re
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from . import adms, app_api, auth, config, db, fkweb, hub, importer, reports, zk_poller
+from . import access, adms, app_api, auth, config, db, fkweb, hub, importer, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
-security = HTTPBasic(auto_error=False)
-
-
-def require_admin(cred: HTTPBasicCredentials | None = Depends(security)):
-    if not config.ADMIN_PASSWORD:
-        return
-    if not cred or not secrets.compare_digest(cred.password, config.ADMIN_PASSWORD):
-        raise HTTPException(401, "Unauthorized", headers={"WWW-Authenticate": "Basic"})
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
-    if not config.ADMIN_PASSWORD:
-        logging.warning('ADMIN_PASSWORD is not set: the admin dashboard is open to anyone who can reach it!')
+    access.bootstrap()
+    if access.open_mode():
+        logging.warning("OPEN MODE: no users and no ADMIN_PASSWORD, so the dashboard needs no login. Set ADMIN_PASSWORD before hosting!")
     hub.bind_loop(asyncio.get_running_loop())
     zk_poller.start()
     fk_server = await fkweb.start()
@@ -46,7 +38,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Attendance System", lifespan=lifespan)
 app.include_router(adms.router)  # device-facing, no auth (devices can't do Basic auth)
 app.include_router(app_api.router)  # employee app, token auth
-admin = [Depends(require_admin)]
 
 
 
@@ -110,14 +101,155 @@ class PunchIn(BaseModel):
     status: int = 0
 
 
-@app.get("/api/employees", dependencies=admin)
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class PasswordIn(BaseModel):
+    old_password: str
+    new_password: str
+
+
+class UserIn(BaseModel):
+    username: str
+    display_name: str = ""
+    password: str = ""
+    role: str = "manager"
+    department: str = ""
+    active: bool = True
+
+
+def _me(u: dict) -> dict:
+    return {"username": u["username"], "role": u["role"], "department": u["department"],
+            "display_name": u["display_name"], "open_mode": u["username"] == "(open)"}
+
+
+@app.post("/api/auth/login")
+def auth_login(body: LoginIn, request: Request):
+    name = body.username.strip().lower()
+    key = "u:" + name
+    if auth.locked(key):
+        raise HTTPException(429, "Too many failed attempts. Try again in 5 minutes.")
+    row = db.conn().execute("SELECT * FROM users WHERE username=? AND active=1", (name,)).fetchone()
+    if not row or not auth.check_password(body.password, row["password_hash"]):
+        auth.record_fail(key)
+        db.audit(name, "LOGIN failed", 401)
+        raise HTTPException(401, "Wrong username or password")
+    auth.record_ok(key)
+    db.audit(name, "LOGIN", 200)
+    resp = JSONResponse(_me(dict(row)))
+    resp.set_cookie(access.COOKIE, auth.make_token(name, "admin", access.SESSION_TTL), max_age=access.SESSION_TTL,
+                    httponly=True, samesite="strict", secure=request.url.scheme == "https", path="/")
+    return resp
+
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(access.COOKIE, path="/")
+    return resp
+
+
+@app.get("/api/auth/me")
+async def auth_me(u: dict = Depends(access.need("manager"))):
+    return _me(u)
+
+
+@app.post("/api/auth/password")
+async def auth_password(body: PasswordIn, u: dict = Depends(access.need("manager"))):
+    if u["username"] == "(open)":
+        raise HTTPException(400, "Create a user first (set ADMIN_PASSWORD and restart)")
+    if len(body.new_password) < 8:
+        raise HTTPException(400, "New password must be at least 8 characters")
+    if not auth.check_password(body.old_password, u["password_hash"]):
+        raise HTTPException(403, "Current password is wrong")
+    c = db.conn()
+    c.execute("UPDATE users SET password_hash=? WHERE username=?", (auth.hash_password(body.new_password), u["username"]))
+    c.commit()
+    return {"ok": True}
+
+
+@app.get("/api/users", dependencies=[Depends(access.need("admin"))])
+def list_users():
+    return [dict(r) for r in db.conn().execute("SELECT username, display_name, role, department, active FROM users ORDER BY username")]
+
+
+@app.post("/api/users")
+async def save_user(body: UserIn, u: dict = Depends(access.need("admin"))):
+    name = body.username.strip().lower()
+    if not re.fullmatch(r"[a-z0-9._-]{3,30}", name):
+        raise HTTPException(400, "Username: 3-30 characters, letters, digits . _ -")
+    if body.role not in access.LEVEL:
+        raise HTTPException(400, "Role must be admin, hr or manager")
+    if body.role == "manager" and not body.department.strip():
+        raise HTTPException(400, "A manager needs a department")
+    if body.password and len(body.password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+    c = db.conn()
+    row = c.execute("SELECT * FROM users WHERE username=?", (name,)).fetchone()
+    if not row and not body.password:
+        raise HTTPException(400, "A password is required for a new user")
+    if row and row["role"] == "admin" and (body.role != "admin" or not body.active):
+        if c.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND username!=?", (name,)).fetchone()[0] == 0:
+            raise HTTPException(400, "There must be at least one active admin")
+    if row:
+        c.execute("UPDATE users SET display_name=?, role=?, department=?, active=? WHERE username=?",
+                  (body.display_name, body.role, body.department.strip(), int(body.active), name))
+        if body.password:
+            c.execute("UPDATE users SET password_hash=? WHERE username=?", (auth.hash_password(body.password), name))
+    else:
+        c.execute("INSERT INTO users(username,display_name,password_hash,role,department,active) VALUES (?,?,?,?,?,?)",
+                  (name, body.display_name, auth.hash_password(body.password), body.role, body.department.strip(), int(body.active)))
+    c.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/users/{username}")
+async def delete_user(username: str, u: dict = Depends(access.need("admin"))):
+    username = username.lower()
+    c = db.conn()
+    row = c.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such user")
+    if username == u["username"]:
+        raise HTTPException(400, "You cannot delete your own account")
+    if row["role"] == "admin" and c.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND username!=?", (username,)).fetchone()[0] == 0:
+        raise HTTPException(400, "There must be at least one active admin")
+    c.execute("DELETE FROM users WHERE username=?", (username,))
+    c.commit()
+    return {"ok": True}
+
+
+@app.get("/api/audit", dependencies=[Depends(access.need("admin"))])
+def list_audit(limit: int = 300):
+    return [dict(r) for r in db.conn().execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (min(limit, 2000),))]
+
+
+@app.middleware("http")
+async def audit_writes(request: Request, call_next):
+    """Record who changed what (method + path, never request bodies, so PINs and passwords are not logged)."""
+    response = await call_next(request)
+    path = request.url.path
+    if request.method not in access.SAFE and path.startswith("/api/") and not path.startswith(("/api/app/", "/api/auth/")):
+        db.audit(getattr(request.state, "user", "anonymous"), f"{request.method} {path}", response.status_code)
+    return response
+
+
+@app.get("/api/employees", dependencies=[Depends(access.need("manager"))])
 def list_employees():
-    return [dict(r) for r in db.conn().execute(
+    frag, args = access.scope_sql("e.department")
+    rows = [dict(r) for r in db.conn().execute(
         "SELECT e.id, e.device_user_id, e.name, e.department, e.active, e.pin_hash IS NOT NULL AS pin_hash, e.shift_id, "
-        "e.salary, COALESCE(e.joined,'') joined, COALESCE(s.name,'') shift FROM employees e LEFT JOIN shifts s ON s.id=e.shift_id ORDER BY e.name")]
+        "e.salary, COALESCE(e.joined,'') joined, COALESCE(s.name,'') shift FROM employees e LEFT JOIN shifts s ON s.id=e.shift_id "
+        "WHERE 1=1" + frag + " ORDER BY e.name", args)]
+    if access.scope_dept.get() is not None:   # managers never see salary
+        for r in rows:
+            r["salary"] = 0
+    return rows
 
 
-@app.post("/api/employees", dependencies=admin)
+@app.post("/api/employees", dependencies=[Depends(access.need("hr"))])
 def upsert_employee(e: EmployeeIn):
     e.device_user_id = db.canon_id(e.device_user_id)
     if not e.device_user_id:
@@ -135,7 +267,7 @@ def upsert_employee(e: EmployeeIn):
     return {"ok": True}
 
 
-@app.delete("/api/employees/{device_user_id}", dependencies=admin)
+@app.delete("/api/employees/{device_user_id}", dependencies=[Depends(access.need("hr"))])
 def delete_employee(device_user_id: str):
     device_user_id = db.canon_id(device_user_id)
     c = db.conn()
@@ -144,7 +276,7 @@ def delete_employee(device_user_id: str):
     return {"ok": True}
 
 
-@app.post("/api/employees/{device_user_id}/pin", dependencies=admin)
+@app.post("/api/employees/{device_user_id}/pin", dependencies=[Depends(access.need("hr"))])
 def set_pin(device_user_id: str, body: PinIn):
     device_user_id = db.canon_id(device_user_id)
     if not auth.valid_pin(body.pin):
@@ -160,7 +292,7 @@ def set_pin(device_user_id: str, body: PinIn):
 ONLINE_SECONDS = 90  # devices poll every ~3 s, so silence for 90 s means offline
 
 
-@app.get("/api/devices", dependencies=admin)
+@app.get("/api/devices", dependencies=[Depends(access.need("manager"))])
 def list_devices():
     now, out = now_local(), []
     for r in db.conn().execute("SELECT * FROM devices ORDER BY COALESCE(NULLIF(name,''), dev_id)"):
@@ -170,7 +302,7 @@ def list_devices():
     return out
 
 
-@app.post("/api/devices/{dev_id}/info", dependencies=admin)
+@app.post("/api/devices/{dev_id}/info", dependencies=[Depends(access.need("admin"))])
 def update_device(dev_id: str, body: DeviceIn):
     c = db.conn()
     cur = c.execute("UPDATE devices SET name=?, location=? WHERE dev_id=?", (body.name, body.location, dev_id))
@@ -180,7 +312,7 @@ def update_device(dev_id: str, body: DeviceIn):
     return {"ok": True}
 
 
-@app.get("/api/dashboard", dependencies=admin)
+@app.get("/api/dashboard", dependencies=[Depends(access.need("manager"))])
 def dashboard(day: str | None = None):
     day = day or now_local().date().isoformat()
     rows = reports.daily(day)
@@ -198,7 +330,8 @@ def dashboard(day: str | None = None):
     gps = [dict(r) for r in c.execute(
         "SELECT p.id, p.ts, p.device_user_id, COALESCE(e.name,'Unknown') name, p.selfie, p.lat, p.lng, p.flag, s.name site "
         "FROM punches p LEFT JOIN employees e ON e.device_user_id=p.device_user_id LEFT JOIN sites s ON s.id=p.site_id "
-        "WHERE p.method='app' AND date(p.ts)=? AND COALESCE(p.flag,'')!='rejected' ORDER BY p.ts DESC LIMIT 10", (day,))]
+        "WHERE p.method='app' AND date(p.ts)=? AND COALESCE(p.flag,'')!='rejected'" + access.scope_sql("e.department")[0] +
+        " ORDER BY p.ts DESC LIMIT 10", (day, *access.scope_sql("e.department")[1]))]
     return {"day": day, "total": len(rows),
             "present": sum(r["status"] in reports.WORKED for r in rows),
             "absent": sum(r["status"] == "Absent" for r in rows),
@@ -214,13 +347,13 @@ def _valid_date(d: str):
         raise HTTPException(400, f"Invalid date {d!r} (use YYYY-MM-DD)")
 
 
-@app.get("/api/shifts", dependencies=admin)
+@app.get("/api/shifts", dependencies=[Depends(access.need("manager"))])
 def list_shifts():
     return [dict(r) for r in db.conn().execute(
         "SELECT s.*, (SELECT COUNT(*) FROM employees e WHERE e.shift_id=s.id AND e.active=1) employees FROM shifts s ORDER BY s.name")]
 
 
-@app.post("/api/shifts", dependencies=admin)
+@app.post("/api/shifts", dependencies=[Depends(access.need("hr"))])
 def save_shift(sh: ShiftIn):
     if not (re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", sh.start) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", sh.end)):
         raise HTTPException(400, "Times must be HH:MM (24-hour)")
@@ -240,7 +373,7 @@ def save_shift(sh: ShiftIn):
     return {"ok": True}
 
 
-@app.delete("/api/shifts/{shift_id}", dependencies=admin)
+@app.delete("/api/shifts/{shift_id}", dependencies=[Depends(access.need("hr"))])
 def delete_shift(shift_id: int):
     c = db.conn()
     c.execute("UPDATE employees SET shift_id=NULL WHERE shift_id=?", (shift_id,))
@@ -249,13 +382,13 @@ def delete_shift(shift_id: int):
     return {"ok": True}
 
 
-@app.get("/api/holidays", dependencies=admin)
+@app.get("/api/holidays", dependencies=[Depends(access.need("manager"))])
 def list_holidays(year: str | None = None):
     year = year or now_local().strftime("%Y")
     return [dict(r) for r in db.conn().execute("SELECT * FROM holidays WHERE substr(date,1,4)=? ORDER BY date", (year,))]
 
 
-@app.post("/api/holidays", dependencies=admin)
+@app.post("/api/holidays", dependencies=[Depends(access.need("hr"))])
 def save_holiday(h: HolidayIn):
     _valid_date(h.date)
     c = db.conn()
@@ -264,7 +397,7 @@ def save_holiday(h: HolidayIn):
     return {"ok": True}
 
 
-@app.delete("/api/holidays/{day}", dependencies=admin)
+@app.delete("/api/holidays/{day}", dependencies=[Depends(access.need("hr"))])
 def delete_holiday(day: str):
     c = db.conn()
     c.execute("DELETE FROM holidays WHERE date=?", (day,))
@@ -272,15 +405,16 @@ def delete_holiday(day: str):
     return {"ok": True}
 
 
-@app.get("/api/leaves", dependencies=admin)
+@app.get("/api/leaves", dependencies=[Depends(access.need("manager"))])
 def list_leaves(month: str | None = None):
     month = month or now_local().strftime("%Y-%m")
+    frag, args = access.scope_sql("e.department")
     return [dict(r) for r in db.conn().execute(
         "SELECT l.*, COALESCE(e.name, l.device_user_id) name FROM leaves l LEFT JOIN employees e ON e.device_user_id=l.device_user_id "
-        "WHERE substr(l.start_date,1,7)<=? AND substr(l.end_date,1,7)>=? ORDER BY l.start_date DESC", (month, month))]
+        "WHERE substr(l.start_date,1,7)<=? AND substr(l.end_date,1,7)>=?" + frag + " ORDER BY l.start_date DESC", (month, month, *args))]
 
 
-@app.post("/api/leaves", dependencies=admin)
+@app.post("/api/leaves", dependencies=[Depends(access.need("hr"))])
 def add_leave(l: LeaveIn):
     l.device_user_id = db.canon_id(l.device_user_id)
     _valid_date(l.start_date)
@@ -298,7 +432,7 @@ def add_leave(l: LeaveIn):
     return {"ok": True}
 
 
-@app.delete("/api/leaves/{leave_id}", dependencies=admin)
+@app.delete("/api/leaves/{leave_id}", dependencies=[Depends(access.need("hr"))])
 def delete_leave(leave_id: int):
     c = db.conn()
     c.execute("DELETE FROM leaves WHERE id=?", (leave_id,))
@@ -309,7 +443,7 @@ def delete_leave(leave_id: int):
 MAX_IMPORT_BYTES = 15 * 1024 * 1024
 
 
-@app.post("/api/import/{kind}", dependencies=admin)
+@app.post("/api/import/{kind}", dependencies=[Depends(access.need("hr"))])
 async def import_file(kind: str, file: UploadFile = File(...), dry_run: bool = True):
     data = await file.read(MAX_IMPORT_BYTES + 1)
     if len(data) > MAX_IMPORT_BYTES:
@@ -323,7 +457,7 @@ async def import_file(kind: str, file: UploadFile = File(...), dry_run: bool = T
         raise HTTPException(400, f"Could not read the file: {type(e).__name__}")
 
 
-@app.get("/api/import/{kind}/template.csv", dependencies=admin)
+@app.get("/api/import/{kind}/template.csv", dependencies=[Depends(access.need("hr"))])
 def import_template(kind: str):
     if kind not in importer.TEMPLATES:
         raise HTTPException(404)
@@ -331,12 +465,12 @@ def import_template(kind: str):
                              headers={"Content-Disposition": f"attachment; filename={kind}-template.csv"})
 
 
-@app.get("/api/sites", dependencies=admin)
+@app.get("/api/sites", dependencies=[Depends(access.need("manager"))])
 def list_sites():
     return [dict(r) for r in db.conn().execute("SELECT * FROM sites WHERE active=1 ORDER BY name")]
 
 
-@app.post("/api/sites", dependencies=admin)
+@app.post("/api/sites", dependencies=[Depends(access.need("admin"))])
 def add_site(s: SiteIn):
     if not (-90 <= s.lat <= 90 and -180 <= s.lng <= 180 and s.radius_m > 0):
         raise HTTPException(400, "Invalid latitude/longitude/radius")
@@ -346,7 +480,7 @@ def add_site(s: SiteIn):
     return {"ok": True}
 
 
-@app.delete("/api/sites/{site_id}", dependencies=admin)
+@app.delete("/api/sites/{site_id}", dependencies=[Depends(access.need("admin"))])
 def delete_site(site_id: int):
     c = db.conn()
     c.execute("UPDATE sites SET active=0 WHERE id=?", (site_id,))
@@ -354,20 +488,21 @@ def delete_site(site_id: int):
     return {"ok": True}
 
 
-@app.get("/api/punches", dependencies=admin)
+@app.get("/api/punches", dependencies=[Depends(access.need("manager"))])
 def list_punches(day: str | None = None, limit: int = 500, device: str | None = None):
     day = day or now_local().date().isoformat()
+    frag, args = access.scope_sql("e.department")
     rows = db.conn().execute(
         "SELECT p.id, p.ts, p.device_user_id, COALESCE(e.name,'Unknown') name, p.status, p.source, p.method, "
         "p.flag, p.selfie, p.lat, p.lng, p.accuracy, p.distance_m, s.name site FROM punches p "
         "LEFT JOIN employees e ON e.device_user_id=p.device_user_id LEFT JOIN sites s ON s.id=p.site_id "
-        "WHERE date(p.ts)=? AND (? IS NULL OR p.source=?) ORDER BY p.ts DESC LIMIT ?",
-        (day, device, device, limit),
+        "WHERE date(p.ts)=? AND (? IS NULL OR p.source=?)" + frag + " ORDER BY p.ts DESC LIMIT ?",
+        (day, device, device, *args, limit),
     )
     return [dict(r) for r in rows]
 
 
-@app.post("/api/punches/{punch_id}/review", dependencies=admin)
+@app.post("/api/punches/{punch_id}/review", dependencies=[Depends(access.need("hr"))])
 def review_punch(punch_id: int, body: ReviewIn):
     if body.flag not in ("rejected", "approved", ""):
         raise HTTPException(400, "flag must be rejected, approved or empty")
@@ -377,7 +512,7 @@ def review_punch(punch_id: int, body: ReviewIn):
     return {"ok": True}
 
 
-@app.get("/api/selfies/{year_month}/{filename}", dependencies=admin)
+@app.get("/api/selfies/{year_month}/{filename}", dependencies=[Depends(access.need("hr"))])
 def get_selfie(year_month: str, filename: str):
     base = os.path.realpath(config.SELFIE_DIR)
     path = os.path.realpath(os.path.join(base, year_month, filename))
@@ -386,7 +521,7 @@ def get_selfie(year_month: str, filename: str):
     return FileResponse(path, headers={"Cache-Control": "private, max-age=86400"})
 
 
-@app.post("/api/punches", dependencies=admin)
+@app.post("/api/punches", dependencies=[Depends(access.need("hr"))])
 def manual_punch(p: PunchIn):
     rec = db.add_punch(p.device_user_id, p.ts, p.status, "manual")
     if rec:
@@ -439,92 +574,92 @@ def _day(day): return day or now_local().date().isoformat()
 def _month(month): return month or now_local().strftime("%Y-%m")
 
 
-@app.get("/api/reports/daily", dependencies=admin)
+@app.get("/api/reports/daily", dependencies=[Depends(access.need("manager"))])
 def report_daily(day: str | None = None, device: str | None = None):
     return reports.daily(_day(day), device)
 
 
-@app.get("/api/reports/daily.csv", dependencies=admin)
+@app.get("/api/reports/daily.csv", dependencies=[Depends(access.need("manager"))])
 def report_daily_csv(day: str | None = None, device: str | None = None):
     return _csv(reports.daily(_day(day), device), "attendance-daily.csv")
 
 
-@app.get("/api/reports/monthly", dependencies=admin)
+@app.get("/api/reports/monthly", dependencies=[Depends(access.need("manager"))])
 def report_monthly(month: str | None = None, device: str | None = None):
     return reports.monthly(_month(month), device)
 
 
-@app.get("/api/reports/monthly.csv", dependencies=admin)
+@app.get("/api/reports/monthly.csv", dependencies=[Depends(access.need("manager"))])
 def report_monthly_csv(month: str | None = None, device: str | None = None):
     return _csv(reports.monthly(_month(month), device), "attendance-monthly.csv")
 
 
-@app.get("/api/reports/grid", dependencies=admin)
+@app.get("/api/reports/grid", dependencies=[Depends(access.need("manager"))])
 def report_grid(month: str | None = None, device: str | None = None):
     return reports.grid(_month(month), device)
 
 
-@app.get("/api/reports/grid.csv", dependencies=admin)
+@app.get("/api/reports/grid.csv", dependencies=[Depends(access.need("manager"))])
 def report_grid_csv(month: str | None = None, device: str | None = None):
     return _csv(_grid_rows(reports.grid(_month(month), device)), "attendance-sheet.csv")
 
 
-@app.get("/api/reports/daily.xlsx", dependencies=admin)
+@app.get("/api/reports/daily.xlsx", dependencies=[Depends(access.need("manager"))])
 def report_daily_xlsx(day: str | None = None, device: str | None = None):
     return _xlsx(reports.daily(_day(day), device), "attendance-daily.xlsx", "Daily")
 
 
-@app.get("/api/reports/monthly.xlsx", dependencies=admin)
+@app.get("/api/reports/monthly.xlsx", dependencies=[Depends(access.need("manager"))])
 def report_monthly_xlsx(month: str | None = None, device: str | None = None):
     return _xlsx(reports.monthly(_month(month), device), "attendance-monthly.xlsx", "Monthly")
 
 
-@app.get("/api/reports/grid.xlsx", dependencies=admin)
+@app.get("/api/reports/grid.xlsx", dependencies=[Depends(access.need("manager"))])
 def report_grid_xlsx(month: str | None = None, device: str | None = None):
     return _xlsx(_grid_rows(reports.grid(_month(month), device)), "attendance-sheet.xlsx", "Sheet")
 
 
-@app.get("/api/reports/payroll.xlsx", dependencies=admin)
+@app.get("/api/reports/payroll.xlsx", dependencies=[Depends(access.need("hr"))])
 def report_payroll_xlsx(month: str | None = None, device: str | None = None):
     return _xlsx(reports.payroll(_month(month), device), "payroll.xlsx", "Payroll")
 
 
-@app.get("/api/reports/muster", dependencies=admin)
+@app.get("/api/reports/muster", dependencies=[Depends(access.need("manager"))])
 def report_muster(month: str | None = None, device: str | None = None):
     return reports.muster(_month(month), device)
 
 
-@app.get("/api/reports/muster.csv", dependencies=admin)
+@app.get("/api/reports/muster.csv", dependencies=[Depends(access.need("manager"))])
 def report_muster_csv(month: str | None = None, device: str | None = None):
     return _csv(reports.muster(_month(month), device), "muster-roll.csv")
 
 
-@app.get("/api/reports/muster.xlsx", dependencies=admin)
+@app.get("/api/reports/muster.xlsx", dependencies=[Depends(access.need("manager"))])
 def report_muster_xlsx(month: str | None = None, device: str | None = None):
     return _xlsx(reports.muster(_month(month), device), "muster-roll.xlsx", "Muster Roll")
 
 
-@app.get("/api/reports/timecard", dependencies=admin)
+@app.get("/api/reports/timecard", dependencies=[Depends(access.need("manager"))])
 def report_timecard(employee: str, month: str | None = None):
     return reports.timecard(_month(month), db.canon_id(employee))
 
 
-@app.get("/api/reports/timecard.xlsx", dependencies=admin)
+@app.get("/api/reports/timecard.xlsx", dependencies=[Depends(access.need("manager"))])
 def report_timecard_xlsx(employee: str, month: str | None = None):
     return _xlsx(reports.timecard(_month(month), db.canon_id(employee)), "time-card.xlsx", "Time Card")
 
 
-@app.get("/api/reports/payroll", dependencies=admin)
+@app.get("/api/reports/payroll", dependencies=[Depends(access.need("hr"))])
 def report_payroll(month: str | None = None, device: str | None = None):
     return reports.payroll(_month(month), device)
 
 
-@app.get("/api/reports/payroll.csv", dependencies=admin)
+@app.get("/api/reports/payroll.csv", dependencies=[Depends(access.need("hr"))])
 def report_payroll_csv(month: str | None = None, device: str | None = None):
     return _csv(reports.payroll(_month(month), device), "payroll.csv")
 
 
-@app.post("/api/devices/sync", dependencies=admin)
+@app.post("/api/devices/sync", dependencies=[Depends(access.need("admin"))])
 def sync_now():
     """Trigger an immediate pull from all configured ZK devices."""
     return {a: zk_poller.sync_device(a) for a in config.ZK_DEVICES}
@@ -532,6 +667,11 @@ def sync_now():
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
+    if not access.open_mode():   # live feed shows names: logged-in hr/admin only
+        user = access.session_user(websocket)
+        if not user or access.LEVEL[user["role"]] < access.LEVEL["hr"]:
+            await websocket.close(code=4401)
+            return
     await websocket.accept()
     await hub.register(websocket)
     try:
@@ -541,9 +681,16 @@ async def ws(websocket: WebSocket):
         hub.unregister(websocket)
 
 
-@app.get("/", dependencies=admin)
-def index():
+@app.get("/")
+def index(request: Request):
+    if not access.open_mode() and not access.session_user(request):
+        return RedirectResponse("/login")
     return FileResponse("app/static/index.html")
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse("app/static/login.html")
 
 
 @app.get("/m")

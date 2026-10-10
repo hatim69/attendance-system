@@ -32,14 +32,14 @@
 </style></head><body>
 <header><b style="margin-right:8px">Attendance</b>
  <a data-t="live" class="on">Dashboard</a><a data-t="punches">Punches</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="sheet">Sheet</a><a data-t="timecard">Time Card</a><a data-t="payroll">Payroll</a>
- <a data-t="emp">Employees</a><a data-t="shifts">Shifts</a><a data-t="holidays">Holidays</a><a data-t="leave">Leave</a><a data-t="devices">Devices</a><a data-t="import">Import</a><a data-t="sites">Sites</a>
- <span id="conn" style="margin-left:auto;font-size:12px">●</span></header>
+ <a data-t="emp">Employees</a><a data-t="shifts">Shifts</a><a data-t="holidays">Holidays</a><a data-t="leave">Leave</a><a data-t="devices">Devices</a><a data-t="import">Import</a><a data-t="sites">Sites</a><a data-t="users">Users</a><a data-t="audit">Audit</a>
+ <span style="margin-left:auto;font-size:13px;color:#cbd5e1"><span id="who"></span> <a id="pw">Password</a> <a id="out">Log out</a></span> <span id="conn" style="margin-left:8px;font-size:12px">●</span></header>
 <main id="m"></main><div id="big" onclick="this.style.display='none'"><img></div>
 <script>
 const $=s=>document.querySelector(s), m=$('#m'); let tab='live';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const today=()=>new Date().toLocaleDateString('en-CA');
-const j=async(u,o)=>{const r=await fetch(u,o); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(typeof d.detail=='string'?d.detail:r.status); return d};
+const j=async(u,o)=>{o=o||{};o.headers=Object.assign({'X-Requested-With':'fetch'},o.headers||{});const r=await fetch(u,o); if(r.status==401){location.href='/login';throw new Error('Please log in')} const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(typeof d.detail=='string'?d.detail:r.status); return d};
 const post=(u,b)=>j(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
 const cls=v=>String(v||'').replace(/ /g,'');
 // cols: [key,label,optional render fn returning trusted HTML]
@@ -138,6 +138,15 @@ async function render(){
    try{const r=await j(`/api/import/${$('#ik').value}?dry_run=${dry}`,{method:'POST',body:fd});
     $('#t').innerHTML=`<div class="toast">${dry?'<b>Preview (nothing saved):</b> ':'<b>Imported:</b> '}${r.rows} rows read · ${r.created} new · ${r.updated} updated · ${r.skipped} skipped${r.errors.length?' · '+r.errors.length+' problems':''}</div>`+(r.errors.length?tbl([['row','Row in file'],['message','Problem']],r.errors):'')+(dry&&!r.errors.length?'<p class="hint">Looks good. Untick "Preview only" and press Run to import.</p>':'');
    }finally{$('#ib').disabled=false}});
+ } else if(tab=='users'){
+  m.innerHTML=`<div class="bar"><input id="un" placeholder="Username" size=12><input id="ud" placeholder="Display name" size=14><input id="up" type="password" placeholder="Password (min 8)" size=14> <select id="ur"><option value="manager">Manager (read-only, one department)</option><option value="hr">HR (day-to-day work and payroll)</option><option value="admin">Admin (everything)</option></select><input id="ut" placeholder="Department (managers)" size=14><label><input type="checkbox" id="ua" checked> Active</label><button id="s">Save user</button></div>
+   <p class="hint">Managers see only their department and no salaries. To change someone's password, enter a new one and save. Leave it empty to keep the current password.</p><div id="t"></div>`;
+  const us=await j('/api/users'); listCache=us;
+  $('#t').innerHTML=tbl([['username','Username'],['display_name','Name'],['role','Role'],['department','Department'],['active','Active'],['x','',r=>`<button onclick="editUser(${listCache.indexOf(r)})">Edit</button><button onclick="delUser(${listCache.indexOf(r)})">Delete</button>`]],us);
+  $('#s').onclick=safe(async()=>{await post('/api/users',{username:$('#un').value,display_name:$('#ud').value,password:$('#up').value,role:$('#ur').value,department:$('#ut').value,active:$('#ua').checked});render()});
+ } else if(tab=='audit'){
+  m.innerHTML=`<p class="hint">Every change made through the admin site, newest first (who, what, result). Request contents such as passwords are never logged.</p><div id="t"></div>`;
+  $('#t').innerHTML=tbl([['ts','Time'],['user','User'],['action','Action'],['status','Result']],await j('/api/audit'));
  } else if(tab=='devices'){
   m.innerHTML=`<p class="hint">Devices appear here automatically the first time they contact the server. Online = heard from in the last 90 seconds.</p><div id="t"></div>`;
   listCache=devs;
@@ -160,6 +169,8 @@ async function render(){
  }catch(e){m.innerHTML=`<p class="Absent">Error: ${esc(e.message)}</p>`}
 }
 // row actions use list indexes (never put text in inline handlers)
+function editUser(i){const u=listCache[i];$('#un').value=u.username;$('#ud').value=u.display_name;$('#up').value='';$('#ur').value=u.role;$('#ut').value=u.department;$('#ua').checked=!!u.active}
+const delUser=safe(async i=>{if(confirm('Delete user '+listCache[i].username+'?')){await j('/api/users/'+encodeURIComponent(listCache[i].username),{method:'DELETE'});render()}});
 function editEmp(i){const e=listCache[i];$('#i').value=e.device_user_id;$('#n').value=e.name;$('#dp').value=e.department;$('#es').value=e.shift_id??'';$('#sal').value=e.salary||'';$('#jd').value=e.joined||''}
 function editShift(i){const s=listCache[i];$('#sid').value=s.id;$('#sn').value=s.name;$('#ss').value=s.start;$('#se').value=s.end;$('#sg').value=s.grace_min;$('#sh').value=s.half_day_hours;$('#so').value=s.ot_after_min;$('#sw').value=s.weekly_off}
 const delShift=safe(async id=>{if(confirm('Delete this shift? Its employees become flexible.')){await j('/api/shifts/'+id,{method:'DELETE'});render()}});
@@ -174,5 +185,14 @@ function connect(){
  ws.onopen=()=>{$('#conn').style.color='#4ade80';ws.send('hi')}; ws.onclose=()=>{$('#conn').style.color='#f87171';setTimeout(connect,2000)};
  ws.onmessage=e=>{const p=JSON.parse(e.data); if(tab!='live')return; const d=document.createElement('div');d.className='toast';d.textContent=`${p.ts.slice(11)}  ${p.name} checked in${p.flag=='outside_geofence'?' (outside area)':''}`;$('#feed').prepend(d);setTimeout(render,500)};
 }
-render(); connect();
+const HIDE={manager:['payroll','emp','shifts','holidays','leave','import','sites','users','audit'],hr:['sites','users','audit'],admin:[]};
+(async()=>{try{const me=await j('/api/auth/me');
+  $('#who').textContent=me.open_mode?'OPEN MODE (no login)':`${me.display_name||me.username} · ${me.role}${me.role=='manager'?' · '+me.department:''}`;
+  (HIDE[me.role]||[]).forEach(t=>{const a=document.querySelector(`header a[data-t=${t}]`);if(a)a.style.display='none'});
+  if(me.open_mode){$('#out').style.display=$('#pw').style.display='none'}
+  $('#out').onclick=async()=>{await fetch('/api/auth/logout',{method:'POST',headers:{'X-Requested-With':'fetch'}});location.href='/login'};
+  $('#pw').onclick=safe(async()=>{const o=prompt('Current password:');if(!o)return;const n=prompt('New password (min 8 characters):');if(!n)return;await post('/api/auth/password',{old_password:o,new_password:n});alert('Password changed')});
+  if(me.role!='manager')connect();
+  render();
+ }catch(e){}})();
 </script></body></html>

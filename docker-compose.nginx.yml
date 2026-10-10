@@ -9,7 +9,7 @@ services:
       FKWEB_PORT: "80"
       REQUIRE_LOGIN: "1"
     ports:
-      - "127.0.0.1:8000:8000"   # dashboard / API / phone app
-      - "127.0.0.1:8081:80"     # fingerprint devices (nginx forwards requests carrying a request_code header here)
+      - "127.0.0.1:${APP_PORT:-18000}:8000"   # dashboard / API / phone app
+      - "127.0.0.1:${FK_PORT:-18081}:80"      # fingerprint devices (nginx forwards requests carrying a request_code header here)
     volumes:
       - ./data:/data

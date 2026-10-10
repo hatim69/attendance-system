@@ -110,7 +110,7 @@ server {
     location / {
         # browsers -> https; fingerprint devices (they send a request_code header, and cannot do https) -> the app
         if (\$http_request_code = "") { return 301 https://\$host\$request_uri; }
-        proxy_pass http://127.0.0.1:8081;
+        proxy_pass http://127.0.0.1:$FK_PORT;
     }
 }
 NGINX
@@ -126,7 +126,7 @@ server {
     client_max_body_size 8m;
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-For \$remote_addr;
@@ -153,15 +153,20 @@ apply_nginx() {        # test the whole config first; on any problem remove our 
 
 install_nginx_mode() {
   say "4/5 Sharing this server with nginx (your existing sites are not touched)"
-  for port in 8000 8081; do
-    [ "$DRY_RUN" = 1 ] || [ -z "$(listening "$port")" ] || die "port $port is already in use on this server: $(listening "$port")"
-  done
+  # other apps on this server may already use ports (yours has gunicorn on 8000): pick free localhost ports for ours
+  pick_port() { local p="$1"; while [ -n "$(listening "$p")" ]; do p=$((p + 1)); done; echo "$p"; }
+  APP_PORT="$(sed -n 's/^APP_PORT=//p' .env | head -1)"; FK_PORT="$(sed -n 's/^FK_PORT=//p' .env | head -1)"
+  [ -n "$APP_PORT" ] || APP_PORT="$(pick_port 18000)"
+  [ -n "$FK_PORT" ] || FK_PORT="$(pick_port 18081)"
+  grep -q '^APP_PORT=' .env || echo "APP_PORT=$APP_PORT" >> .env
+  grep -q '^FK_PORT=' .env || echo "FK_PORT=$FK_PORT" >> .env
+  echo "Using localhost ports $APP_PORT (dashboard) and $FK_PORT (devices)"
   # nginx needs this map for websocket upgrades (the live dashboard feed); put it in its own file, only if missing
   if ! grep -rqs "connection_upgrade" "$NGINX_DIR" 2>/dev/null; then
     mkdir -p "$NGINX_DIR/conf.d"
     printf 'map $http_upgrade $connection_upgrade { default upgrade; "" close; }\n' > "$NGINX_DIR/conf.d/attendance-websocket-map.conf"
   fi
-  run docker compose -f docker-compose.nginx.yml up -d --build
+  run env APP_PORT="$APP_PORT" FK_PORT="$FK_PORT" docker compose -f docker-compose.nginx.yml up -d --build
   write_nginx_site http
   [ "$DRY_RUN" = 1 ] || ln -sf "$NGINX_DIR/sites-available/attendance-system" "$NGINX_DIR/sites-enabled/attendance-system"
   apply_nginx

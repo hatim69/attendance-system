@@ -3,3 +3,5 @@ uvicorn[standard]==0.34.0
 pyzk==0.9
 httpx==0.28.1
 pytest==8.3.4
+python-multipart==0.0.20
+tzdata==2025.2

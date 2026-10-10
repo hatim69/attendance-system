@@ -1,53 +1,87 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Attendance</title>
+<title>Attendance Admin</title>
 <style>
  body{font-family:system-ui,sans-serif;margin:0;background:#f4f5f7;color:#1c1e21}
- header{background:#1f2937;color:#fff;padding:12px 20px;display:flex;gap:20px;align-items:center}
- header a{color:#cbd5e1;cursor:pointer;padding:4px 8px;border-radius:4px}
+ header{background:#1f2937;color:#fff;padding:12px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+ header a{color:#cbd5e1;cursor:pointer;padding:4px 10px;border-radius:4px}
  header a.on{background:#374151;color:#fff}
- main{padding:20px;max-width:1000px;margin:auto}
+ main{padding:20px;max-width:1150px;margin:auto;overflow-x:auto}
  table{width:100%;border-collapse:collapse;background:#fff;border-radius:6px;overflow:hidden}
- th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #eee}
+ th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #eee;vertical-align:middle}
  th{background:#f9fafb;font-size:12px;text-transform:uppercase;color:#6b7280}
- .Present{color:#15803d}.Late{color:#b45309}.Absent{color:#b91c1c}
- .toast{background:#dcfce7;border-left:4px solid #16a34a;padding:10px 14px;margin:6px 0;border-radius:4px;animation:in .3s}
- @keyframes in{from{opacity:0;transform:translateY(-6px)}}
- input,button{padding:6px 10px;margin:2px;font-size:14px}
- .bar{margin-bottom:12px}
+ .Present{color:#15803d}.Late{color:#b45309}.Absent{color:#b91c1c}.rejected{text-decoration:line-through;color:#9ca3af}
+ .tag{font-size:12px;padding:2px 8px;border-radius:10px;background:#e5e7eb}.tag.warn{background:#fef3c7;color:#92400e}.tag.bad{background:#fee2e2;color:#991b1b}.tag.good{background:#dcfce7;color:#166534}
+ .toast{background:#dcfce7;border-left:4px solid #16a34a;padding:10px 14px;margin:6px 0;border-radius:4px}
+ input,button{padding:6px 10px;margin:2px;font-size:14px} button{cursor:pointer}
+ img.th{width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:pointer}
+ .bar{margin-bottom:12px} .hint{color:#6b7280;font-size:13px;margin:6px 0}
+ #big{position:fixed;inset:0;background:#000c;display:none;align-items:center;justify-content:center} #big img{max-width:90%;max-height:90%;border-radius:8px}
 </style></head><body>
 <header><b>Attendance</b>
- <a data-t="live" class="on">Live</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="emp">Employees</a>
+ <a data-t="live" class="on">Live</a><a data-t="punches">Punches</a><a data-t="daily">Daily</a><a data-t="monthly">Monthly</a><a data-t="emp">Employees</a><a data-t="sites">Sites</a>
  <span id="conn" style="margin-left:auto;font-size:12px">●</span></header>
-<main id="m"></main>
+<main id="m"></main><div id="big" onclick="this.style.display='none'"><img></div>
 <script>
 const $=s=>document.querySelector(s), m=$('#m'); let tab='live';
+const enc=v=>encodeURIComponent(v??'').replace(/'/g,'%27');
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const today=()=>new Date().toLocaleDateString('en-CA');
-const j=async(u,o)=>(await fetch(u,o)).json();
-const tbl=(cols,rows)=>`<table><tr>${cols.map(c=>`<th>${c[1]}</th>`).join('')}</tr>${rows.map(r=>`<tr>${cols.map(c=>`<td class="${c[0]=='status'?r.status:''}">${r[c[0]]??''}</td>`).join('')}</tr>`).join('')}</table>`;
+const j=async(u,o)=>{const r=await fetch(u,o); const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.detail||r.status); return d};
+const post=(u,b)=>j(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+// cols: [key,label,optional render fn returning trusted HTML]
+const tbl=(cols,rows)=>`<table><tr>${cols.map(c=>`<th>${c[1]}</th>`).join('')}</tr>${rows.map(r=>`<tr>${cols.map(c=>`<td class="${c[0]=='status'?esc(r.status):''}">${c[2]?c[2](r):esc(r[c[0]])}</td>`).join('')}</tr>`).join('')}</table>`;
+const punchCols=[
+ ['ts','Time',r=>`<span class="${r.flag=='rejected'?'rejected':''}">${esc(r.ts.slice(11))}</span>`],
+ ['name','Name'],['device_user_id','ID'],
+ ['method','Via',r=>`<span class="tag">${r.method=='app'?'App':esc(r.source||r.method)}</span>`],
+ ['site','Place',r=>r.method!='app'?'':`${esc(r.site||'—')}${r.distance_m!=null?' · '+Math.round(r.distance_m)+' m':''} ${r.lat!=null?`<a target="_blank" href="https://maps.google.com/?q=${r.lat},${r.lng}">map</a>`:''}`],
+ ['selfie','Selfie',r=>r.selfie?`<img class="th" src="/api/selfies/${esc(r.selfie)}" onclick="big(this.src)">`:''],
+ ['flag','Status',r=>r.flag=='outside_geofence'?'<span class="tag warn">outside area</span>':r.flag=='rejected'?'<span class="tag bad">rejected</span>':r.flag=='approved'?'<span class="tag good">approved</span>':''],
+ ['id','',r=>r.method=='app'?(r.flag=='rejected'?`<button onclick="review(${r.id},'')">Restore</button>`:`<button onclick="review(${r.id},'rejected')">Reject</button>${r.flag=='outside_geofence'?`<button onclick="review(${r.id},'approved')">Approve</button>`:''}`):'']];
+function big(src){const b=$('#big');b.querySelector('img').src=src;b.style.display='flex'}
+async function review(id,flag){await post(`/api/punches/${id}/review`,{flag});render()}
 async function render(){
+ try{
  if(tab=='live'){
-  m.innerHTML=`<h3>Live check-ins</h3><div id="feed"></div><h3>Today's punches</h3><div id="log"></div>`;
-  $('#log').innerHTML=tbl([['ts','Time'],['name','Name'],['device_user_id','ID'],['source','Device']],await j('/api/punches'));
+  m.innerHTML=`<h3>Live check-ins</h3><div id="feed"></div><h3>Today</h3><div id="log"></div>`;
+  $('#log').innerHTML=tbl(punchCols,await j('/api/punches'));
+ } else if(tab=='punches'){
+  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"></div><div id="t"></div>`;
+  const load=async()=>$('#t').innerHTML=tbl(punchCols,await j('/api/punches?day='+$('#d').value));
+  $('#d').onchange=load; load();
  } else if(tab=='daily'){
-  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"><a href="#" id="csv">Download CSV</a></div><div id="t"></div>`;
+  m.innerHTML=`<div class="bar"><input type="date" id="d" value="${today()}"> <a href="#" id="csv">Download CSV</a></div><div id="t"></div>`;
   const load=async()=>$('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['first_in','In'],['last_out','Out'],['hours','Hours'],['status','Status']],await j('/api/reports/daily?day='+$('#d').value));
   $('#d').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/daily.csv?day='+$('#d').value}; load();
  } else if(tab=='monthly'){
-  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"></div><div id="t"></div>`;
+  m.innerHTML=`<div class="bar"><input type="month" id="mo" value="${today().slice(0,7)}"> <a href="#" id="csv">Download CSV</a></div><div id="t"></div>`;
   const load=async()=>$('#t').innerHTML=tbl([['name','Name'],['department','Dept'],['days_present','Days present'],['total_hours','Total hours']],await j('/api/reports/monthly?month='+$('#mo').value));
-  $('#mo').onchange=load; load();
+  $('#mo').onchange=load; $('#csv').onclick=e=>{e.target.href='/api/reports/monthly.csv?month='+$('#mo').value}; load();
+ } else if(tab=='emp'){
+  m.innerHTML=`<div class="bar"><input id="i" placeholder="Employee / device ID"><input id="n" placeholder="Name"><input id="dp" placeholder="Department"><button id="s">Save</button></div>
+   <p class="hint">Use the same ID that is enrolled on the fingerprint device. Set a PIN so the person can use the phone app.</p><div id="t"></div>`;
+  const load=async()=>{$('#t').innerHTML=tbl([['device_user_id','ID'],['name','Name'],['department','Dept'],['active','Active'],
+    ['pin','App PIN',r=>`<button onclick="setPin('${enc(r.device_user_id)}')">${r.pin_hash?'Change':'Set'} PIN</button>`],
+    ['x','',r=>`<button onclick="edit('${enc(r.device_user_id)}','${enc(r.name)}','${enc(r.department)}')">Edit</button>`]],await j('/api/employees'))};
+  $('#s').onclick=async()=>{await post('/api/employees',{device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value});load()}; load();
  } else {
-  m.innerHTML=`<div class="bar"><input id="i" placeholder="Device user ID"><input id="n" placeholder="Name"><input id="dp" placeholder="Department"><button id="s">Save</button></div><div id="t"></div>`;
-  const load=async()=>$('#t').innerHTML=tbl([['device_user_id','ID'],['name','Name'],['department','Dept'],['active','Active']],await j('/api/employees'));
-  $('#s').onclick=async()=>{await fetch('/api/employees',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value})});load()}; load();
+  m.innerHTML=`<div class="bar"><input id="sn" placeholder="Site name"><input id="la" placeholder="Latitude" size=10><input id="lo" placeholder="Longitude" size=10><input id="ra" placeholder="Radius (m)" value="150" size=6><button id="gps">Use my location</button><button id="s">Add site</button></div>
+   <p class="hint">App punches must be within the radius of a site. With no sites, locations are recorded but never blocked. Tip: stand at the office, open this page on your phone and tap "Use my location".</p><div id="t"></div>`;
+  const load=async()=>$('#t').innerHTML=tbl([['name','Name'],['lat','Latitude'],['lng','Longitude'],['radius_m','Radius (m)'],['id','',r=>`<button onclick="delSite(${r.id})">Remove</button>`]],await j('/api/sites'));
+  $('#gps').onclick=()=>navigator.geolocation.getCurrentPosition(p=>{$('#la').value=p.coords.latitude.toFixed(6);$('#lo').value=p.coords.longitude.toFixed(6)},e=>alert('Location unavailable: '+e.message));
+  $('#s').onclick=async()=>{try{await post('/api/sites',{name:$('#sn').value,lat:+$('#la').value,lng:+$('#lo').value,radius_m:+$('#ra').value});load()}catch(e){alert(e.message)}}; load();
  }
+ }catch(e){m.innerHTML=`<p class="Absent">Error: ${esc(e.message)}</p>`}
 }
+function edit(i,n,d){tab='emp';document.querySelector('#i').value=decodeURIComponent(i);$('#n').value=decodeURIComponent(n);$('#dp').value=decodeURIComponent(d)}
+async function setPin(id){id=decodeURIComponent(id);const p=prompt('New PIN for '+id+' (4-8 digits):'); if(!p)return; try{await post(`/api/employees/${encodeURIComponent(id)}/pin`,{pin:p});alert('PIN saved');render()}catch(e){alert(e.message)}}
+async function delSite(id){if(confirm('Remove this site?')){await j('/api/sites/'+id,{method:'DELETE'});render()}}
 document.querySelectorAll('header a').forEach(a=>a.onclick=()=>{document.querySelectorAll('header a').forEach(x=>x.classList.remove('on'));a.classList.add('on');tab=a.dataset.t;render()});
 function connect(){
  const ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/ws');
  ws.onopen=()=>{$('#conn').style.color='#4ade80';ws.send('hi')}; ws.onclose=()=>{$('#conn').style.color='#f87171';setTimeout(connect,2000)};
- ws.onmessage=e=>{const p=JSON.parse(e.data); if(tab!='live')return; const d=document.createElement('div');d.className='toast';d.textContent=`${p.ts.slice(11)}  ${p.name} checked in`;$('#feed').prepend(d);setTimeout(render,500)};
+ ws.onmessage=e=>{const p=JSON.parse(e.data); if(tab!='live')return; const d=document.createElement('div');d.className='toast';d.textContent=`${p.ts.slice(11)}  ${p.name} checked in${p.flag=='outside_geofence'?' (outside area)':''}`;$('#feed').prepend(d);setTimeout(render,500)};
 }
 render(); connect();
 </script></body></html>

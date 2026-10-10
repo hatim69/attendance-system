@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#2563eb">
+<link rel="manifest" href="/m/manifest.webmanifest"><link rel="apple-touch-icon" href="/m/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<title>Attendance</title>
+<style>
+ *{box-sizing:border-box} body{margin:0;font-family:system-ui,sans-serif;background:#f4f5f7;color:#111827;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+ .wrap{max-width:420px;margin:0 auto;padding:20px}
+ h1{font-size:22px;margin:8px 0 16px} .card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 1px 3px #0001;margin-bottom:14px}
+ input{width:100%;padding:14px;font-size:18px;border:1px solid #d1d5db;border-radius:10px;margin:6px 0 12px}
+ button{width:100%;padding:16px;font-size:18px;font-weight:600;border:0;border-radius:12px;background:#2563eb;color:#fff}
+ button:disabled{opacity:.5} button.big{padding:26px;font-size:22px;border-radius:50px} button.link{background:none;color:#6b7280;font-size:14px;padding:8px;font-weight:400}
+ .msg{padding:12px;border-radius:10px;margin:10px 0;font-size:15px} .err{background:#fee2e2;color:#991b1b} .ok{background:#dcfce7;color:#166534} .info{background:#e0e7ff;color:#3730a3}
+ video{width:100%;border-radius:12px;background:#000;transform:scaleX(-1)} .hide{display:none}
+ ul{list-style:none;padding:0;margin:0} li{padding:8px 0;border-bottom:1px solid #f3f4f6;display:flex;justify-content:space-between}
+ .muted{color:#6b7280;font-size:14px}
+</style></head><body><div class="wrap">
+
+<div id="login" class="hide card">
+  <h1>Attendance login</h1>
+  <label>Employee ID</label><input id="eid" autocomplete="username" inputmode="text">
+  <label>PIN</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password">
+  <button id="loginBtn">Log in</button>
+  <div id="loginMsg"></div>
+  <p class="muted">Ask your admin for your PIN.</p>
+</div>
+
+<div id="home" class="hide">
+  <div class="card"><div class="muted">Hello,</div><h1 id="who" style="margin:0"></h1><div class="muted" id="siteInfo"></div></div>
+  <div class="card" id="camCard">
+    <video id="vid" autoplay playsinline muted></video>
+    <input id="fileFallback" type="file" accept="image/*" capture="user" class="hide">
+    <div id="status" class="msg info">Getting your location…</div>
+    <button id="punchBtn" class="big" disabled>Check in</button>
+  </div>
+  <div class="card"><b>Today</b><ul id="today"></ul></div>
+  <button class="link" id="logout">Log out</button>
+</div>
+<canvas id="cv" class="hide"></canvas>
+</div>
+<script>
+const $=s=>document.querySelector(s); let token=null, pos=null, stream=null, me=null;
+try{token=localStorage.getItem('att_token')}catch(e){}
+const show=id=>{['login','home'].forEach(x=>$('#'+x).classList.toggle('hide',x!=id))};
+const msg=(el,t,c)=>{el.className='msg '+c;el.textContent=t};
+async function api(path,opts={}){
+  opts.headers=Object.assign({},opts.headers,token?{Authorization:'Bearer '+token}:{});
+  const r=await fetch('/api/app'+path,opts); const j=await r.json().catch(()=>({}));
+  if(r.status==401&&token&&path!='/login'){logout();throw new Error('Please log in again')}
+  if(!r.ok) throw new Error(typeof j.detail=='string'?j.detail:'Something went wrong ('+r.status+')');
+  return j;
+}
+$('#loginBtn').onclick=async()=>{
+  try{const j=await api('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({employee_id:$('#eid').value.trim(),pin:$('#pin').value})});
+    token=j.token; try{localStorage.setItem('att_token',token)}catch(e){} $('#pin').value=''; start();
+  }catch(e){const m=$('#loginMsg'); msg(m,e.message,'err')}
+};
+function logout(){token=null;try{localStorage.removeItem('att_token')}catch(e){} stopCam(); show('login')}
+$('#logout').onclick=logout;
+function stopCam(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
+async function start(){
+  try{me=await api('/me')}catch(e){return show('login')}
+  show('home'); $('#who').textContent=me.name;
+  $('#siteInfo').textContent=me.sites.length?'Allowed at: '+me.sites.map(s=>s.name).join(', '):'';
+  $('#today').innerHTML=me.today.length?me.today.map(p=>`<li><span>${p.status?'Check out':'Check in'}${p.flag=='outside_geofence'?' ⚠':''}</span><span>${p.ts.slice(11,16)}</span></li>`).join(''):'<li class="muted">No punches yet</li>';
+  $('#punchBtn').textContent=me.today.length%2?'Check out':'Check in';
+  await Promise.all([startCam(),locate()]); ready();
+}
+async function startCam(){
+  try{stopCam(); stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640}},audio:false}); $('#vid').srcObject=stream}
+  catch(e){$('#vid').classList.add('hide'); $('#fileFallback').classList.remove('hide')}
+}
+function locate(){return new Promise(res=>{
+  if(!navigator.geolocation){msg($('#status'),'This device has no location support.','err');return res()}
+  navigator.geolocation.getCurrentPosition(p=>{pos=p.coords;res()},e=>{pos=null;msg($('#status'),'Location is required. Allow location access in your browser settings, then reload.','err');res()},{enableHighAccuracy:true,timeout:20000,maximumAge:0});
+})}
+function ready(){ if(pos){msg($('#status'),'Location found (±'+Math.round(pos.accuracy)+' m). Look at the camera and tap the button.','ok');$('#punchBtn').disabled=false} }
+function selfieBlob(){return new Promise((res,rej)=>{
+  const cv=$('#cv'), v=$('#vid');
+  if(stream&&v.videoWidth){const s=Math.min(1,640/v.videoWidth);cv.width=v.videoWidth*s;cv.height=v.videoHeight*s;cv.getContext('2d').drawImage(v,0,0,cv.width,cv.height);cv.toBlob(b=>b?res(b):rej(new Error('Camera error')),'image/jpeg',.8)}
+  else{const f=$('#fileFallback').files[0]; f?res(f):rej(new Error('Take a selfie first using the camera button above.'))}
+})}
+$('#punchBtn').onclick=async()=>{
+  const b=$('#punchBtn'); b.disabled=true;
+  try{
+    await locate(); if(!pos) throw new Error('Location is required.');
+    const fd=new FormData(); fd.append('lat',pos.latitude); fd.append('lng',pos.longitude); fd.append('accuracy',pos.accuracy||0);
+    fd.append('selfie',await selfieBlob(),'selfie.jpg');
+    const j=await api('/punch',{method:'POST',body:fd});
+    await start();
+    msg($('#status'),`${j.type} recorded at ${j.time.slice(11,16)}${j.site?' · '+j.site:''}${j.flag?' (flagged: outside allowed area)':''}`,j.flag?'info':'ok');
+  }catch(e){msg($('#status'),e.message,'err'); b.disabled=false}
+};
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopCam(); else if(token&&!$('#home').classList.contains('hide'))startCam()});
+if('serviceWorker' in navigator) navigator.serviceWorker.register('/m/sw.js').catch(()=>{});
+if(token) start(); else show('login');
+</script></body></html>

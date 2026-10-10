@@ -6,6 +6,7 @@ os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "t.db")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app import config  # noqa: E402
 from app.main import app  # noqa: E402
 
 
@@ -35,7 +36,7 @@ def test_fkweb_real_device_capture(tmp_path, monkeypatch):
     """Replays requests captured verbatim from the device."""
     import socket
     from app import fkweb
-    monkeypatch.setattr(fkweb, "RAW_LOG", str(tmp_path / "raw.log"))
+    monkeypatch.setattr(config, "RAW_LOG", str(tmp_path / "raw.log"))
 
     def post(port, code, body, extra=""):
         raw = (f"POST http://192.168.1.28 HTTP/1.0\r\nAccept: */*\r\nContent-Type: application/octet-stream\r\n"
@@ -58,3 +59,82 @@ def test_fkweb_real_device_capture(tmp_path, monkeypatch):
         punches = c.get("/api/punches?day=2026-10-10").json()
         assert [p["device_user_id"] for p in punches] == ["00217228"]
         assert punches[0]["ts"] == "2026-10-10 14:04:44" and punches[0]["source"] == "RSS202506120926"
+
+
+JPEG = b"\xff\xd8\xff\xe0" + b"0" * 64
+
+
+def _login(c, emp="E1", pin="1234"):
+    r = c.post("/api/app/login", json={"employee_id": emp, "pin": pin})
+    return r, {"Authorization": "Bearer " + r.json().get("token", "x")}
+
+
+def test_mobile_app_flow(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "SELFIE_DIR", str(tmp_path / "selfies"))
+    with TestClient(app) as c:
+        c.post("/api/employees", json={"device_user_id": "E1", "name": "Eve"})
+        assert c.post("/api/employees/E1/pin", json={"pin": "12"}).status_code == 400
+        assert c.post("/api/employees/E1/pin", json={"pin": "1234"}).status_code == 200
+        assert c.post("/api/employees/NOPE/pin", json={"pin": "1234"}).status_code == 404
+        assert _login(c, pin="9999")[0].status_code == 401
+        r, h = _login(c)
+        assert r.status_code == 200 and c.get("/api/app/me").status_code == 401
+        assert c.get("/api/app/me", headers={"Authorization": "Bearer " + r.json()["token"][:-2] + "xx"}).status_code == 401
+
+        # no sites configured -> location recorded, never blocked
+        form = {"lat": "19.0760", "lng": "72.8777", "accuracy": "20"}
+        ok = c.post("/api/app/punch", data=form, files={"selfie": ("s.jpg", JPEG, "image/jpeg")}, headers=h)
+        assert ok.status_code == 200 and ok.json()["type"] == "Check in"
+        # immediate repeat is debounced
+        assert c.post("/api/app/punch", data=form, files={"selfie": ("s.jpg", JPEG, "image/jpeg")}, headers=h).status_code == 409
+        # not an image
+        assert c.post("/api/app/punch", data=form, files={"selfie": ("s.txt", b"hello", "text/plain")}, headers=h).status_code == 400
+
+        # geofence: office at Mumbai, 150 m radius
+        c.post("/api/sites", json={"name": "HQ", "lat": 19.0760, "lng": 72.8777, "radius_m": 150})
+        assert len(c.get("/api/sites").json()) == 1
+        far = {"lat": "28.6139", "lng": "77.2090", "accuracy": "10"}
+        r = c.post("/api/app/punch", data=far, files={"selfie": ("s.jpg", JPEG, "image/jpeg")}, headers=h)
+        assert r.status_code == 403 and "HQ" in r.json()["detail"]
+        monkeypatch.setattr(config, "GEOFENCE_MODE", "flag")
+        monkeypatch.setattr(config, "DEBOUNCE_SECONDS", 0)
+        import time
+        time.sleep(1.1)  # punches in the same second would be exact duplicates
+        r = c.post("/api/app/punch", data=far, files={"selfie": ("s.jpg", JPEG, "image/jpeg")}, headers=h)
+        assert r.status_code == 200 and r.json()["flag"] == "outside_geofence"
+
+        from app.timeutil import now_local
+        day = now_local().strftime("%Y-%m-%d")
+        punches = [p for p in c.get(f"/api/punches?day={day}").json() if p["device_user_id"] == "E1"]
+        assert len(punches) == 2 and punches[0]["flag"] == "outside_geofence" and punches[0]["selfie"]
+        # admin can fetch the selfie; path traversal is refused
+        ym, fn = punches[0]["selfie"].split("/")
+        assert c.get(f"/api/selfies/{ym}/{fn}").content == JPEG
+        assert c.get(f"/api/selfies/{ym}/..%2F..%2Fetc%2Fpasswd").status_code == 404
+        # rejecting a punch removes it from the report
+        before = [x for x in c.get(f"/api/reports/daily?day={day}").json() if x["name"] == "Eve"][0]["punches"]
+        c.post(f"/api/punches/{punches[0]['id']}/review", json={"flag": "rejected"})
+        after = [x for x in c.get(f"/api/reports/daily?day={day}").json() if x["name"] == "Eve"][0]["punches"]
+        assert (before, after) == (2, 1)
+        assert len(c.get("/api/app/me", headers=h).json()["today"]) == 1
+
+
+def test_login_lockout():
+    with TestClient(app) as c:
+        c.post("/api/employees", json={"device_user_id": "L1", "name": "Lock"})
+        c.post("/api/employees/L1/pin", json={"pin": "4321"})
+        for _ in range(5):
+            assert _login(c, "L1", "0000")[0].status_code == 401
+        assert _login(c, "L1", "4321")[0].status_code == 429
+
+
+def test_port80_browser_redirect(monkeypatch):
+    import socket
+    from app import fkweb
+    monkeypatch.setattr(config, "PUBLIC_DOMAIN", "att.example.com")
+    with TestClient(app):
+        s = socket.create_connection(("127.0.0.1", fkweb.bound_port), timeout=5)
+        s.sendall(b"GET /m/ HTTP/1.1\r\nHost: att.example.com\r\n\r\n")
+        out = s.recv(300).decode()
+        s.close()
+    assert out.startswith("HTTP/1.1 301") and "Location: https://att.example.com/m/" in out

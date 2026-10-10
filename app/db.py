@@ -12,18 +12,35 @@ CREATE TABLE IF NOT EXISTS employees (
     device_user_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     department TEXT DEFAULT '',
-    active INTEGER NOT NULL DEFAULT 1
+    active INTEGER NOT NULL DEFAULT 1,
+    pin_hash TEXT
 );
 CREATE TABLE IF NOT EXISTS punches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     device_user_id TEXT NOT NULL,
     ts TEXT NOT NULL,            -- local time, ISO "YYYY-MM-DD HH:MM:SS"
-    status INTEGER DEFAULT 0,    -- device punch state (0 in, 1 out, ...)
-    source TEXT DEFAULT '',      -- device serial / address / 'manual'
+    status INTEGER DEFAULT 0,    -- 0 in, 1 out, ...
+    source TEXT DEFAULT '',      -- device id / 'app' / 'manual'
     UNIQUE(source, device_user_id, ts)
 );
 CREATE INDEX IF NOT EXISTS idx_punches_ts ON punches(ts);
+CREATE TABLE IF NOT EXISTS sites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    radius_m REAL NOT NULL DEFAULT 150,
+    active INTEGER NOT NULL DEFAULT 1
+);
 """
+# Columns added after the first release; applied idempotently.
+PUNCH_COLUMNS = {
+    "method": "TEXT DEFAULT 'device'",
+    "lat": "REAL", "lng": "REAL", "accuracy": "REAL",
+    "selfie": "TEXT",
+    "site_id": "INTEGER", "distance_m": "REAL",
+    "flag": "TEXT DEFAULT ''",   # '', 'outside_geofence', 'rejected', 'approved'
+}
 
 
 def conn() -> sqlite3.Connection:
@@ -37,12 +54,20 @@ def conn() -> sqlite3.Connection:
 
 
 def init():
-    conn().executescript(SCHEMA)
-    conn().commit()
+    c = conn()
+    c.executescript(SCHEMA)
+    have = {r["name"] for r in c.execute("PRAGMA table_info(punches)")}
+    for col, decl in PUNCH_COLUMNS.items():
+        if col not in have:
+            c.execute(f"ALTER TABLE punches ADD COLUMN {col} {decl}")
+    if "pin_hash" not in {r["name"] for r in c.execute("PRAGMA table_info(employees)")}:
+        c.execute("ALTER TABLE employees ADD COLUMN pin_hash TEXT")
+    c.commit()
 
 
-def add_punch(device_user_id: str, ts: datetime | str, status: int = 0, source: str = "") -> dict | None:
-    """Insert a punch. Returns the stored record, or None if duplicate/debounced."""
+def add_punch(device_user_id: str, ts: datetime | str, status: int = 0, source: str = "", **extra) -> dict | None:
+    """Insert a punch. Returns the stored record, or None if duplicate/debounced.
+    extra may hold: method, lat, lng, accuracy, selfie, site_id, distance_m, flag."""
     if isinstance(ts, datetime):
         ts = ts.strftime("%Y-%m-%d %H:%M:%S")
     c = conn()
@@ -52,19 +77,24 @@ def add_punch(device_user_id: str, ts: datetime | str, status: int = 0, source: 
     ).fetchone()
     if near:
         return None
+    extra.setdefault("method", "device")
+    cols = ["device_user_id", "ts", "status", "source"] + list(extra)
     cur = c.execute(
-        "INSERT OR IGNORE INTO punches(device_user_id, ts, status, source) VALUES (?,?,?,?)",
-        (device_user_id, ts, status, source),
+        f"INSERT OR IGNORE INTO punches({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+        [device_user_id, ts, status, source] + list(extra.values()),
     )
     c.commit()
     if cur.rowcount == 0:
         return None
     emp = c.execute("SELECT name, department FROM employees WHERE device_user_id=?", (device_user_id,)).fetchone()
     return {
+        "id": cur.lastrowid,
         "device_user_id": device_user_id,
         "name": emp["name"] if emp else f"Unknown ({device_user_id})",
         "department": emp["department"] if emp else "",
         "ts": ts,
         "status": status,
         "source": source,
+        "method": extra["method"],
+        "flag": extra.get("flag", ""),
     }

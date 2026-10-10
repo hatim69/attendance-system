@@ -17,7 +17,6 @@ from datetime import datetime
 from . import config, db, hub
 
 log = logging.getLogger("fkweb")
-RAW_LOG = "fkweb_raw.log"
 MAX_BODY = 1 << 20
 bound_port: int | None = None
 
@@ -25,7 +24,7 @@ bound_port: int | None = None
 def _raw(rec: dict):
     rec["at"] = datetime.now().isoformat(timespec="seconds")
     try:
-        with open(RAW_LOG, "a", encoding="utf-8") as f:
+        with open(config.RAW_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except OSError:
         pass
@@ -71,12 +70,25 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         body = await asyncio.wait_for(reader.readexactly(n), timeout=10) if 0 < n <= MAX_BODY else b""
         code = headers.get("request_code", "")
         data = parse_body(body)
-        _raw({"peer": (writer.get_extra_info("peername") or ("?",))[0], "request_line": lines[0],
-              "request_code": code, "dev_id": headers.get("dev_id"), "data": data})
+        if code != "receive_cmd":  # keep-alive polling every ~3s would flood the log
+            _raw({"peer": (writer.get_extra_info("peername") or ("?",))[0], "request_line": lines[0],
+                  "request_code": code, "dev_id": headers.get("dev_id"), "data": data})
         if code == "realtime_glog":
+            if config.FKWEB_DEVICES and headers.get("dev_id") not in config.FKWEB_DEVICES:
+                log.warning("punch from unknown device %r ignored", headers.get("dev_id"))
+                writer.write(respond(headers))
+                await writer.drain()
+                return
             rec = record_punch(headers.get("dev_id", "fkweb"), data)
             log.info("punch %s %s", data.get("user_id"), "stored" if rec else "duplicate/ignored")
             writer.write(respond(headers))
+        elif not code and config.PUBLIC_DOMAIN:
+            # A person opened http://<domain>/ in a browser: send them to the HTTPS site
+            path = lines[0].split(" ")[1] if len(lines[0].split(" ")) > 1 else "/"
+            if not path.startswith("/"):
+                path = "/" + path.split("/", 3)[-1] if path.count("/") >= 3 else "/"
+            writer.write(f"HTTP/1.1 301 Moved Permanently\r\nLocation: https://{config.PUBLIC_DOMAIN}{path}\r\n"
+                         "Content-Length: 0\r\nConnection: close\r\n\r\n".encode())
         elif code == "receive_cmd":
             writer.write(respond(headers, "ERROR_NO_CMD"))  # nothing to send; also the device's keep-alive
         else:

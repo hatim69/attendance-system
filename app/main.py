@@ -6,13 +6,15 @@ import secrets
 from contextlib import asynccontextmanager
 from datetime import date
 
+import os
+
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import adms, config, db, fkweb, hub, reports, zk_poller
+from . import adms, app_api, auth, config, db, fkweb, hub, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 security = HTTPBasic(auto_error=False)
@@ -28,6 +30,8 @@ def require_admin(cred: HTTPBasicCredentials | None = Depends(security)):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init()
+    if not config.ADMIN_PASSWORD:
+        logging.warning('ADMIN_PASSWORD is not set: the admin dashboard is open to anyone who can reach it!')
     hub.bind_loop(asyncio.get_running_loop())
     zk_poller.start()
     fk_server = await fkweb.start()
@@ -38,6 +42,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Attendance System", lifespan=lifespan)
 app.include_router(adms.router)  # device-facing, no auth (devices can't do Basic auth)
+app.include_router(app_api.router)  # employee app, token auth
 admin = [Depends(require_admin)]
 
 
@@ -49,6 +54,21 @@ class EmployeeIn(BaseModel):
     active: bool = True
 
 
+class PinIn(BaseModel):
+    pin: str
+
+
+class SiteIn(BaseModel):
+    name: str
+    lat: float
+    lng: float
+    radius_m: float = 150
+
+
+class ReviewIn(BaseModel):
+    flag: str  # 'rejected' | 'approved' | ''
+
+
 class PunchIn(BaseModel):
     device_user_id: str
     ts: str  # "YYYY-MM-DD HH:MM:SS"
@@ -57,7 +77,8 @@ class PunchIn(BaseModel):
 
 @app.get("/api/employees", dependencies=admin)
 def list_employees():
-    return [dict(r) for r in db.conn().execute("SELECT * FROM employees ORDER BY name")]
+    return [dict(r) for r in db.conn().execute(
+        "SELECT id, device_user_id, name, department, active, pin_hash IS NOT NULL AS pin_hash FROM employees ORDER BY name")]
 
 
 @app.post("/api/employees", dependencies=admin)
@@ -80,15 +101,71 @@ def delete_employee(device_user_id: str):
     return {"ok": True}
 
 
+@app.post("/api/employees/{device_user_id}/pin", dependencies=admin)
+def set_pin(device_user_id: str, body: PinIn):
+    if not auth.valid_pin(body.pin):
+        raise HTTPException(400, "PIN must be 4-8 digits")
+    c = db.conn()
+    cur = c.execute("UPDATE employees SET pin_hash=? WHERE device_user_id=?", (auth.hash_pin(body.pin), device_user_id))
+    c.commit()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "No such employee")
+    return {"ok": True}
+
+
+@app.get("/api/sites", dependencies=admin)
+def list_sites():
+    return [dict(r) for r in db.conn().execute("SELECT * FROM sites WHERE active=1 ORDER BY name")]
+
+
+@app.post("/api/sites", dependencies=admin)
+def add_site(s: SiteIn):
+    if not (-90 <= s.lat <= 90 and -180 <= s.lng <= 180 and s.radius_m > 0):
+        raise HTTPException(400, "Invalid latitude/longitude/radius")
+    c = db.conn()
+    c.execute("INSERT INTO sites(name,lat,lng,radius_m) VALUES (?,?,?,?)", (s.name, s.lat, s.lng, s.radius_m))
+    c.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/sites/{site_id}", dependencies=admin)
+def delete_site(site_id: int):
+    c = db.conn()
+    c.execute("UPDATE sites SET active=0 WHERE id=?", (site_id,))
+    c.commit()
+    return {"ok": True}
+
+
 @app.get("/api/punches", dependencies=admin)
-def list_punches(day: str | None = None, limit: int = 200):
+def list_punches(day: str | None = None, limit: int = 500):
     day = day or date.today().isoformat()
     rows = db.conn().execute(
-        "SELECT p.ts, p.device_user_id, COALESCE(e.name,'Unknown') name, p.status, p.source FROM punches p "
-        "LEFT JOIN employees e ON e.device_user_id=p.device_user_id WHERE date(p.ts)=? ORDER BY p.ts DESC LIMIT ?",
+        "SELECT p.id, p.ts, p.device_user_id, COALESCE(e.name,'Unknown') name, p.status, p.source, p.method, "
+        "p.flag, p.selfie, p.lat, p.lng, p.accuracy, p.distance_m, s.name site FROM punches p "
+        "LEFT JOIN employees e ON e.device_user_id=p.device_user_id LEFT JOIN sites s ON s.id=p.site_id "
+        "WHERE date(p.ts)=? ORDER BY p.ts DESC LIMIT ?",
         (day, limit),
     )
     return [dict(r) for r in rows]
+
+
+@app.post("/api/punches/{punch_id}/review", dependencies=admin)
+def review_punch(punch_id: int, body: ReviewIn):
+    if body.flag not in ("rejected", "approved", ""):
+        raise HTTPException(400, "flag must be rejected, approved or empty")
+    c = db.conn()
+    c.execute("UPDATE punches SET flag=? WHERE id=?", (body.flag, punch_id))
+    c.commit()
+    return {"ok": True}
+
+
+@app.get("/api/selfies/{year_month}/{filename}", dependencies=admin)
+def get_selfie(year_month: str, filename: str):
+    base = os.path.realpath(config.SELFIE_DIR)
+    path = os.path.realpath(os.path.join(base, year_month, filename))
+    if not path.startswith(base + os.sep) or not os.path.isfile(path):
+        raise HTTPException(404)
+    return FileResponse(path, headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.post("/api/punches", dependencies=admin)
@@ -121,6 +198,18 @@ def report_daily_csv(day: str | None = None):
                              headers={"Content-Disposition": "attachment; filename=attendance.csv"})
 
 
+@app.get("/api/reports/monthly.csv", dependencies=admin)
+def report_monthly_csv(month: str | None = None):
+    rows = reports.monthly(month or date.today().strftime("%Y-%m"))
+    buf = io.StringIO()
+    if rows:
+        w = csv.DictWriter(buf, fieldnames=rows[0].keys())
+        w.writeheader()
+        w.writerows(rows)
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=attendance-monthly.csv"})
+
+
 @app.post("/api/devices/sync", dependencies=admin)
 def sync_now():
     """Trigger an immediate pull from all configured ZK devices."""
@@ -143,4 +232,15 @@ def index():
     return FileResponse("app/static/index.html")
 
 
+@app.get("/m")
+def mobile_redirect():
+    return RedirectResponse("/m/")
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+app.mount("/m", StaticFiles(directory="app/static/m", html=True), name="mobile")  # employee PWA (public shell)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")

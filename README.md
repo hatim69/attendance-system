@@ -1,6 +1,8 @@
-# Attendance System (FastAPI + SQLite + ZKTeco)
+# Attendance System (FastAPI + SQLite)
 
-Live dashboard, employee management, daily/monthly reports, CSV export, and two ways to connect ZKTeco devices.
+Admin dashboard (live feed, punches with selfies/GPS, sites, employees, daily/monthly reports, CSV), an installable employee phone app (`/m/`: ID + PIN login, GPS geofence, selfie), and fingerprint-device integration (Realtime/FK-series via FkWeb, plus ZKTeco pull/ADMS).
+
+**Hosting:** see [DEPLOY.md](DEPLOY.md).
 
 ## Run
 ```bash
@@ -20,7 +22,7 @@ Open http://localhost:8000. Test without hardware: `python scripts/simulate_devi
 Use either or both (duplicates are ignored).
 
 ## Config (env vars)
-`DB_PATH`, `FKWEB_PORT` (80), `ZK_DEVICES`, `ZK_PASSWORD`, `ZK_POLL_SECONDS`, `SHIFT_START` (09:00), `GRACE_MINUTES` (10), `DEBOUNCE_SECONDS` (60), `ADMIN_PASSWORD` (enables HTTP Basic auth, user `admin`; device endpoints stay open).
+`DB_PATH`, `SELFIE_DIR`, `TIMEZONE`, `GEOFENCE_MODE`, `SECRET_KEY`, `FKWEB_DEVICES`, `PUBLIC_DOMAIN`, `FKWEB_PORT` (80), `ZK_DEVICES`, `ZK_PASSWORD`, `ZK_POLL_SECONDS`, `SHIFT_START` (09:00), `GRACE_MINUTES` (10), `DEBOUNCE_SECONDS` (60), `ADMIN_PASSWORD` (enables HTTP Basic auth, user `admin`; device endpoints stay open).
 
 ## Tests
 `pytest`

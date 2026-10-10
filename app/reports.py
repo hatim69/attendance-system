@@ -11,7 +11,7 @@ def daily(date: str) -> list[dict]:
     rows = []
     for e in c.execute("SELECT * FROM employees WHERE active=1 ORDER BY name"):
         p = c.execute(
-            "SELECT MIN(ts) a, MAX(ts) b, COUNT(*) n FROM punches WHERE device_user_id=? AND date(ts)=?",
+            "SELECT MIN(ts) a, MAX(ts) b, COUNT(*) n FROM punches WHERE device_user_id=? AND date(ts)=? AND COALESCE(flag,'')!='rejected'",
             (e["device_user_id"], date),
         ).fetchone()
         first, last, n = p["a"], p["b"], p["n"]
@@ -36,7 +36,7 @@ def monthly(month: str) -> list[dict]:
     for e in c.execute("SELECT * FROM employees WHERE active=1 ORDER BY name"):
         days = c.execute(
             "SELECT date(ts) d, MIN(ts) a, MAX(ts) b, COUNT(*) n FROM punches "
-            "WHERE device_user_id=? AND strftime('%Y-%m', ts)=? GROUP BY date(ts)",
+            "WHERE device_user_id=? AND strftime('%Y-%m', ts)=? AND COALESCE(flag,'')!='rejected' GROUP BY date(ts)",
             (e["device_user_id"], month),
         ).fetchall()
         total = sum(

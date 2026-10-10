@@ -674,3 +674,119 @@ def test_team_lead_powers_manual_grants_shift_changes_and_punch_fixes(tmp_path, 
         assert hrx.post("/api/punches/day", json={"employee_id": "1", "date": "2025-07-10", "in_time": "09:00"}).status_code == 403   # punches removed
         assert hry.post("/api/sites", json={"name": "HQ", "lat": 1.0, "lng": 1.0}).status_code == 200        # extra granted... 
         assert hry.get("/api/reports/payroll?month=2025-07").status_code == 403                                # ...and an explicit list means only that
+
+
+def _freeze_today(monkeypatch, y=2026, m=10, d=10):
+    from datetime import datetime as _dt
+    fixed = lambda: _dt(y, m, d, 12, 0, 0)
+    for mod in ("app.app_api", "app.main", "app.reports"):
+        monkeypatch.setattr(f"{mod}.now_local", fixed)
+
+
+def test_leave_policy_normal_adhoc_and_workflow(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "leave.db"))
+    _freeze_today(monkeypatch)                                   # Saturday 10 Oct 2026
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "Lv 9-6", "start": "09:00", "end": "18:00"})            # Sunday off
+        sid = c.get("/api/shifts").json()[0]["id"]
+        # L1 joined 5 Jan 2026 -> eligible from 5 Apr 2026; L2 joined 1 Aug 2026 -> eligible from 1 Nov 2026
+        c.post("/api/employees", json={"device_user_id": "LV1", "name": "Eli", "shift_id": sid, "joined": "2026-01-05", "department": "Ops"})
+        c.post("/api/employees", json={"device_user_id": "LV2", "name": "New Nina", "shift_id": sid, "joined": "2026-08-01", "department": "Ops"})
+        c.post("/api/holidays", json={"date": "2026-10-21", "name": "Test holiday"})                  # a Wednesday
+        for uid in ("LV1", "LV2"):
+            c.post(f"/api/employees/{uid}/pin", json={"pin": "1234"})
+        tok = lambda uid: {"Authorization": "Bearer " + c.post("/api/app/login", json={"employee_id": uid, "pin": "1234"}).json()["token"]}
+        h1, h2 = tok("LV1"), tok("LV2")
+        apply = lambda h, **k: c.post("/api/app/leave", json=k, headers=h)
+
+        b = c.get("/api/app/leave-balance", headers=h1).json()
+        assert b["eligible_from"] == "2026-04-05" and b["eligible"] is True
+        assert (b["normal"]["quota"], b["normal"]["left"], b["adhoc"]["quota"], b["adhoc"]["left"]) == (2, 2, 1, 1)
+        # Normal needs 7 days' notice
+        r = apply(h1, start_date="2026-10-14", end_date="2026-10-14", type="Normal")
+        assert r.status_code == 400 and "7 days" in r.json()["detail"] and "Adhoc" in r.json()["detail"]
+        r = apply(h1, start_date="2026-10-19", end_date="2026-10-19", type="Normal", reason="trip")
+        assert r.status_code == 200 and r.json() == {"ok": True, "id": r.json()["id"], "days": 1, "status": "pending"}
+        # a holiday and a Sunday inside a range are not counted: Tue 20, Wed 21 (holiday), Thu 22 -> 2 working days but only 1 Normal left
+        r = apply(h1, start_date="2026-10-20", end_date="2026-10-22", type="Normal")
+        assert r.status_code == 400 and "1 left, 2 requested" in r.json()["detail"]
+        assert apply(h1, start_date="2026-10-20", end_date="2026-10-21", type="Normal").status_code == 200       # Tue + holiday = 1 working day
+        r = apply(h1, start_date="2026-10-23", end_date="2026-10-23", type="Normal")                            # month's 2 Normal used up
+        assert r.status_code == 400 and "0 left" in r.json()["detail"] and "Oct 2026" in r.json()["detail"]
+        assert apply(h1, start_date="2026-11-23", end_date="2026-11-23", type="Normal").status_code == 200       # next month has its own 2
+        # only a Sunday: nothing to take
+        assert "no working days" in apply(h1, start_date="2026-10-25", end_date="2026-10-25", type="Adhoc").json()["detail"]
+        # Adhoc: emergencies with no notice, 1 per 3-month period (5 Oct 2026 - 4 Jan 2027 is the current one)
+        assert apply(h1, start_date="2026-10-12", end_date="2026-10-12", type="Adhoc", reason="emergency").status_code == 200
+        r = apply(h1, start_date="2026-12-01", end_date="2026-12-01", type="Adhoc")
+        assert r.status_code == 400 and "Adhoc" in r.json()["detail"] and "0 left" in r.json()["detail"]
+        assert apply(h1, start_date="2026-07-06", end_date="2026-07-06", type="Adhoc").status_code == 400      # 3 months back: too old for self-service
+        # balance reflects pending applications
+        b = c.get("/api/app/leave-balance", headers=h1).json()
+        assert (b["normal"]["used"], b["normal"]["left"], b["adhoc"]["used"], b["adhoc"]["left"]) == (2, 0, 1, 0)
+        # not yet eligible
+        r = apply(h2, start_date="2026-10-20", end_date="2026-10-20", type="Normal")
+        assert r.status_code == 400 and "2026-11-01" in r.json()["detail"]
+        assert apply(h2, start_date="2026-11-03", end_date="2026-11-03", type="Normal").status_code == 200
+        assert c.get("/api/app/leave-balance", headers=h2).json()["eligible"] is False
+        # bad input
+        assert apply(h1, start_date="2026-10-30", end_date="2026-10-29", type="Normal").status_code == 400
+        assert apply(h1, start_date="x", end_date="y", type="Adhoc").status_code == 400
+        assert apply(h1, start_date="2026-12-10", end_date="2026-12-10", type="Casual").status_code == 400      # self-service: policy types only
+        assert c.get("/api/app/leaves").status_code == 401
+
+        # my list, cancelling, and ownership
+        mine = c.get("/api/app/leaves", headers=h1).json()
+        assert {x["status"] for x in mine} == {"pending"} and len(mine) == 4
+        lid = [x["id"] for x in mine if x["start_date"] == "2026-10-19"][0]
+        assert c.delete(f"/api/app/leave/{lid}", headers=h2).status_code == 404                                   # not theirs
+        assert c.delete(f"/api/app/leave/{lid}", headers=h1).status_code == 200
+        assert c.get("/api/app/leave-balance", headers=h1).json()["normal"]["left"] == 1                          # balance freed
+        # HR sees the pending request, approves one, rejects another
+        pend = {x["start_date"]: x for x in c.get("/api/leaves?month=2026-10").json() if x["status"] == "pending"}
+        assert c.post(f"/api/leaves/{pend['2026-10-20']['id']}/approve").status_code == 200
+        assert c.post(f"/api/leaves/{pend['2026-10-20']['id']}/approve").status_code == 400                       # already decided
+        assert c.post(f"/api/leaves/{pend['2026-10-12']['id']}/reject").status_code == 200
+        assert c.get("/api/app/leave-balance", headers=h1).json()["adhoc"]["left"] == 1                           # rejected frees the Adhoc
+        assert c.delete(f"/api/app/leave/{pend['2026-10-20']['id']}", headers=h1).status_code == 400              # approved: cannot self-cancel
+        # only approved leave counts in reports; rejected / pending do not
+        c.post("/api/leaves", json={"device_user_id": "LV1", "start_date": "2026-10-08", "end_date": "2026-10-08", "type": "Adhoc"})   # HR records a past Adhoc
+        row = {r["device_user_id"]: r for r in c.get("/api/reports/daily?day=2026-10-08").json()}["LV1"]
+        assert (row["status"], row["note"]) == ("Leave", "Adhoc")
+
+        # HR entry: policy still applies unless overridden
+        r = c.post("/api/leaves", json={"device_user_id": "LV2", "start_date": "2026-10-06", "end_date": "2026-10-06", "type": "Normal"})
+        assert r.status_code == 400 and "override" in r.json()["detail"]
+        assert c.post("/api/leaves", json={"device_user_id": "LV2", "start_date": "2026-10-06", "end_date": "2026-10-06", "type": "Normal", "override": True}).status_code == 200
+        assert c.post("/api/leaves", json={"device_user_id": "LV2", "start_date": "2026-10-07", "end_date": "2026-10-07", "type": "Casual"}).status_code == 200   # legacy types unrestricted
+        assert c.post("/api/leaves", json={"device_user_id": "LV2", "start_date": "2026-10-07", "end_date": "2026-10-07", "type": "Normal", "applied_on": "2026-09-20", "override": False}).status_code == 400   # still before eligibility
+        b = c.get("/api/leave-balance?employee=00L1".replace("00L1", "LV1")).json()
+        assert b["eligible_from"] == "2026-04-05" and c.get("/api/leave-balance?employee=NOPE").status_code == 404
+
+
+def test_leave_approval_is_scoped_to_the_team(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "lv2.db"))
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "admin-password-123")
+    _freeze_today(monkeypatch)
+    H = {"X-Requested-With": "fetch"}
+    with TestClient(app) as admin:
+        admin.headers.update(H)
+        assert admin.post("/api/auth/login", json={"username": "admin", "password": "admin-password-123"}).status_code == 200
+        r = admin.post("/api/users", json={"username": "lead1", "password": "tl-password-12", "role": "manager", "department": "Ops", "permissions": "leave"})
+        assert r.status_code == 200, r.text
+        assert admin.post("/api/users", json={"username": "lead0", "password": "tl-password-00", "role": "manager", "department": "Ops"}).status_code == 200
+        for uid, dp in (("1", "Ops"), ("2", "Sales")):
+            admin.post("/api/employees", json={"device_user_id": uid, "name": f"E{uid}", "department": dp, "joined": "2026-01-05"})
+            admin.post(f"/api/employees/{uid}/pin", json={"pin": "1234"})
+            tk = admin.post("/api/app/login", json={"employee_id": uid, "pin": "1234"}).json()["token"]
+            assert admin.post("/api/app/leave", json={"start_date": "2026-10-26", "end_date": "2026-10-26", "type": "Normal"}, headers={"Authorization": "Bearer " + tk}).status_code == 200
+        ids = {x["device_user_id"]: x["id"] for x in admin.get("/api/leaves?month=2026-10").json()}
+        tl, tl0 = TestClient(app), TestClient(app)
+        for cl, u, p in ((tl, "lead1", "tl-password-12"), (tl0, "lead0", "tl-password-00")):
+            cl.headers.update(H)
+            assert cl.post("/api/auth/login", json={"username": u, "password": p}).status_code == 200
+        assert {x["device_user_id"] for x in tl.get("/api/leaves?month=2026-10").json()} == {"1"}          # sees only own team's requests
+        assert tl.post(f"/api/leaves/{ids['2']}/approve").status_code == 403                                  # other team
+        assert tl0.post(f"/api/leaves/{ids['1']}/approve").status_code == 403                                 # no 'leave' ability
+        assert tl.post(f"/api/leaves/{ids['1']}/approve").status_code == 200
+        assert tl.get("/api/leave-balance?employee=2").status_code == 403 and tl.get("/api/leave-balance?employee=1").status_code == 200

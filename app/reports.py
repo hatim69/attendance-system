@@ -9,7 +9,7 @@ from .timeutil import now_local
 WEEKDAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 WORKED = {"Present", "Late", "Half Day"}
 CODES = {"Present": "P", "Late": "L", "Half Day": "HD", "Absent": "A", "Leave": "LV", "Holiday": "H", "Weekly Off": "WO", "": ""}
-LEAVE_TYPES = ["Casual", "Sick", "Paid", "Unpaid", "Other"]
+LEAVE_TYPES = ["Normal", "Adhoc", "Casual", "Sick", "Paid", "Unpaid", "Other"]   # Normal/Adhoc follow the leave policy
 
 
 def _hm(s: str) -> int:
@@ -17,10 +17,10 @@ def _hm(s: str) -> int:
     return int(h) * 60 + int(m)
 
 
-def _load():
+def _load(scoped: bool = True):
     c = db.conn()
     shifts = {r["id"]: dict(r) for r in c.execute("SELECT * FROM shifts")}
-    frag, args = access.scope_sql("department")
+    frag, args = access.scope_sql("department") if scoped else ("", [])
     emps = [dict(r) for r in c.execute("SELECT * FROM employees WHERE active=1" + frag + " ORDER BY name", args)]
     holidays = {r["date"]: r["name"] for r in c.execute("SELECT * FROM holidays")}
     leaves = [dict(r) for r in c.execute("SELECT * FROM leaves WHERE status='approved'")]

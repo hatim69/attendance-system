@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from . import access, adms, app_api, auth, config, db, fkweb, hub, importer, payslip, reports, zk_poller
+from . import access, adms, app_api, auth, config, db, fkweb, hub, importer, leavepolicy, payslip, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 
@@ -79,6 +79,8 @@ class LeaveIn(BaseModel):
     end_date: str
     type: str = "Casual"
     note: str = ""
+    applied_on: str = ""      # when the application was made (default today); matters for Normal leave's 7-day notice
+    override: bool = False    # skip the leave-policy checks (recorded in the audit log)
 
 
 class DeviceIn(BaseModel):
@@ -547,10 +549,54 @@ def add_leave(l: LeaveIn):
     c = db.conn()
     if not c.execute("SELECT 1 FROM employees WHERE device_user_id=?", (l.device_user_id,)).fetchone():
         raise HTTPException(404, "No such employee")
-    c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note) VALUES (?,?,?,?,?)",
-              (l.device_user_id, l.start_date, l.end_date, l.type, l.note))
+    today = now_local().date()
+    if l.applied_on:
+        _valid_date(l.applied_on)
+    applied = date.fromisoformat(l.applied_on) if l.applied_on else today
+    if l.type in leavepolicy.POLICY_TYPES and not l.override:
+        check = leavepolicy.validate(l.device_user_id, l.type, l.start_date, l.end_date, applied, strict=False)
+        if "error" in check:
+            raise HTTPException(400, check["error"] + " (HR can tick 'override policy' to record it anyway)")
+    c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by) VALUES (?,?,?,?,?,?,?,?)",
+              (l.device_user_id, l.start_date, l.end_date, l.type, l.note, "approved", applied.isoformat(), ""))
     c.commit()
     return {"ok": True}
+
+
+@app.post("/api/leaves/{leave_id}/approve")
+async def approve_leave(leave_id: int, u: dict = Depends(access.need("hr", "leave"))):
+    return _decide_leave(leave_id, "approved", u)
+
+
+@app.post("/api/leaves/{leave_id}/reject")
+async def reject_leave(leave_id: int, u: dict = Depends(access.need("hr", "leave"))):
+    return _decide_leave(leave_id, "rejected", u)
+
+
+def _decide_leave(leave_id: int, status: str, u: dict) -> dict:
+    c = db.conn()
+    row = c.execute("SELECT * FROM leaves WHERE id=?", (leave_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such leave")
+    access.assert_in_scope(row["device_user_id"])
+    if row["status"] != "pending":
+        raise HTTPException(400, f"This leave is already {row['status']}")
+    c.execute("UPDATE leaves SET status=?, decided_by=?, decided_at=? WHERE id=?",
+              (status, u["username"], now_local().strftime("%Y-%m-%d %H:%M:%S"), leave_id))
+    c.commit()
+    return {"ok": True}
+
+
+@app.get("/api/leave-balance", dependencies=[Depends(access.need("manager"))])
+def leave_balance(employee: str, on: str | None = None):
+    uid = db.canon_id(employee)
+    access.assert_in_scope(uid)
+    if on:
+        _valid_date(on)
+    b = leavepolicy.balance(uid, date.fromisoformat(on) if on else now_local().date())
+    if b is None:
+        raise HTTPException(404, "No such employee")
+    return b
 
 
 @app.delete("/api/leaves/{leave_id}", dependencies=[Depends(access.need("hr", "leave"))])

@@ -6,7 +6,7 @@ from fastapi.responses import Response
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from . import auth, config, db, geo, hub, payslip, reports
+from . import auth, config, db, geo, hub, leavepolicy, payslip, reports
 from .timeutil import now_local
 
 router = APIRouter(prefix="/api/app")
@@ -120,3 +120,53 @@ def my_payslip_pdf(month: str, emp: dict = Depends(current_employee)):
         raise HTTPException(404, "No payslip available for that month")
     return Response(payslip.build_pdf(d), media_type="application/pdf",
                     headers={"Content-Disposition": f"inline; filename=payslip-{month}.pdf", "Cache-Control": "private, no-store"})
+
+
+class LeaveRequest(BaseModel):
+    start_date: str
+    end_date: str
+    type: str          # Normal | Adhoc
+    reason: str = ""
+
+
+@router.get("/leave-balance")
+def my_leave_balance(emp: dict = Depends(current_employee)):
+    return leavepolicy.balance(emp["device_user_id"], now_local().date())
+
+
+@router.get("/leaves")
+def my_leaves(emp: dict = Depends(current_employee)):
+    rows = db.conn().execute(
+        "SELECT id, start_date, end_date, type, note, status, applied_on FROM leaves WHERE device_user_id=? "
+        "AND end_date >= date('now','-400 day') ORDER BY start_date DESC LIMIT 50", (emp["device_user_id"],))
+    return [dict(r) for r in rows]
+
+
+@router.post("/leave")
+def apply_leave(body: LeaveRequest, emp: dict = Depends(current_employee)):
+    """Apply for Normal or Adhoc leave. It stays pending (and reserves the balance) until HR approves it."""
+    today = now_local().date()
+    check = leavepolicy.validate(emp["device_user_id"], body.type, body.start_date, body.end_date, today, strict=True)
+    if "error" in check:
+        raise HTTPException(400, check["error"])
+    c = db.conn()
+    cur = c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by) "
+                    "VALUES (?,?,?,?,?, 'pending', ?, ?)",
+                    (emp["device_user_id"], body.start_date, body.end_date, body.type, body.reason[:200], today.isoformat(),
+                     emp["device_user_id"]))
+    c.commit()
+    return {"ok": True, "id": cur.lastrowid, "days": len(check["days"]), "status": "pending"}
+
+
+@router.delete("/leave/{leave_id}")
+def cancel_leave(leave_id: int, emp: dict = Depends(current_employee)):
+    c = db.conn()
+    row = c.execute("SELECT status FROM leaves WHERE id=? AND device_user_id=? AND requested_by=?",
+                    (leave_id, emp["device_user_id"], emp["device_user_id"])).fetchone()
+    if not row:
+        raise HTTPException(404, "No such leave application")
+    if row["status"] != "pending":
+        raise HTTPException(400, "Only a pending application can be cancelled. Ask HR about approved leave.")
+    c.execute("DELETE FROM leaves WHERE id=?", (leave_id,))
+    c.commit()
+    return {"ok": True}

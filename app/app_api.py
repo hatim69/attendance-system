@@ -2,6 +2,7 @@
 import os
 import re
 import uuid
+from datetime import date, timedelta
 
 from fastapi.responses import Response
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
@@ -54,8 +55,14 @@ def me(emp: dict = Depends(current_employee)):
         "SELECT ts, status, method, flag FROM punches WHERE device_user_id=? AND date(ts)=? "
         "AND COALESCE(flag,'')!='rejected' ORDER BY ts", (emp["device_user_id"], today)).fetchall()
     return {"name": emp["name"], "employee_id": emp["device_user_id"], "today": [dict(r) for r in rows],
+            "wfh_today": wfh_approved(emp["device_user_id"], today),
             "sites": active_sites(emp["device_user_id"]), "remote_ok": bool(emp.get("remote_ok")),
             "geofence_mode": config.GEOFENCE_MODE, "server_time": now_local().isoformat(" ")}
+
+
+def wfh_approved(uid: str, day: str) -> bool:
+    return db.conn().execute("SELECT 1 FROM wfh_requests WHERE device_user_id=? AND status='approved' AND ? BETWEEN start_date AND end_date",
+                             (uid, day)).fetchone() is not None
 
 
 def _ext(data: bytes) -> str | None:
@@ -80,17 +87,19 @@ async def punch(lat: float = Form(...), lng: float = Form(...), accuracy: float 
     sites = active_sites(emp["device_user_id"])
     site, dist, inside = geo.nearest_site(lat, lng, accuracy, sites)
     flag, note = "", ""
-    if inside and site and site.get("kind") == "home":
+    at_office = inside and site and site.get("kind") != "home"
+    if not at_office and wfh_approved(emp["device_user_id"], now_local().strftime("%Y-%m-%d")):
+        note = "WFH"                      # an approved work-from-home day: anywhere, paid 0.8 (leave policy)
+    elif inside and site and site.get("kind") == "home":
         note = "WFH"
     elif sites and not inside:
-        if emp.get("remote_ok"):          # allowed to work from anywhere: record where, never block
-            note = "WFH"
+        if emp.get("remote_ok"):          # field work: allowed anywhere, location recorded, full day
+            note = "Remote"
         elif config.GEOFENCE_MODE == "block":
-            raise HTTPException(403, f"You are about {int(dist)} m from {site['name']}. Move closer to punch.")
+            raise HTTPException(403, f"You are about {int(dist)} m from {site['name']}. Move closer, or request "
+                                     "work from home below.")
         else:
             flag = "outside_geofence"
-    elif not sites and emp.get("remote_ok"):
-        note = "WFH"
 
     now = now_local()
     c = db.conn()
@@ -109,7 +118,8 @@ async def punch(lat: float = Form(...), lng: float = Form(...), accuracy: float 
         f.write(data)
     hub.publish(rec)
     return {"ok": True, "time": rec["ts"], "type": "Check out" if count % 2 else "Check in",
-            "site": site["name"] if site and inside else ("Work from home" if note else None), "flag": flag}
+            "site": site["name"] if site and inside else "Work from home" if note == "WFH" else note or None,
+            "flag": flag}
 
 
 @router.get("/payslips")
@@ -207,5 +217,55 @@ def cancel_leave(leave_id: int, emp: dict = Depends(current_employee)):
         c.execute("DELETE FROM leaves WHERE group_id=? AND status='pending'", (row["group_id"],))
     else:
         c.execute("DELETE FROM leaves WHERE id=?", (leave_id,))
+    c.commit()
+    return {"ok": True}
+
+
+class WfhRequest(BaseModel):
+    start_date: str
+    end_date: str = ""
+    reason: str = ""
+
+
+@router.get("/wfh")
+def my_wfh(emp: dict = Depends(current_employee)):
+    return [dict(r) for r in db.conn().execute(
+        "SELECT id, start_date, end_date, reason, status, decided_by FROM wfh_requests WHERE device_user_id=? "
+        "ORDER BY start_date DESC LIMIT 20", (emp["device_user_id"],))]
+
+
+@router.post("/wfh")
+def request_wfh(body: WfhRequest, emp: dict = Depends(current_employee)):
+    """Ask to work from home. A team lead, HR, management or admin approves it; approved days are paid 0.8."""
+    today = now_local().date()
+    try:
+        s = date.fromisoformat(body.start_date)
+        e = date.fromisoformat(body.end_date or body.start_date)
+    except ValueError:
+        raise HTTPException(400, "Choose the dates")
+    if e < s or (e - s).days > 30:
+        raise HTTPException(400, "Choose an end date on or after the start, at most 31 days")
+    if s < today - timedelta(days=1):
+        raise HTTPException(400, "Work from home can be requested from yesterday onwards")
+    c = db.conn()
+    if c.execute("SELECT 1 FROM wfh_requests WHERE device_user_id=? AND status!='rejected' AND start_date<=? AND end_date>=?",
+                 (emp["device_user_id"], e.isoformat(), s.isoformat())).fetchone():
+        raise HTTPException(400, "You already have a request for some of these days")
+    cur = c.execute("INSERT INTO wfh_requests(device_user_id,start_date,end_date,reason,applied_at) VALUES (?,?,?,?,?)",
+                    (emp["device_user_id"], s.isoformat(), e.isoformat(), body.reason.strip()[:200],
+                     now_local().strftime("%Y-%m-%d %H:%M:%S")))
+    c.commit()
+    return {"ok": True, "id": cur.lastrowid, "status": "pending"}
+
+
+@router.delete("/wfh/{req_id}")
+def cancel_wfh(req_id: int, emp: dict = Depends(current_employee)):
+    c = db.conn()
+    row = c.execute("SELECT status FROM wfh_requests WHERE id=? AND device_user_id=?", (req_id, emp["device_user_id"])).fetchone()
+    if not row:
+        raise HTTPException(404, "No such request")
+    if row["status"] != "pending":
+        raise HTTPException(400, "Only a pending request can be cancelled")
+    c.execute("DELETE FROM wfh_requests WHERE id=?", (req_id,))
     c.commit()
     return {"ok": True}

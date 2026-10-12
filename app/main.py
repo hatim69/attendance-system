@@ -432,7 +432,10 @@ def dashboard(day: str | None = None):
     pending = c.execute(
         "SELECT COUNT(*) FROM leaves l LEFT JOIN employees e ON e.device_user_id=l.device_user_id WHERE l.status='pending'"
         + access.scope_sql("e.department")[0], access.scope_sql("e.department")[1]).fetchone()[0]
-    return {"day": day, "total": len(rows),
+    pending_wfh = c.execute(
+        "SELECT COUNT(*) FROM wfh_requests w LEFT JOIN employees e ON e.device_user_id=w.device_user_id WHERE w.status='pending'"
+        + access.scope_sql("e.department")[0], access.scope_sql("e.department")[1]).fetchone()[0]
+    return {"day": day, "total": len(rows), "pending_wfh": pending_wfh,
             "on_leave": sum(r["status"] == "Leave" for r in rows), "recent": recent, "pending_leaves": pending,
             "present": sum(r["status"] in reports.WORKED for r in rows),
             "absent": sum(r["status"] == "Absent" for r in rows),
@@ -614,6 +617,36 @@ def leave_preview(employee: str, type: str, start_date: str, end_date: str, appl
     if "error" in p:
         raise HTTPException(400, p["error"])
     return p
+
+
+@app.get("/api/wfh", dependencies=[Depends(access.need("manager"))])
+def list_wfh(month: str | None = None, status: str | None = None):
+    month = _valid_month(month or now_local().strftime("%Y-%m"))
+    frag, args = access.scope_sql("e.department")
+    q = ("SELECT w.*, COALESCE(e.name, w.device_user_id) name, COALESCE(e.department,'') department FROM wfh_requests w "
+         "LEFT JOIN employees e ON e.device_user_id=w.device_user_id WHERE substr(w.start_date,1,7)<=? AND substr(w.end_date,1,7)>=?" + frag)
+    args = [month, month, *args]
+    if status:
+        q, args = q + " AND w.status=?", args + [status]
+    return [dict(r) for r in db.conn().execute(q + " ORDER BY w.status='pending' DESC, w.start_date DESC", args)]
+
+
+@app.post("/api/wfh/{req_id}/{action}")
+async def decide_wfh(req_id: int, action: str, u: dict = Depends(access.need("manager", "leave"))):
+    """Team leads (own team), HR, management and admin approve or reject work-from-home requests."""
+    if action not in ("approve", "reject"):
+        raise HTTPException(404)
+    c = db.conn()
+    row = c.execute("SELECT * FROM wfh_requests WHERE id=?", (req_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such request")
+    access.assert_in_scope(row["device_user_id"])
+    if row["status"] != "pending":
+        raise HTTPException(400, f"This request is already {row['status']}")
+    c.execute("UPDATE wfh_requests SET status=?, decided_by=?, decided_at=? WHERE id=?",
+              ("approved" if action == "approve" else "rejected", u["username"], now_local().strftime("%Y-%m-%d %H:%M:%S"), req_id))
+    c.commit()
+    return {"ok": True}
 
 
 @app.get("/api/leave-summary", dependencies=[Depends(access.need("hr", "leave"))])

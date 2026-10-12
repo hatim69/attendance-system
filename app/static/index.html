@@ -176,6 +176,7 @@ dialog::backdrop{background:rgba(15,23,42,.45);backdrop-filter:blur(2px)}
   <a data-t="roster" data-i="sheet">Shift roster</a>
   <a data-t="shiftchange" data-i="swap">Shift changes</a>
   <a data-t="leave" data-i="leave">Leave <span class="badge" id="pendBadge"></span></a>
+  <a data-t="wfh" data-i="home">Work from home <span class="badge" id="wfhBadge"></span></a>
   <a data-t="holidays" data-i="star">Holidays</a>
   <div class="grp">Payroll</div>
   <a data-t="payroll" data-i="wallet">Payroll &amp; payslips</a>
@@ -232,6 +233,7 @@ const P={grid:'<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="
  search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
  alert:'<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
  check:'<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>', x:'<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
+ home:'<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
  tag:'<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
  bank:'<path d="M3 10h18L12 4z"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18"/>', file:'<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>',
  phone:'<rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/>', edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m14 6 4 4"/>'};
@@ -298,7 +300,7 @@ const PAGES={live:['Dashboard',()=>'Today at a glance · '+new Date().toLocaleDa
  payroll:['Payroll & payslips','Salary from attendance, adjustments, and payslips for the phone app'],emp:['Employees','Everyone on the system, their shift, salary and app PIN'],
  shifts:['Shifts','Working hours, breaks, grace time, overtime and weekly offs'],roster:['Shift roster','Plan who works which shift, day by day'],
  masters:['Departments & designations','The lists you pick from when adding employees'],loans:['Loans & advances','Money given to employees and recovered from salary in monthly instalments'],shiftchange:['Shift changes','Move people to another shift for some dates'],
- leave:['Leave','Requests from the phone app, balances and leave records'],holidays:['Holidays','Company holidays for the year'],
+ leave:['Leave','Requests from the phone app, balances and leave records'],wfh:['Work from home','Requests from the phone app. Approved days: check in from anywhere, paid 0.8 of a day'],holidays:['Holidays','Company holidays for the year'],
  devices:['Devices','Fingerprint machines connected to this server'],sites:['GPS sites','Places where phone check-ins are allowed'],
  import:['Import data','Bring in employees, shifts, leave and old attendance from Excel or CSV'],users:['Users & roles','Who can sign in to this dashboard and what they can do'],audit:['Audit log','Every change made through the dashboard, newest first']};
 
@@ -310,9 +312,9 @@ async function render(){
  [devs,emps,shifts]=await Promise.all([j('/api/devices'),j('/api/employees'),j('/api/shifts')]);
  if(tab=='live'){
   const d=await j('/api/dashboard'); const mx=Math.max(1,...d.departments.map(x=>x.present)); const pct=d.total?Math.round(d.present/d.total*100):0;
-  $('#pendBadge').textContent=d.pending_leaves||'';
+  $('#pendBadge').textContent=d.pending_leaves||''; $('#wfhBadge').textContent=d.pending_wfh||'';
   const kpi=(ic,c,l,label,val,sub,extra='')=>`<div class="kpi" style="--c:${c};--l:${l}" onclick="go('daily')"><div class="ic">${I(ic)}</div><div style="flex:1;min-width:0"><span>${label}</span><b>${val}</b><small>${sub}</small>${extra}</div></div>`;
-  m.innerHTML=`${d.pending_leaves?`<div class="banner" onclick="go('leave')">${I('alert')}<div><b>${d.pending_leaves} leave request${d.pending_leaves>1?'s':''} waiting for approval</b> <span class="small">· open Leave to approve or reject</span></div></div>`:''}
+  m.innerHTML=`${d.pending_wfh?`<div class="banner" onclick="go('wfh')">${I('home')}<div><b>${d.pending_wfh} work-from-home request${d.pending_wfh>1?'s':''} waiting for approval</b></div></div>`:''}${d.pending_leaves?`<div class="banner" onclick="go('leave')">${I('alert')}<div><b>${d.pending_leaves} leave request${d.pending_leaves>1?'s':''} waiting for approval</b> <span class="small">· open Leave to approve or reject</span></div></div>`:''}
   <div class="kpis">
    ${kpi('users','#6366f1','#eef2ff','Employees',d.total,'active on the system')}
    ${kpi('check','#16a34a','#dcfce7','Present today',d.present,pct+'% of staff',`<div class="meter"><i style="width:${pct}%"></i></div>`)}
@@ -442,6 +444,13 @@ async function render(){
   ['#le','#lf','#lt','#ly','#lo'].forEach(k=>$(k).addEventListener('change',prev));
   $('#le').addEventListener('change',()=>$('#balbox').innerHTML='');
   $('#s').onclick=safe(async()=>{await post('/api/leaves',{device_user_id:$('#le').value,start_date:$('#lf').value,end_date:$('#lt').value,type:$('#ly').value,note:$('#ln').value,override:$('#lo').checked});$('#leaveDlg').close();toast('Leave saved');load();loadYear()}); load(); loadYear();
+
+ } else if(tab=='wfh'){
+  m.innerHTML=card('',`<div class="tb">${fld('Month',`<input type="month" id="mo" value="${today().slice(0,7)}">`)}<label class="chk"><input type="checkbox" id="pendonly">Pending only</label><p class="hint" style="flex:1;align-self:center;margin-left:8px">Working from home is not allowed by default. Employees request it in the phone app; a team lead (own team), HR, management or admin approves it. On approved days they can check in from anywhere and the day is paid at 0.8.</p></div><div id="t"></div>`);
+  const load=async()=>{let l=await j('/api/wfh?month='+$('#mo').value);if($('#pendonly').checked)l=l.filter(x=>x.status=='pending');listCache=l;
+   $('#t').innerHTML=tbl([['name','Employee',x=>person(x.name,x.department)],['start_date','From',x=>esc(fmtDay(x.start_date))],['end_date','To',x=>esc(fmtDay(x.end_date))],['reason','Reason',x=>`<span class="muted">${esc(x.reason)}</span>`],['status','Status',x=>pill(x.status,STK[x.status])],['applied_at','Requested',x=>`<span class="muted">${esc(x.applied_at.slice(0,16))}</span>`],['decided_by','Decided by',x=>`<span class="muted">${esc(x.decided_by)}</span>`],
+    ['x','',x=>x.status=='pending'?`<div class="acts"><button class="sm pri" onclick="decideWfh(${listCache.indexOf(x)},'approve')">Approve</button><button class="sm" onclick="decideWfh(${listCache.indexOf(x)},'reject')">Reject</button></div>`:'']],l,{empty:'No work-from-home requests this month'})};
+  $('#mo').onchange=load; $('#pendonly').onchange=load; load();
 
  } else if(tab=='import'){
   m.innerHTML=card('',`<div class="steps">
@@ -591,6 +600,7 @@ const delLoan=safe(async i=>{const x=listCache[i];if(await confirmBox('Delete th
 function editShift(i){const s=listCache[i];$('#sid').value=s.id;$('#sn').value=s.name;$('#ss').value=s.start;$('#se').value=s.end;$('#sg').value=s.grace_min;$('#sh').value=s.half_day_hours;$('#so').value=s.ot_after_min;$('#sw').value=s.weekly_off;$('#sb1').value=s.break_start||'';$('#sb2').value=s.break_end||'';$('#shiftDlg .dt').textContent='Edit shift';$('#shiftDlg').showModal()}
 const delShift=safe(async id=>{if(await confirmBox('Delete this shift?','Its employees become flexible (never late, no overtime).','Delete')){await j('/api/shifts/'+id,{method:'DELETE'});toast('Shift deleted');render()}});
 const delHoliday=safe(async i=>{if(await confirmBox('Delete '+listCache[i].name+'?','','Delete')){await j('/api/holidays/'+listCache[i].date,{method:'DELETE'});toast('Holiday deleted');render()}});
+const decideWfh=safe(async(i,act)=>{await post(`/api/wfh/${listCache[i].id}/${act}`,{});toast(act=='approve'?'Work from home approved':'Request rejected');render()});
 const showConsent=safe(async id=>{const k=await j('/api/leave-consents/'+id);const d=$('#dlg');
  d.innerHTML=`<div class="dh"><h3>Signed leave consent</h3><p>${esc(k.name)} · ID ${esc(k.device_user_id)}</p></div><div class="db"><div class="note" style="line-height:1.6">${esc(k.text)}</div>
   <dl style="display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px;margin:14px 0 0"><dt class="muted">Signed as</dt><dd style="margin:0"><b>${esc(k.typed_name)}</b></dd><dt class="muted">Signed at</dt><dd style="margin:0">${esc(k.at)}</dd><dt class="muted">IP address</dt><dd style="margin:0">${esc(k.ip)}</dd><dt class="muted">Device</dt><dd style="margin:0" class="small muted">${esc(k.user_agent)}</dd></dl></div>
@@ -622,6 +632,7 @@ function visibleTab(t,me){
  if(t=='users'||t=='audit')return false;
  if(t=='devices')return true;
  if(t=='shiftchange'||t=='roster')return r=='manager'||has('shifts');
+ if(t=='wfh')return r=='manager'||has('leave');
  return NEED[t]?has(NEED[t]):true;
 }
 (async()=>{try{const me=await j('/api/auth/me'); ME=me;

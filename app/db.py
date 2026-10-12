@@ -146,6 +146,17 @@ CREATE TABLE IF NOT EXISTS leave_consents (     -- the employee's signed acknowl
     user_agent TEXT NOT NULL DEFAULT '',
     at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS wfh_requests (      -- work-from-home days asked for in the phone app (leave policy: paid 0.8)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_user_id TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',     -- pending | approved | rejected
+    applied_at TEXT NOT NULL,
+    decided_by TEXT NOT NULL DEFAULT '',
+    decided_at TEXT
+);
 CREATE TABLE IF NOT EXISTS sites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

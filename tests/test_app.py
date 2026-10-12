@@ -921,12 +921,27 @@ def test_documents_lists_loans_roster_breaks_wfh_and_payslip_rules(tmp_path, mon
         punch = lambda h, lat, lng: c.post("/api/app/punch", data={"lat": lat, "lng": lng, "accuracy": 5}, files={"selfie": ("s.jpg", jpg)}, headers=h)
         r = punch(tok("H1"), 19.2, 72.9)
         assert r.status_code == 200 and r.json()["site"] == "Hana home"
-        r = punch(tok("H2"), 25.0, 80.0)                                     # far from everything, but H2 may work remotely
-        assert r.status_code == 200 and r.json()["site"] == "Work from home" and r.json()["flag"] == ""
+        r = punch(tok("H2"), 25.0, 80.0)                                     # far from everything, but H2 does field work
+        assert r.status_code == 200 and r.json()["site"] == "Remote" and r.json()["flag"] == ""
+        # work from home on request: a team lead / HR approves it, then that day the person may check in anywhere
+        c.post("/api/employees", json={"device_user_id": "H3", "name": "Home Huda", "shift_id": sh["B 9-6"], "department": "Finance"})
+        c.post("/api/employees/H3/pin", json={"pin": "1234"})
+        h3 = tok("H3")
+        assert punch(h3, 25.0, 80.0).status_code == 403                    # not approved yet: blocked
+        r = c.post("/api/app/wfh", json={"start_date": "2026-10-10", "reason": "plumber visit"}, headers=h3)
+        assert r.status_code == 200 and c.post("/api/app/wfh", json={"start_date": "2026-10-10"}, headers=h3).status_code == 400
+        assert c.get("/api/dashboard").json()["pending_wfh"] == 1
+        wid = c.get("/api/wfh?status=pending").json()[0]["id"]
+        assert c.post(f"/api/wfh/{wid}/approve").status_code == 200 and c.post(f"/api/wfh/{wid}/approve").status_code == 400
+        assert c.get("/api/app/me", headers=h3).json()["wfh_today"] is True
+        r = punch(h3, 25.0, 80.0)
+        assert r.status_code == 200 and r.json()["site"] == "Work from home"
+        assert c.get("/api/app/wfh", headers=h3).json()[0]["status"] == "approved"
         assert [s["name"] for s in c.get("/api/app/me", headers=tok("H2")).json()["sites"]] == ["Office"]   # others' homes are private
         assert d("2026-10-10")["note"].startswith("WFH")
-        h2 = {r["device_user_id"]: r for r in c.get("/api/reports/monthly?month=2026-10").json()}["H2"]
-        assert h2["wfh_days"] == 1 and round(h2["paid_days"] % 1, 2) == 0.8           # a WFH day is paid at 0.8
+        mon = {r["device_user_id"]: r for r in c.get("/api/reports/monthly?month=2026-10").json()}
+        assert mon["H3"]["wfh_days"] == 1 and round(mon["H3"]["paid_days"] % 1, 2) == 0.8     # a WFH day is paid at 0.8
+        assert mon["H2"]["wfh_days"] == 0 and mon["H2"]["paid_days"] % 1 == 0                 # field work is a full day
         # a festival (optional) holiday is a working day unless Festive leave is taken; a normal holiday is off
         c.post("/api/holidays", json={"date": "2026-10-09", "name": "Navratri", "optional": True})
         c.post("/api/holidays", json={"date": "2026-10-02", "name": "Gandhi Jayanti"})

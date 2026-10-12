@@ -82,6 +82,13 @@
       <button id="lap">Apply for leave</button>
     </div>
     <div id="lmsg"></div><ul id="llist" style="margin-top:8px"></ul></div>
+  <div class="card" id="wfhCard"><h3><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>Work from home</h3>
+    <div id="wtoday"></div>
+    <p class="muted" style="margin:0 0 12px;font-size:14px">Ask your team lead or HR. On approved days you can check in from anywhere; the day is paid at 0.8.</p>
+    <div class="row2"><div><label for="wfr">From</label><input id="wfr" type="date"></div><div><label for="wto">To</label><input id="wto" type="date"></div></div>
+    <label for="wre">Reason</label><input id="wre" placeholder="e.g. plumber visit" maxlength="200">
+    <button id="wap">Request work from home</button>
+    <div id="wmsg"></div><ul id="wlist" style="margin-top:8px"></ul></div>
   <div class="card hide" id="slipCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18"/><path d="M6 6V5a2 2 0 0 1 2-2h9"/></svg>My payslips</h3><ul id="slips"></ul></div>
   <div class="center"><button class="link" id="logout">Sign out</button></div>
 </div>
@@ -113,7 +120,8 @@ async function start(){
   $('#siteInfo').textContent=me.sites.length?'Allowed at: '+me.sites.map(s=>s.name).join(', '):'';
   $('#today').innerHTML=me.today.length?me.today.map(p=>`<li><span class="tl"><i class="${p.status?'o':''}"></i>${p.status?'Check out':'Check in'}${p.flag=='outside_geofence'?' <span class="tag pending">outside area</span>':''}</span><b>${p.ts.slice(11,16)}</b></li>`).join(''):'<li class="muted">No punches yet today</li>';
   const out=me.today.length%2==1; $('#punchLbl').textContent=out?'Check out':'Check in'; $('#punchBtn').classList.toggle('out',out);
-  loadSlips(); loadLeave(); await Promise.all([startCam(),locate()]); ready();
+  loadSlips(); loadLeave(); loadWfh();
+  $('#wtoday').innerHTML=me.wfh_today?'<div class="msg ok" style="margin:0 0 12px">Work from home is approved for today: you can check in from anywhere.</div>':''; await Promise.all([startCam(),locate()]); ready();
 }
 const fmtD=d=>new Date(d+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'});
 async function loadLeave(){
@@ -150,6 +158,17 @@ $('#lap').onclick=async()=>{const m=$('#lmsg'); try{
   if(PLAN.needs_consent&&!$('#lcname').value.trim())throw new Error('Part of this leave is unpaid. Type your full name to agree before applying.');
   const r=await api('/leave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:$('#lty').value,start_date:$('#lfr').value,end_date:$('#lto').value||$('#lfr').value,reason:$('#lre').value,consent_name:$('#lcname').value})});
   msg(m,`Applied for ${r.days} day(s)${r.excess_days?`, ${r.excess_days} beyond balance`:''}${r.unpaid_days?`, ${r.unpaid_days} unpaid`:''}. HR will approve it.`,'ok'); $('#lre').value=''; $('#lcname').value=''; $('#lprev').innerHTML=''; $('#lcons').classList.add('hide'); PLAN=null; loadLeave();
+ }catch(e){msg(m,e.message,'err')}};
+async function loadWfh(){
+  try{const l=await api('/wfh');
+   $('#wlist').innerHTML=l.slice(0,6).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''}</span><span><span class="tag ${x.status}">${x.status}</span>${x.status=='pending'?` <button class="link" data-w="${x.id}" style="padding:0 0 0 6px">cancel</button>`:''}</span></li>`).join('');
+   document.querySelectorAll('#wlist button').forEach(bt=>bt.onclick=async()=>{if(!confirm('Cancel this request?'))return;try{await api('/wfh/'+bt.dataset.w,{method:'DELETE'});loadWfh()}catch(e){msg($('#wmsg'),e.message,'err')}});
+  }catch(e){}
+}
+$('#wap').onclick=async()=>{const m=$('#wmsg');try{
+  if(!$('#wfr').value)throw new Error('Choose the date');
+  await api('/wfh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start_date:$('#wfr').value,end_date:$('#wto').value||$('#wfr').value,reason:$('#wre').value})});
+  msg(m,'Requested. Your team lead or HR will approve it.','ok');$('#wre').value='';loadWfh();
  }catch(e){msg(m,e.message,'err')}};
 async function loadSlips(){
   try{const l=await api('/payslips'); $('#slipCard').classList.toggle('hide',!l.length);

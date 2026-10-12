@@ -1135,3 +1135,28 @@ def test_nightly_backup(tmp_path, monkeypatch):
         monkeypatch.setattr(backup.smtplib, "SMTP", down)
         st = backup.run(dt(2026, 10, 11, 2, 0))
         assert "connection refused" in st["error"] and os.path.isfile(os.path.join(config.BACKUP_DIR, "attendance-backup-2026-10-11.zip"))
+
+
+def test_audit_dates_and_past_leave_years(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "au.db"))
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "admin-password-123")
+    with TestClient(app) as c:
+        c.headers.update({"X-Requested-With": "fetch"})
+        assert c.post("/api/auth/login", json={"username": "admin", "password": "admin-password-123"}).status_code == 200
+        from app import db as _db
+        cx = _db.conn()
+        for ts, act in (("2024-05-02 10:00:00", "POST /api/leaves"), ("2025-01-15 11:00:00", "POST /api/payroll/x"),
+                        ("2025-01-31 23:59:00", "DELETE /api/holidays/x")):
+            cx.execute("INSERT INTO audit(ts,user,action,status) VALUES (?,?,?,200)", (ts, "priya", act))
+        cx.commit()
+        r = c.get("/api/audit", params={"date_from": "2025-01-01", "date_to": "2025-01-31"}).json()
+        assert [x["action"] for x in r] == ["DELETE /api/holidays/x", "POST /api/payroll/x"]          # end date inclusive
+        assert [x["ts"][:4] for x in c.get("/api/audit", params={"q": "leaves"}).json()] == ["2024"]
+        assert c.get("/api/audit", params={"date_from": "nope"}).status_code == 400
+        # past financial years: someone who left during FY 2024-25 is still in that year's table, not in later ones
+        c.post("/api/employees", json={"device_user_id": "Y1", "name": "Old Omar", "joined": "2023-01-01", "active": False, "left_on": "2024-09-30"})
+        c.post("/api/employees", json={"device_user_id": "Y2", "name": "Now Nadia", "joined": "2023-01-01"})
+        c.post("/api/leaves", json={"device_user_id": "Y1", "start_date": "2024-06-03", "end_date": "2024-06-03", "type": "Casual", "override": True})
+        fy24 = {x["device_user_id"]: x for x in c.get("/api/leave-summary?fy=2024").json()}
+        assert set(fy24) == {"Y1", "Y2"} and fy24["Y1"]["casual"] == 1 and fy24["Y1"]["balance"] == 23
+        assert set(x["device_user_id"] for x in c.get("/api/leave-summary?fy=2025").json()) == {"Y2"}

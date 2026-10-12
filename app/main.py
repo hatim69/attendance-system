@@ -282,8 +282,20 @@ async def delete_user(username: str, u: dict = Depends(access.need("admin"))):
 
 
 @app.get("/api/audit", dependencies=[Depends(access.need("admin"))])
-def list_audit(limit: int = 300):
-    return [dict(r) for r in db.conn().execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (min(limit, 2000),))]
+def list_audit(limit: int = 300, date_from: str = "", date_to: str = "", q: str = ""):
+    """Newest first, optionally between two dates (inclusive) and matching a user / action text."""
+    where, args = [], []
+    for d in (date_from, date_to):
+        if d:
+            _valid_date(d)
+    if date_from:
+        where, args = where + ["ts >= ?"], args + [date_from]
+    if date_to:
+        where, args = where + ["ts < date(?, '+1 day')"], args + [date_to]
+    if q.strip():
+        where, args = where + ["(user LIKE ? OR action LIKE ?)"], args + [f"%{q.strip()}%"] * 2
+    sql = "SELECT * FROM audit" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ?"
+    return [dict(r) for r in db.conn().execute(sql, (*args, max(1, min(limit, 5000))))]
 
 
 @app.middleware("http")

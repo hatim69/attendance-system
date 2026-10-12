@@ -273,7 +273,7 @@ def year_summary(fy_start: int) -> list[dict]:
     shifts, emps, holidays, _, changes = reports._load()
     out = []
     for e in emps:
-        if not e["active"]:
+        if not e["active"] and (e.get("left_on") or "") < f"{fy_start}-04-01":   # left before this year
             continue
         u = usage(e, (e, shifts, holidays, changes))
         c, a, f = u[("C-Y", fy_start)], u[("A-Y", fy_start)], u[("F-Y", fy_start)]

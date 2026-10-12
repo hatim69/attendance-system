@@ -101,6 +101,7 @@ GEOFENCE_MODE=block
 FKWEB_DEVICES=$DEVICES
 COMPANY_NAME=$COMPANY_NAME
 COMPANY_ADDRESS=
+BACKUP_EMAIL_TO=hr@madarwala.com
 ENV
   chmod 600 .env
   printf 'admin password (first login): %s\n' "$NEW_PASSWORD" > /root/attendance-admin-password.txt 2>/dev/null || true

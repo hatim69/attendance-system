@@ -43,6 +43,17 @@ ANDROID_PACKAGE = os.getenv("ANDROID_PACKAGE", "com.madarwala.attendance")
 ANDROID_CERT_SHA256 = [x.strip() for x in os.getenv("ANDROID_CERT_SHA256", "").split(",") if x.strip()]
 # Push reminders in the phone app (not checked in 1 h after shift start; check out 15 min before shift end)
 PUSH_REMINDERS = os.getenv("PUSH_REMINDERS", "1") not in ("", "0", "false")
+# Nightly backup: database + employee documents, zipped and emailed (see DEPLOY.md / the Backups page)
+BACKUP_DIR = os.getenv("BACKUP_DIR", "backups")
+BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "2"))                 # local time
+BACKUP_KEEP_DAYS = int(os.getenv("BACKUP_KEEP_DAYS", "30"))
+BACKUP_PASSWORD = os.getenv("BACKUP_PASSWORD", "")               # encrypts the zip (open with 7-Zip / WinRAR)
+BACKUP_EMAIL_TO = os.getenv("BACKUP_EMAIL_TO", "")
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))                   # 587 = STARTTLS, 465 = SSL
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SMTP_FROM", "")
 # Shown on the privacy policy page (required by the Play Store)
 PRIVACY_CONTACT = os.getenv("PRIVACY_CONTACT", "")
 # Optional safety net: append every scan received from a fingerprint device to this CSV file (the columns match the

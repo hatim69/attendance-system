@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from . import access, adms, app_api, auth, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, payslip, push, reports, zk_poller
+from . import access, adms, app_api, auth, backup, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, payslip, push, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 
@@ -34,9 +34,11 @@ async def lifespan(app: FastAPI):
     zk_poller.start()
     fk_server = await fkweb.start()
     reminders = asyncio.create_task(push.loop()) if config.PUSH_REMINDERS else None
+    nightly = asyncio.create_task(backup.loop()) if config.BACKUP_HOUR >= 0 else None
     yield
-    if reminders:
-        reminders.cancel()
+    for t in (reminders, nightly):
+        if t:
+            t.cancel()
     if fk_server:
         fk_server.close()
 
@@ -1164,6 +1166,25 @@ def mobile_redirect():
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+@app.get("/api/backups", dependencies=[Depends(access.need("admin"))])
+def list_backups():
+    return {"last": backup.status(), "files": backup.list_files(), "email_to": config.BACKUP_EMAIL_TO,
+            "email_configured": backup.email_configured(), "encrypted": bool(config.BACKUP_PASSWORD),
+            "hour": config.BACKUP_HOUR, "keep_days": config.BACKUP_KEEP_DAYS}
+
+
+@app.post("/api/backups/run", dependencies=[Depends(access.need("admin"))])
+async def run_backup():
+    return await asyncio.to_thread(backup.run, now_local().replace(microsecond=0), True)
+
+
+@app.get("/api/backups/{name}", dependencies=[Depends(access.need("admin"))])
+def download_backup(name: str):
+    if not backup.NAME_RE.fullmatch(name) or not os.path.isfile(os.path.join(config.BACKUP_DIR, name)):
+        raise HTTPException(404, "No such backup")
+    return FileResponse(os.path.join(config.BACKUP_DIR, name), media_type="application/zip", filename=name)
 
 
 @app.get("/.well-known/assetlinks.json")

@@ -2,6 +2,8 @@ import os
 import tempfile
 
 os.environ["FKWEB_PORT"] = "0"
+os.environ["BACKUP_HOUR"] = "-1"          # no nightly backup or reminder loops during tests
+os.environ["PUSH_REMINDERS"] = "0"
 os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "t.db")
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -1079,3 +1081,57 @@ def test_push_reminders(tmp_path, monkeypatch):
         monkeypatch.setattr(push, "webpush", boom)
         assert push.send("R1", "t", "b") == 0
         assert {e["device_user_id"]: e["reminders"] for e in c.get("/api/employees").json()}["R1"] == 0
+
+
+def test_nightly_backup(tmp_path, monkeypatch):
+    import pyzipper
+    from datetime import datetime as dt
+    from app import backup
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "bk.db"))
+    monkeypatch.setattr(config, "DOCS_DIR", str(tmp_path / "docs"))
+    monkeypatch.setattr(config, "BACKUP_DIR", str(tmp_path / "backups"))
+    monkeypatch.setattr(config, "BACKUP_PASSWORD", "s3cret-pass")
+    monkeypatch.setattr(config, "BACKUP_EMAIL_TO", "hr@example.com")
+    monkeypatch.setattr(config, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(config, "SMTP_USER", "server@example.com")
+    sent = []
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None): sent.append(("connect", host, port))
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def starttls(self): sent.append(("tls",))
+        def login(self, u, p): sent.append(("login", u))
+        def send_message(self, m): sent.append(("msg", m["To"], m["Subject"], [a.get_filename() for a in m.iter_attachments()]))
+    monkeypatch.setattr(backup.smtplib, "SMTP", FakeSMTP)
+    with TestClient(app) as c:
+        c.post("/api/employees", json={"device_user_id": "B1", "name": "Bilal"})
+        c.post("/api/employees/B1/documents", files={"file": ("pan.pdf", b"%PDF-1.4 x")}, data={"doc_type": "PAN card"})
+        os.makedirs(config.BACKUP_DIR, exist_ok=True)
+        open(os.path.join(config.BACKUP_DIR, "attendance-backup-2026-08-01.zip"), "wb").write(b"old")     # older than 30 days
+        st = backup.run(dt(2026, 10, 10, 2, 0))
+        assert st["error"] == "" and st["emailed_to"] == "hr@example.com" and st["encrypted"] is True
+        assert ("tls",) in sent and ("login", "server@example.com") in sent
+        assert sent[-1] == ("msg", "hr@example.com", "Attendance backup 10 Oct 2026", ["attendance-backup-2026-10-10.zip"])
+        files = [f["file"] for f in c.get("/api/backups").json()["files"]]
+        assert files == ["attendance-backup-2026-10-10.zip"]                     # the old one was pruned
+        z = pyzipper.AESZipFile(os.path.join(config.BACKUP_DIR, files[0]))
+        assert sorted(n for n in z.namelist() if not n.startswith("documents/")) == ["README.txt", "attendance.db"]
+        assert any(n.startswith("documents/B1/") for n in z.namelist())
+        try:
+            z.read("attendance.db")
+            raise AssertionError("readable without the password")
+        except RuntimeError:
+            pass
+        z.setpassword(b"s3cret-pass")
+        import sqlite3
+        snap = tmp_path / "restored.db"
+        snap.write_bytes(z.read("attendance.db"))
+        assert sqlite3.connect(snap).execute("SELECT name FROM employees").fetchone()[0] == "Bilal"
+        assert c.get("/api/backups/attendance-backup-2026-10-10.zip").content.startswith(b"PK")
+        assert c.get("/api/backups/..%2Fbk.db").status_code == 404
+        assert c.get("/api/backups").json()["last"]["file"] == "attendance-backup-2026-10-10.zip"
+        # a failing mail server is reported, the local backup still exists
+        def down(*a, **k): raise OSError("connection refused")
+        monkeypatch.setattr(backup.smtplib, "SMTP", down)
+        st = backup.run(dt(2026, 10, 11, 2, 0))
+        assert "connection refused" in st["error"] and os.path.isfile(os.path.join(config.BACKUP_DIR, "attendance-backup-2026-10-11.zip"))

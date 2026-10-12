@@ -46,7 +46,33 @@ Scans then appear in the dashboard within seconds. Set `FKWEB_DEVICES` in `.env`
 
 ## Operations
 - Update: `git pull && docker compose up -d --build`
-- Backup (daily): copy the `data/` folder (database + selfies) somewhere off the server, e.g. `tar czf backup-$(date +%F).tgz data`
+- Backups: automatic, every night at 2 AM (see **Nightly backup** below). The Backups page in the dashboard shows
+  the last result and lets an admin download a copy or back up now. Selfie photos are not in the nightly file; to keep
+  them too, copy `data/selfies` off the server now and then.
 - Logs: `docker compose logs -f app`
 - Security: the device port (80) is plain HTTP by device design. Use FKWEB_DEVICES, keep ADMIN_PASSWORD strong, and keep the server updated.
 - Privacy: selfies and GPS are personal data. Tell employees what is collected and why, and delete old selfies per your policy.
+
+## Nightly backup
+
+Every night at 2 AM the server zips the whole database and the employee documents into
+`data/backups/attendance-backup-YYYY-MM-DD.zip`, keeps the last 30 days, and emails the file to `BACKUP_EMAIL_TO`.
+
+Add these lines to `/opt/attendance-system/.env` (`nano .env`), then run `docker compose -f docker-compose.nginx.yml up -d`:
+
+```
+BACKUP_EMAIL_TO=hr@madarwala.com
+BACKUP_PASSWORD=a-long-password-only-HR-knows
+SMTP_HOST=smtp.hostinger.com        # your mail provider's SMTP server (Google Workspace: smtp.gmail.com)
+SMTP_PORT=465                        # 465 = SSL, 587 = STARTTLS
+SMTP_USER=attendance@madarwala.com   # the mailbox the server sends from
+SMTP_PASSWORD=that-mailbox's-password (Google Workspace: an "app password")
+```
+
+- The backup file is encrypted with `BACKUP_PASSWORD`. Open it with **7-Zip** or **WinRAR** (Windows' built-in zip
+  cannot open encrypted files). Keep the password somewhere safe: without it the backup cannot be opened.
+- Optional: `BACKUP_HOUR=2` (local time) and `BACKUP_KEEP_DAYS=30`.
+- To check it works, open **Backups** in the dashboard and press **Back up now**.
+- Restoring: stop the app, put `attendance.db` back as `data/attendance.db` (and `documents/` as `data/documents`),
+  start the app. The README inside every backup says the same.
+

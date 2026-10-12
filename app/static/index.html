@@ -187,6 +187,7 @@ dialog::backdrop{background:rgba(15,23,42,.45);backdrop-filter:blur(2px)}
   <a data-t="import" data-i="upload">Import data</a>
   <a data-t="users" data-i="shield">Users &amp; roles</a>
   <a data-t="audit" data-i="list">Audit log</a>
+  <a data-t="backups" data-i="down">Backups</a>
  </nav>
  <div class="me"><div class="av" id="meAv" style="background:#6366f1">?</div><div class="mi"><b id="who"></b><small id="whoRole"></small></div>
   <button id="pw" title="Change password" data-i="key"></button><button id="out" title="Log out" data-i="logout"></button></div>
@@ -302,7 +303,7 @@ const PAGES={live:['Dashboard',()=>'Today at a glance · '+new Date().toLocaleDa
  masters:['Departments & designations','The lists you pick from when adding employees'],loans:['Loans & advances','Money given to employees and recovered from salary in monthly instalments'],shiftchange:['Shift changes','Move people to another shift for some dates'],
  leave:['Leave','Requests from the phone app, balances and leave records'],wfh:['Work from home','Requests from the phone app. Approved days: check in from anywhere, paid 0.8 of a day'],holidays:['Holidays','Company holidays for the year'],
  devices:['Devices','Fingerprint machines connected to this server'],sites:['GPS sites','Places where phone check-ins are allowed'],
- import:['Import data','Bring in employees, shifts, leave and old attendance from Excel or CSV'],users:['Users & roles','Who can sign in to this dashboard and what they can do'],audit:['Audit log','Every change made through the dashboard, newest first']};
+ import:['Import data','Bring in employees, shifts, leave and old attendance from Excel or CSV'],users:['Users & roles','Who can sign in to this dashboard and what they can do'],audit:['Audit log','Every change made through the dashboard, newest first'],backups:['Backups','A copy of everything, every night, kept on the server and emailed']};
 
 /* ---------- pages ---------- */
 async function render(){
@@ -477,6 +478,20 @@ async function render(){
   $('#t').innerHTML=tbl([['username','User',r=>person(r.display_name||r.username,r.username)],['role','Role',r=>pill((ROLE[r.role]||[r.role])[0],(ROLE[r.role]||[])[1])],['department','Team',r=>esc(r.role=='manager'?r.department:'')],['permissions','Abilities',r=>`<span class="muted small">${esc(r.role=='hr'?(r.permissions=='*'||!r.permissions?'all HR abilities':r.permissions.split(',').map(k=>PL[k]||k).join(', ')):r.role=='manager'?(r.permissions?'team basics + '+r.permissions.split(',').map(k=>PL[k]||k).join(', '):'team basics'):'everything')}</span>`],['active','Status',r=>r.active?pill('Active','ok'):pill('Disabled','mute')],['x','',r=>`<div class="acts"><button class="sm" onclick="editUser(${listCache.indexOf(r)})">Edit</button><button class="sm" onclick="delUser(${listCache.indexOf(r)})">Delete</button></div>`]],us);
   $('#s').onclick=safe(async()=>{const perms=$$('.pm:checked').map(c=>c.value).join(',');await post('/api/users',{username:$('#un').value,display_name:$('#ud').value,password:$('#up').value,role:$('#ur').value,department:$('#ut').value,active:$('#ua').checked,permissions:$('#ur').value=='hr'&&perms==HRD.join(',')?'*':perms});$('#userDlg').close();toast('User saved');render()});
 
+ } else if(tab=='backups'){
+  const b=await j('/api/backups'), L=b.last||{}, mb=n=>(n/1024/1024).toFixed(n>1048576?1:2)+' MB';
+  const setup=[!b.encrypted&&'<b>BACKUP_PASSWORD</b> is not set, so the backup files are not password protected',!b.email_configured&&'email is not set up yet (<b>SMTP_HOST</b>, <b>SMTP_USER</b>, <b>SMTP_PASSWORD</b>, <b>BACKUP_EMAIL_TO</b> in the server\'s .env)'].filter(Boolean);
+  m.innerHTML=`<div class="kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+    <div class="kpi" style="--c:${L.error?'#dc2626':'#16a34a'};--l:${L.error?'#fee2e2':'#dcfce7'};cursor:default"><div class="ic">${I(L.error?'x':'check')}</div><div style="min-width:0"><span>Last backup</span><b style="font-size:20px">${L.at?esc(fmtDay(L.date)):'Not yet'}</b><small>${L.at?esc(L.at.slice(11,16))+' · '+(L.error?'failed':'OK'):'runs tonight'}</small></div></div>
+    <div class="kpi" style="--c:#6366f1;--l:#eef2ff;cursor:default"><div class="ic">${I('wallet')}</div><div style="min-width:0"><span>Emailed to</span><b style="font-size:17px;overflow:hidden;text-overflow:ellipsis">${esc(L.emailed_to||b.email_to||'—')}</b><small>${b.email_configured?'every night':'not set up'}</small></div></div>
+    <div class="kpi" style="--c:#d97706;--l:#fef3c7;cursor:default"><div class="ic">${I('clock')}</div><div><span>Schedule</span><b style="font-size:20px">${b.hour<0?'Off':String(b.hour).padStart(2,'0')+':00 nightly'}</b><small>last ${b.keep_days} days kept on the server</small></div></div></div>
+   ${L.error?`<div class="banner" style="background:#fef2f2;border-color:#fecaca;color:#7f1d1d;cursor:default">${I('alert')}<div><b>The last backup had a problem:</b> ${esc(L.error)}</div></div>`:''}
+   ${setup.length?`<div class="banner" style="cursor:default">${I('alert')}<div>${setup.join('; and ')}. See DEPLOY.md.</div></div>`:''}`+
+   card('Backup files',`<div class="cb" style="padding-bottom:0"><p class="hint">Each file holds the whole database and the employee documents (selfie photos stay on the server). ${b.encrypted?'Files are password protected: open them with 7-Zip or WinRAR using the backup password.':''}</p></div>`+
+    tbl([['file','File',x=>`<b>${esc(x.file)}</b>`],['size','Size',x=>mb(x.size),'num'],['x','',x=>`<div class="acts"><a class="btn sm" href="/api/backups/${encodeURIComponent(x.file)}">${I('down')}Download</a></div>`]],b.files,{empty:'No backups yet: the first one runs tonight, or press Back up now'}),
+    `<button class="pri" id="bknow">${I('down')}Back up now</button>`);
+  $('#bknow').onclick=safe(async()=>{$('#bknow').disabled=true;try{const r=await post('/api/backups/run',{});if(r.error)toast('Backup saved, but: '+r.error,'bad');else toast(r.emailed_to?'Backup made and emailed to '+r.emailed_to:'Backup made')}finally{render()}});
+
  } else if(tab=='audit'){
   const a=await j('/api/audit');
   m.innerHTML=card('',`<div class="tb"><p class="hint" style="flex:1;align-self:center">Who changed what, and whether it worked. Request contents such as passwords are never logged.</p><input id="aq" placeholder="Filter…" style="width:220px"></div><div id="t"></div>`);
@@ -629,7 +644,7 @@ function visibleTab(t,me){
  const r=me.role; if(r=='admin'||r=='management')return true;
  const raw=(me.permissions&&me.permissions!='*')?me.permissions.split(','):[];
  const eff=r=='hr'?((!me.permissions||me.permissions=='*')?HRD:raw):raw, has=k=>eff.includes(k);
- if(t=='users'||t=='audit')return false;
+ if(t=='users'||t=='audit'||t=='backups')return false;
  if(t=='devices')return true;
  if(t=='shiftchange'||t=='roster')return r=='manager'||has('shifts');
  if(t=='wfh')return r=='manager'||has('leave');

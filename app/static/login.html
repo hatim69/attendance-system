@@ -42,8 +42,11 @@
   <div class="alt">Employee? Check in from your phone at <a href="/m/">the phone app</a></div></form>
 </main>
 <script>
-document.getElementById('f').onsubmit=async e=>{e.preventDefault();const err=document.getElementById('err'),b=document.getElementById('go');err.style.display='none';b.disabled=true;b.textContent='Signing in…';
- try{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});
+document.getElementById('f').onsubmit=async e=>{e.preventDefault();const err=document.getElementById('err'),b=document.getElementById('go');err.style.display='none';
+ const user=document.getElementById('u').value.trim(), pass=document.getElementById('p').value;
+ if(!user||!pass){err.textContent=!user?'Type your username (for example admin).':'Type your password.';err.style.display='block';document.getElementById(!user?'u':'p').focus();return}
+ b.disabled=true;b.textContent='Signing in…';
+ try{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:user,password:pass})});
   if(r.ok){location.href='/';return}const d=await r.json().catch(()=>({}));err.textContent=typeof d.detail=='string'?d.detail:'Sign-in failed';err.style.display='block'}
  catch(x){err.textContent='Cannot reach the server. Check your connection.';err.style.display='block'}
  b.disabled=false;b.textContent='Sign in'};

@@ -158,6 +158,8 @@ def _me(u: dict) -> dict:
 @app.post("/api/auth/login")
 def auth_login(body: LoginIn, request: Request):
     name = body.username.strip().lower()
+    if not name or not body.password:
+        raise HTTPException(400, "Type your username and password")
     key = "u:" + name
     if auth.locked(key):
         raise HTTPException(429, "Too many failed attempts. Try again in 5 minutes.")

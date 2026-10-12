@@ -25,31 +25,32 @@ screenshots.
    are not at your office), no salary. Then **Set PIN** (for example `246810`). Untick Active after the app is approved
    if you like, or keep it for future updates.
 
-## 2. Build the app with PWABuilder (10 minutes, free)
+## 2. Build the app on GitHub (automatic)
 
-1. Open **https://www.pwabuilder.com**, enter `https://attendance.madarwala.cloud/m/` and press **Start**.
-2. Press **Package for stores**, choose **Android > Generate Package**, and set:
+The Android project is in [`android/`](android) and GitHub builds it with
+[`.github/workflows/android.yml`](.github/workflows/android.yml) every time it changes (or on demand).
 
-   | Setting | Value |
-   |---|---|
-   | Package ID | `com.madarwala.attendance` |
-   | App name | `Madarwala Attendance` |
-   | Launcher name | `Attendance` |
-   | App version / version code | `1.0.0` / `1` |
-   | Host | `attendance.madarwala.cloud` |
-   | Start URL | `/m/` |
-   | Display mode | Standalone |
-   | Location delegation | **On** (needed for GPS check-in) |
-   | Notification delegation | **On** (check-in / check-out reminders appear as the app's notifications) |
-   | Google Play billing | Off |
-   | Signing key | **Create new**. Full name: your name; organisation: Madarwala Tours and Travels; country: IN |
+**One-time setup: the signing key.** Every version of the app must be signed with the same *upload key*. You have it
+as three files (`upload.jks`, `ANDROID_KEYSTORE_PASSWORD.txt`, `ANDROID_KEYSTORE_B64.txt`). Keep them safe in two
+places; they are never stored in the repository. Add two secrets on GitHub: **repository > Settings > Secrets and
+variables > Actions > New repository secret**:
 
-3. Press **Download**. You get a zip with:
-   - `app-release-bundle.aab`: **this is what you upload to the Play Store**
-   - `app-release-signed.apk`: you can install this on your own phone to try the app first
-   - `signing.keystore` and `signing-key-info.txt`: **the app's signing key and its passwords. Keep both safe**
-     (two copies, for example a USB stick and a password manager). Every future update must be signed with them.
-   - `assetlinks.json`: holds the key's fingerprint (used in step 4)
+| Name | Value |
+|---|---|
+| `ANDROID_KEYSTORE_B64` | the whole content of `ANDROID_KEYSTORE_B64.txt` |
+| `ANDROID_KEYSTORE_PASSWORD` | the content of `ANDROID_KEYSTORE_PASSWORD.txt` |
+
+**Building.** Open the repository's **Actions** tab > **Android app** > **Run workflow** (or just wait for the run that
+starts after a change). When it is green, open the run and download the file under **Artifacts**. It contains:
+
+- `madarwala-attendance-N.aab`: **upload this to Play Console**
+- `app-release.apk`: install it directly on your phone to try the app first
+
+Each build gets a higher version code automatically, so later uploads are accepted as updates.
+
+*(Alternative without GitHub: [PWABuilder](https://www.pwabuilder.com) can make the same app from
+`https://attendance.madarwala.cloud/m/`: package ID `com.madarwala.attendance`, location and notification delegation
+on. If you use it, use the same signing key: "Use mine" with `upload.jks`.)*
 
 ## 3. Create the app in Play Console
 
@@ -118,7 +119,7 @@ Users can ask for their data to be deleted: Yes (through HR).
 Until this is done the app works but shows a small address bar at the top.
 
 1. In Play Console open **Test and release > App integrity > App signing**. Copy the **SHA-256 certificate fingerprint**
-   of the *App signing key*, and also the one of the *Upload key* (it is the same as in PWABuilder's `assetlinks.json`).
+   of the *App signing key*, and also the one of the *Upload key* (it is also shown on every GitHub build's summary page).
 2. Add both to `.env` on the server, separated by a comma:
    ```
    ANDROID_CERT_SHA256=AB:CD:...:12,98:76:...:EF
@@ -129,5 +130,5 @@ Until this is done the app works but shows a small address bar at the top.
 ## Updating the app later
 
 - **Features and fixes:** nothing to do in the Play Store. Update the website and the app shows the changes.
-- **New icon or name:** run PWABuilder again with the **same signing key** (*Use mine*: upload `signing.keystore` and
-  enter its passwords), raise the version code (2, 3, ...) and upload the new `.aab` as a new release.
+- **New icon or name:** change it in `android/`, let GitHub build it (the version code goes up by itself) and upload the
+  new `.aab` as a new release.

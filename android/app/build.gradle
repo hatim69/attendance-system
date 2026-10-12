@@ -1,0 +1,69 @@
+// Play Store app: a Trusted Web Activity that opens the employee web app full screen (camera, GPS and
+// notifications work through Chrome). Built by .github/workflows/android.yml.
+plugins {
+    id 'com.android.application'
+}
+
+def twa = [
+    host           : 'attendance.madarwala.cloud',
+    startUrl       : '/m/',
+    name           : 'Madarwala Attendance',
+    launcherName   : 'Attendance',
+    themeColor     : '#4F46E5',
+    navigationColor: '#FFFFFF',
+    backgroundColor: '#F4F6FB',
+]
+def keystore = System.getenv('KEYSTORE_FILE')
+
+android {
+    namespace 'com.madarwala.attendance'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.madarwala.attendance'
+        minSdk 21
+        targetSdk 36
+        versionCode((System.getenv('VERSION_CODE') ?: '1') as int)
+        versionName System.getenv('VERSION_NAME') ?: '1.0.0'
+
+        resValue 'string', 'appName', twa.name
+        resValue 'string', 'launcherName', twa.launcherName
+        resValue 'string', 'launchUrl', "https://${twa.host}${twa.startUrl}"
+        resValue 'string', 'providerAuthority', 'com.madarwala.attendance.fileprovider'
+        resValue 'string', 'assetStatements',
+            "[{ \\\"relation\\\": [\\\"delegate_permission/common.handle_all_urls\\\"], \\\"target\\\": {\\\"namespace\\\": \\\"web\\\", \\\"site\\\": \\\"https://${twa.host}\\\"}}]"
+        resValue 'color', 'colorPrimary', twa.themeColor
+        resValue 'color', 'navigationColor', twa.navigationColor
+        resValue 'color', 'backgroundColor', twa.backgroundColor
+    }
+
+    signingConfigs {
+        release {
+            if (keystore) {
+                storeFile file(keystore)
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias System.getenv('KEY_ALIAS') ?: 'upload'
+                keyPassword System.getenv('KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (keystore) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
+    implementation 'com.google.androidbrowserhelper:locationdelegation:1.1.1'
+}

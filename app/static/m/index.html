@@ -1,51 +1,81 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#4f46e5">
 <link rel="manifest" href="/m/manifest.webmanifest"><link rel="apple-touch-icon" href="/m/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
 <title>Attendance</title>
 <style>
- *{box-sizing:border-box} body{margin:0;font-family:system-ui,sans-serif;background:#f4f5f7;color:#111827;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
- .wrap{max-width:420px;margin:0 auto;padding:20px}
- h1{font-size:22px;margin:8px 0 16px} .card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 1px 3px #0001;margin-bottom:14px}
- input{width:100%;padding:14px;font-size:18px;border:1px solid #d1d5db;border-radius:10px;margin:6px 0 12px}
- button{width:100%;padding:16px;font-size:18px;font-weight:600;border:0;border-radius:12px;background:#2563eb;color:#fff}
- button:disabled{opacity:.5} button.big{padding:26px;font-size:22px;border-radius:50px} button.link{background:none;color:#6b7280;font-size:14px;padding:8px;font-weight:400}
- .msg{padding:12px;border-radius:10px;margin:10px 0;font-size:15px} .err{background:#fee2e2;color:#991b1b} .ok{background:#dcfce7;color:#166534} .info{background:#e0e7ff;color:#3730a3}
- video{width:100%;border-radius:12px;background:#000;transform:scaleX(-1)} .hide{display:none}
- ul{list-style:none;padding:0;margin:0} li{padding:8px 0;border-bottom:1px solid #f3f4f6;display:flex;justify-content:space-between}
- .muted{color:#6b7280;font-size:14px}
+ *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Arial,sans-serif;background:#f4f6fb;color:#0f172a;-webkit-font-smoothing:antialiased;min-height:100vh}
+ .wrap{max-width:440px;margin:0 auto;padding:0 16px calc(24px + env(safe-area-inset-bottom))}
+ .hero{background:radial-gradient(500px 260px at 0 0,#818cf8 0,transparent 70%),linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;margin:0 -16px;padding:calc(22px + env(safe-area-inset-top)) 22px 64px;border-radius:0 0 28px 28px}
+ .hero .top{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;opacity:.95}
+ .logo{width:32px;height:32px;border-radius:10px;background:rgba(255,255,255,.18);display:grid;place-items:center}
+ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+ .hero h1{margin:18px 0 2px;font-size:25px;letter-spacing:-.01em}.hero .sub{opacity:.85;font-size:14px}
+ .clock{font-size:40px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin-top:10px}
+ .card{background:#fff;border-radius:18px;padding:18px;box-shadow:0 1px 2px rgba(15,23,42,.04),0 6px 20px rgba(15,23,42,.05);margin-bottom:14px}
+ .lift{margin-top:-46px}
+ .card h3{margin:0 0 12px;font-size:15px;display:flex;align-items:center;gap:8px}.card h3 svg{color:#6366f1}
+ label{display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:6px}
+ input,select{width:100%;height:50px;padding:0 14px;font:inherit;font-size:17px;border:1px solid #d6dbe6;border-radius:12px;margin:0 0 14px;background:#fff;color:inherit;outline:none}
+ input:focus,select:focus{border-color:#4f46e5;box-shadow:0 0 0 4px rgba(79,70,229,.14)}
+ button{width:100%;height:52px;font:inherit;font-size:17px;font-weight:650;border:0;border-radius:14px;background:#4f46e5;color:#fff;cursor:pointer}
+ button:disabled{opacity:.5} button.link{background:none;color:#64748b;font-size:14px;height:auto;padding:10px;font-weight:500;width:auto}
+ .camwrap{position:relative;border-radius:16px;overflow:hidden;background:#0f172a;aspect-ratio:4/3}
+ video{width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)}
+ .camwrap::after{content:"";position:absolute;left:50%;top:50%;width:56%;aspect-ratio:3/4;transform:translate(-50%,-50%);border:2px dashed rgba(255,255,255,.55);border-radius:50%;pointer-events:none}
+ #fileFallback{height:auto;padding:12px;font-size:15px}
+ .punch{display:flex;justify-content:center;margin:18px 0 4px}
+ button.big{width:170px;height:170px;border-radius:50%;font-size:21px;background:radial-gradient(circle at 30% 25%,#818cf8,#4f46e5 60%);box-shadow:0 0 0 10px #eef2ff,0 16px 34px rgba(79,70,229,.35);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;transition:transform .12s}
+ button.big:active{transform:scale(.97)} button.big svg{width:34px;height:34px}
+ button.big.out{background:radial-gradient(circle at 30% 25%,#fb923c,#ea580c 60%);box-shadow:0 0 0 10px #fff1e6,0 16px 34px rgba(234,88,12,.3)}
+ .msg{padding:12px 14px;border-radius:12px;margin:12px 0 0;font-size:14.5px}.err{background:#fef2f2;color:#991b1b}.ok{background:#f0fdf4;color:#166534}.info{background:#eef2ff;color:#3730a3}
+ .hide{display:none!important}
+ ul{list-style:none;padding:0;margin:0} li{padding:11px 0;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center;gap:10px}li:last-child{border-bottom:0}
+ .tag{font-size:12px;font-weight:650;padding:3px 10px;border-radius:20px;background:#f1f5f9;color:#475569}.tag.approved{background:#dcfce7;color:#166534}.tag.pending{background:#fef3c7;color:#92400e}.tag.rejected{background:#fee2e2;color:#991b1b}
+ .tl{display:flex;align-items:center;gap:10px}.tl i{width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px #dcfce7}.tl i.o{background:#f97316;box-shadow:0 0 0 4px #ffedd5}
+ .muted{color:#64748b;font-size:14px}
+ .bal{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}.bal div{background:#f8fafc;border-radius:12px;padding:10px 12px}.bal b{font-size:22px;display:block}.bal span{font-size:12.5px;color:#64748b}
+ .row2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}.row2>div{min-width:0}
+ input{min-width:0;display:block}
+ .login-hero{text-align:center;padding-bottom:80px}.login-hero h1{margin-top:22px}
+ .center{text-align:center}
 </style></head><body><div class="wrap">
 
-<div id="login" class="hide card">
-  <h1>Attendance login</h1>
-  <label>Employee ID</label><input id="eid" autocomplete="username" inputmode="text">
-  <label>PIN</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password">
-  <button id="loginBtn">Log in</button>
-  <div id="loginMsg"></div>
-  <p class="muted">Ask your admin for your PIN.</p>
+<div id="login" class="hide">
+  <div class="hero login-hero"><div class="top" style="justify-content:center"><div class="logo"><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg></div>Attendance</div><h1>Check in from your phone</h1><div class="sub">Sign in with your employee ID and PIN</div></div>
+  <div class="card lift">
+    <label for="eid">Employee ID</label><input id="eid" autocomplete="username" autocapitalize="none" inputmode="text">
+    <label for="pin">PIN</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password">
+    <button id="loginBtn">Sign in</button>
+    <div id="loginMsg"></div>
+    <p class="muted center" style="margin:14px 0 0">Don't have a PIN? Ask HR to set one for you.</p>
+  </div>
 </div>
 
 <div id="home" class="hide">
-  <div class="card"><div class="muted">Hello,</div><h1 id="who" style="margin:0"></h1><div class="muted" id="siteInfo"></div></div>
-  <div class="card" id="camCard">
-    <video id="vid" autoplay playsinline muted></video>
+  <div class="hero"><div class="top"><div class="logo"><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg></div>Attendance</div>
+    <h1 id="greet">Hello</h1><div class="sub"><span id="who"></span> · <span id="dateNow"></span></div><div class="clock" id="clock"></div><div class="sub" id="siteInfo"></div></div>
+  <div class="card lift" id="camCard">
+    <div class="camwrap"><video id="vid" autoplay playsinline muted></video></div>
     <input id="fileFallback" type="file" accept="image/*" capture="user" class="hide">
+    <div class="punch"><button id="punchBtn" class="big" disabled><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg><span id="punchLbl">Check in</span></button></div>
     <div id="status" class="msg info">Getting your location…</div>
-    <button id="punchBtn" class="big" disabled>Check in</button>
   </div>
-  <div class="card"><b>Today</b><ul id="today"></ul></div>
-  <div class="card" id="leaveCard"><b>Leave</b>
-    <div id="lbal" class="muted" style="margin:6px 0"></div>
+  <div class="card"><h3><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Today</h3><ul id="today"></ul></div>
+  <div class="card" id="leaveCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>Leave</h3>
+    <div id="lbal" class="muted" style="margin-bottom:12px"></div>
     <div id="lform" class="hide">
-      <select id="lty" style="width:100%;padding:12px;font-size:16px;border:1px solid #d1d5db;border-radius:10px;margin:4px 0"><option value="Normal">Normal (apply 7+ days ahead)</option><option value="Adhoc">Adhoc (emergency)</option></select>
-      <input id="lfr" type="date"><input id="lto" type="date"><input id="lre" placeholder="Reason (optional)" maxlength="200">
+      <label for="lty">Type</label><select id="lty"><option value="Normal">Normal (apply 7+ days ahead)</option><option value="Adhoc">Adhoc (emergency)</option></select>
+      <div class="row2"><div><label for="lfr">From</label><input id="lfr" type="date"></div><div><label for="lto">To</label><input id="lto" type="date"></div></div>
+      <label for="lre">Reason</label><input id="lre" placeholder="Optional" maxlength="200">
       <button id="lap">Apply for leave</button>
     </div>
-    <div id="lmsg"></div><ul id="llist"></ul></div>
-  <div class="card hide" id="slipCard"><b>My payslips</b><ul id="slips"></ul></div>
-  <button class="link" id="logout">Log out</button>
+    <div id="lmsg"></div><ul id="llist" style="margin-top:8px"></ul></div>
+  <div class="card hide" id="slipCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18"/><path d="M6 6V5a2 2 0 0 1 2-2h9"/></svg>My payslips</h3><ul id="slips"></ul></div>
+  <div class="center"><button class="link" id="logout">Sign out</button></div>
 </div>
 <canvas id="cv" class="hide"></canvas>
 </div>
@@ -71,18 +101,19 @@ $('#logout').onclick=logout;
 function stopCam(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
 async function start(){
   try{me=await api('/me')}catch(e){return show('login')}
-  show('home'); $('#who').textContent=me.name;
+  show('home'); $('#who').textContent='ID '+me.employee_id; const h=new Date().getHours(); $('#greet').textContent=(h<12?'Good morning':h<17?'Good afternoon':'Good evening')+', '+me.name.split(' ')[0];
   $('#siteInfo').textContent=me.sites.length?'Allowed at: '+me.sites.map(s=>s.name).join(', '):'';
-  $('#today').innerHTML=me.today.length?me.today.map(p=>`<li><span>${p.status?'Check out':'Check in'}${p.flag=='outside_geofence'?' ⚠':''}</span><span>${p.ts.slice(11,16)}</span></li>`).join(''):'<li class="muted">No punches yet</li>';
-  $('#punchBtn').textContent=me.today.length%2?'Check out':'Check in';
+  $('#today').innerHTML=me.today.length?me.today.map(p=>`<li><span class="tl"><i class="${p.status?'o':''}"></i>${p.status?'Check out':'Check in'}${p.flag=='outside_geofence'?' <span class="tag pending">outside area</span>':''}</span><b>${p.ts.slice(11,16)}</b></li>`).join(''):'<li class="muted">No punches yet today</li>';
+  const out=me.today.length%2==1; $('#punchLbl').textContent=out?'Check out':'Check in'; $('#punchBtn').classList.toggle('out',out);
   loadSlips(); loadLeave(); await Promise.all([startCam(),locate()]); ready();
 }
 const fmtD=d=>new Date(d+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'});
 async function loadLeave(){
   try{const [b,l]=await Promise.all([api('/leave-balance'),api('/leaves')]);
-   $('#lbal').textContent=!b.eligible?`Leave starts on ${fmtD(b.eligible_from)} (3 months after joining).`:`Normal this month: ${b.normal.left} of ${b.normal.quota} left · Adhoc this period: ${b.adhoc.left} of ${b.adhoc.quota} left`;
+   if(!b.eligible)$('#lbal').textContent=`Leave starts on ${fmtD(b.eligible_from)} (3 months after joining).`;
+   else $('#lbal').innerHTML=`<div class="bal"><div><b>${b.normal.left}<small style="font-size:14px;color:#94a3b8"> / ${b.normal.quota}</small></b><span>Normal this month</span></div><div><b>${b.adhoc.left}<small style="font-size:14px;color:#94a3b8"> / ${b.adhoc.quota}</small></b><span>Adhoc this period</span></div></div>`;
    $('#lform').classList.toggle('hide',!b.eligible);
-   $('#llist').innerHTML=l.slice(0,8).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''} · ${x.type}</span><span>${x.status}${x.status=='pending'?` <button class="link" data-c="${x.id}" style="width:auto;padding:0 6px">cancel</button>`:''}</span></li>`).join('')||'<li class="muted">No leave yet</li>';
+   $('#llist').innerHTML=l.slice(0,8).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''} · ${x.type}</span><span><span class="tag ${x.status}">${x.status}</span>${x.status=='pending'?` <button class="link" data-c="${x.id}" style="padding:0 0 0 6px">cancel</button>`:''}</span></li>`).join('')||'<li class="muted">No leave yet</li>';
    document.querySelectorAll('#llist button').forEach(bt=>bt.onclick=async()=>{if(!confirm('Cancel this application?'))return;try{await api('/leave/'+bt.dataset.c,{method:'DELETE'});loadLeave()}catch(e){msg($('#lmsg'),e.message,'err')}});
   }catch(e){}
 }
@@ -92,14 +123,14 @@ $('#lap').onclick=async()=>{const m=$('#lmsg'); try{
  }catch(e){msg(m,e.message,'err')}};
 async function loadSlips(){
   try{const l=await api('/payslips'); $('#slipCard').classList.toggle('hide',!l.length);
-   $('#slips').innerHTML=l.map(x=>`<li><span>${x.month}</span><span><button class="link" data-m="${x.month}" style="width:auto">Download PDF</button></span></li>`).join('');
+   $('#slips').innerHTML=l.map(x=>`<li><span>${x.month}</span><span><button class="link" data-m="${x.month}" style="color:#4f46e5;font-weight:600">Download PDF</button></span></li>`).join('');
    document.querySelectorAll('#slips button').forEach(b=>b.onclick=async()=>{b.textContent='Opening…';
     try{const r=await fetch('/api/app/payslip/'+b.dataset.m+'.pdf',{headers:{Authorization:'Bearer '+token}}); if(!r.ok)throw new Error('Not available');
      const url=URL.createObjectURL(await r.blob()); window.open(url,'_blank')||(location.href=url)}catch(e){alert(e.message)} b.textContent='Download PDF'})}catch(e){}
 }
 async function startCam(){
   try{stopCam(); stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640}},audio:false}); $('#vid').srcObject=stream}
-  catch(e){$('#vid').classList.add('hide'); $('#fileFallback').classList.remove('hide')}
+  catch(e){$('#vid').closest('.camwrap').classList.add('hide'); $('#fileFallback').classList.remove('hide')}
 }
 function locate(){return new Promise(res=>{
   if(!navigator.geolocation){msg($('#status'),'This device has no location support.','err');return res()}
@@ -124,5 +155,7 @@ $('#punchBtn').onclick=async()=>{
 };
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopCam(); else if(token&&!$('#home').classList.contains('hide'))startCam()});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/m/sw.js').catch(()=>{});
+function tick(){const d=new Date();$('#clock').textContent=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});$('#dateNow').textContent=d.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'short'})}
+tick(); setInterval(tick,10000);
 if(token) start(); else show('login');
 </script></body></html>

@@ -152,7 +152,7 @@ class UserIn(BaseModel):
 def _me(u: dict) -> dict:
     return {"username": u["username"], "role": u["role"], "department": u["department"],
             "display_name": u["display_name"], "open_mode": u["username"] == "(open)",
-            "permissions": u.get("permissions", "*")}
+            "permissions": u.get("permissions", "*"), "company": config.COMPANY_NAME}
 
 
 @app.post("/api/auth/login")
@@ -406,7 +406,16 @@ def dashboard(day: str | None = None):
         "FROM punches p LEFT JOIN employees e ON e.device_user_id=p.device_user_id LEFT JOIN sites s ON s.id=p.site_id "
         "WHERE p.method='app' AND date(p.ts)=? AND COALESCE(p.flag,'')!='rejected'" + access.scope_sql("e.department")[0] +
         " ORDER BY p.ts DESC LIMIT 10", (day, *access.scope_sql("e.department")[1]))]
+    recent = [dict(r) for r in c.execute(
+        "SELECT p.ts, p.device_user_id, COALESCE(e.name,p.device_user_id) name, p.method, p.source, p.flag "
+        "FROM punches p LEFT JOIN employees e ON e.device_user_id=p.device_user_id "
+        "WHERE date(p.ts)=? AND COALESCE(p.flag,'')!='rejected'" + access.scope_sql("e.department")[0] +
+        " ORDER BY p.ts DESC LIMIT 8", (day, *access.scope_sql("e.department")[1]))]
+    pending = c.execute(
+        "SELECT COUNT(*) FROM leaves l LEFT JOIN employees e ON e.device_user_id=l.device_user_id WHERE l.status='pending'"
+        + access.scope_sql("e.department")[0], access.scope_sql("e.department")[1]).fetchone()[0]
     return {"day": day, "total": len(rows),
+            "on_leave": sum(r["status"] == "Leave" for r in rows), "recent": recent, "pending_leaves": pending,
             "present": sum(r["status"] in reports.WORKED for r in rows),
             "absent": sum(r["status"] == "Absent" for r in rows),
             "late": sum(r["status"] == "Late" for r in rows),

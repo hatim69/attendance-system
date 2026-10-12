@@ -60,15 +60,6 @@ def shift_on(e: dict, d: str, shifts: dict, changes: dict) -> dict | None:
     return shifts.get(e["shift_id"])
 
 
-def break_minutes(shift: dict | None, first: datetime, last: datetime) -> int:
-    """Unpaid break: the part of the shift's break window that falls inside the worked span."""
-    if not shift or not shift.get("break_start") or not shift.get("break_end"):
-        return 0
-    b1, b2 = _hm(shift["break_start"]), _hm(shift["break_end"])
-    a, b = first.hour * 60 + first.minute, last.hour * 60 + last.minute
-    return max(0, min(b, b2) - max(a, b1))
-
-
 def _punch_map(d1: str, d2: str, device: str | None) -> dict:
     rows = db.conn().execute(
         "SELECT device_user_id u, date(ts) d, MIN(ts) a, MAX(ts) b, COUNT(*) n, SUM(COALESCE(note,'')='WFH') w FROM punches "
@@ -92,7 +83,7 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
         single_out = n == 1 and working and fm >= (_hm(shift["start"]) + _hm(shift["end"])) / 2
         if n > 1:
             out.update(first_in=p["a"][11:19], last_out=p["b"][11:19], punches=n)
-            out["hours"] = round(((last - first).total_seconds() / 60 - break_minutes(shift, first, last)) / 60, 2)
+            out["hours"] = round((last - first).total_seconds() / 3600, 2)   # breaks are paid, so not taken off
         elif single_out:
             out.update(last_out=p["b"][11:19], punches=n, note="missing in punch")
         else:
@@ -117,8 +108,14 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
             out["note"] = "WFH" + ("; " + out["note"] if out["note"] else "")
         out["status"] = status
         return out
-    if d > today or d < (emp.get("count_from") or emp.get("joined") or "") or (emp.get("left_on") and d > emp["left_on"]):
-        return out  # in the future, before joining / before the system started, or after leaving: not counted
+    if d > today or d < (emp.get("joined") or "") or (emp.get("left_on") and d > emp["left_on"]):
+        return out  # in the future, before joining, or after leaving: not counted
+    if d < (emp.get("count_from") or ""):   # before the system has any attendance: weekly offs and holidays are still
+        if d in holidays:                   # paid, but working days are not marked absent
+            out["status"], out["note"] = "Holiday", holidays[d]
+        elif off:
+            out["status"] = "Weekly Off"
+        return out
     leave = next((l for l in leaves if l["device_user_id"] == emp["device_user_id"] and l["start_date"] <= d <= l["end_date"]), None)
     if d in holidays:     # holidays and weekly offs inside a leave stay holidays / weekly offs (only working days are leave)
         out["status"], out["note"] = "Holiday", holidays[d]

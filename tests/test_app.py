@@ -546,8 +546,7 @@ def test_payslips_publish_adjustments_and_self_service(tmp_path, monkeypatch):
         for uid in ("P1", "P2"):
             c.post(f"/api/employees/{uid}/pin", json={"pin": "1234"})
         # June 2025 (30 days, 5 Sundays): present Mon 2 Jun only, rest absent -> paid = 1 + 5 Sundays = 6 days
-        # (P2's punch on Sun 1 Jun makes that the system's first day; days before the first punch are never counted)
-        c.post("/api/punches", json={"device_user_id": "P2", "ts": "2025-06-01 10:00:00"})
+        # (Sun 1 Jun is before the first punch in the system, but a weekly off is still paid)
         c.post("/api/punches", json={"device_user_id": "P1", "ts": "2025-06-02 09:00:00"})
         c.post("/api/punches", json={"device_user_id": "P1", "ts": "2025-06-02 18:00:00"})
         row = [r for r in c.get("/api/reports/payroll?month=2025-06").json() if r["device_user_id"] == "P1"][0]
@@ -849,7 +848,7 @@ def test_documents_lists_loans_roster_breaks_wfh_and_payslip_rules(tmp_path, mon
     monkeypatch.setattr(config, "SELFIE_DIR", str(tmp_path / "selfies"))
     _freeze_today(monkeypatch)                                   # Saturday 10 Oct 2026
     with TestClient(app) as c:
-        # shift with an unpaid lunch break 13:00-14:00
+        # shift with a (paid) lunch break 13:00-14:00
         assert c.post("/api/shifts", json={"name": "B 9-6", "start": "09:00", "end": "18:00", "break_start": "13:00", "break_end": "14:00"}).status_code == 200
         assert c.post("/api/shifts", json={"name": "Bad", "start": "09:00", "end": "18:00", "break_start": "19:00", "break_end": "20:00"}).status_code == 400
         c.post("/api/shifts", json={"name": "Eve 14-22", "start": "14:00", "end": "22:00"})
@@ -877,14 +876,15 @@ def test_documents_lists_loans_roster_breaks_wfh_and_payslip_rules(tmp_path, mon
         assert [e for e in c.get("/api/employees").json() if e["device_user_id"] == "H1"][0]["documents"] == 1
         assert c.delete(f"/api/documents/{docs[0]['id']}").status_code == 200 and c.get("/api/employees/H1/documents").json() == []
 
-        # attendance: break deducted; a single punch counts as present (late in the morning, not late when it is the out punch)
+        # attendance: the paid break is not deducted; a single punch counts as present (late in the morning, not late when it is the out punch)
         for ts in ("2026-10-05 09:00:00", "2026-10-05 18:00:00", "2026-10-06 09:30:00", "2026-10-07 17:55:00"):
             c.post("/api/punches", json={"device_user_id": "H1", "ts": ts})
         d = lambda day: {r["device_user_id"]: r for r in c.get(f"/api/reports/daily?day={day}").json()}["H1"]
-        assert (d("2026-10-05")["hours"], d("2026-10-05")["status"]) == (8.0, "Present")
+        assert (d("2026-10-05")["hours"], d("2026-10-05")["status"]) == (9.0, "Present")
         assert (d("2026-10-06")["status"], d("2026-10-06")["note"]) == ("Late", "missing out punch")
         assert (d("2026-10-07")["status"], d("2026-10-07")["late_min"], d("2026-10-07")["note"]) == ("Present", 0, "missing in punch")
-        assert d("2026-10-04")["status"] == ""                     # before the first punch in the system: not counted
+        assert d("2026-10-02")["status"] == ""                     # before the first punch: working days are not marked absent ...
+        assert d("2026-10-04")["status"] == "Weekly Off"           # ... but Sundays are still paid
 
         # roster: Thu 8 Oct on the evening shift, Fri 9 Oct off, Sun 11 Oct (normally off) a working day
         for day, v in (("2026-10-08", str(sh["Eve 14-22"])), ("2026-10-09", "off"), ("2026-10-11", str(sh["B 9-6"]))):

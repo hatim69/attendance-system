@@ -76,6 +76,7 @@ class ShiftIn(BaseModel):
 class HolidayIn(BaseModel):
     date: str
     name: str
+    optional: bool = False   # festival list: a working day unless the person takes Festive leave
 
 
 class LeaveIn(BaseModel):
@@ -547,7 +548,8 @@ def list_holidays(year: str | None = None):
 def save_holiday(h: HolidayIn):
     _valid_date(h.date)
     c = db.conn()
-    c.execute("INSERT INTO holidays(date,name) VALUES (?,?) ON CONFLICT(date) DO UPDATE SET name=excluded.name", (h.date, h.name))
+    c.execute("INSERT INTO holidays(date,name,optional) VALUES (?,?,?) ON CONFLICT(date) DO UPDATE SET name=excluded.name, "
+              "optional=excluded.optional", (h.date, h.name, int(h.optional)))
     c.commit()
     return {"ok": True}
 
@@ -565,7 +567,7 @@ def list_leaves(month: str | None = None):
     month = month or now_local().strftime("%Y-%m")
     frag, args = access.scope_sql("e.department")
     return [dict(r) for r in db.conn().execute(
-        "SELECT l.*, COALESCE(e.name, l.device_user_id) name, "
+        "SELECT l.*, COALESCE(e.name, l.device_user_id) name, COALESCE(e.department,'') department, "
         "(SELECT id FROM leave_consents k WHERE k.group_id=l.group_id) consent_id FROM leaves l LEFT JOIN employees e ON e.device_user_id=l.device_user_id "
         "WHERE substr(l.start_date,1,7)<=? AND substr(l.end_date,1,7)>=?" + frag + " ORDER BY l.start_date DESC", (month, month, *args))]
 
@@ -578,6 +580,7 @@ def add_leave(l: LeaveIn):
     _valid_date(l.end_date)
     if l.end_date < l.start_date:
         raise HTTPException(400, "End date is before start date")
+    l.type = leavepolicy.ALIASES.get(l.type, l.type) if l.type == "Normal" else l.type
     if l.type not in reports.LEAVE_TYPES:
         raise HTTPException(400, "Leave type must be one of " + ", ".join(reports.LEAVE_TYPES))
     c = db.conn()
@@ -587,17 +590,17 @@ def add_leave(l: LeaveIn):
     if l.applied_on:
         _valid_date(l.applied_on)
     applied = date.fromisoformat(l.applied_on) if l.applied_on else today
-    parts = [{"type": l.type, "start_date": l.start_date, "end_date": l.end_date}]
-    if l.type in leavepolicy.POLICY_TYPES and not l.override:   # split into Normal / Adhoc / Unpaid like the phone app
+    parts = [{"type": l.type, "lop": 0, "start_date": l.start_date, "end_date": l.end_date}]
+    if l.type in leavepolicy.POLICY_TYPES and not l.override:   # split by the leave policy, like the phone app
         p = leavepolicy.plan(l.device_user_id, l.type, l.start_date, l.end_date, applied, strict=False)
         if "error" in p:
             raise HTTPException(400, p["error"] + " (tick 'override' to record it anyway)")
         parts = p["parts"]
     group = secrets.token_hex(6)
     for part in parts:
-        c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by,group_id) "
-                  "VALUES (?,?,?,?,?,?,?,?,?)", (l.device_user_id, part["start_date"], part["end_date"], part["type"], l.note,
-                                                "approved", applied.isoformat(), "", group))
+        c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by,group_id,lop) "
+                  "VALUES (?,?,?,?,?,?,?,?,?,?)", (l.device_user_id, part["start_date"], part["end_date"], part["type"], l.note,
+                                                  "approved", applied.isoformat(), "", group, part["lop"]))
     c.commit()
     return {"ok": True, "parts": parts}
 
@@ -611,6 +614,12 @@ def leave_preview(employee: str, type: str, start_date: str, end_date: str, appl
     if "error" in p:
         raise HTTPException(400, p["error"])
     return p
+
+
+@app.get("/api/leave-summary", dependencies=[Depends(access.need("hr", "leave"))])
+def leave_summary(fy: int | None = None):
+    """Leave used this financial year and the balance to encash on 31 March."""
+    return leavepolicy.year_summary(fy if fy else leavepolicy.fy(now_local().date()))
 
 
 @app.get("/api/leave-consents/{consent_id}", dependencies=[Depends(access.need("hr", "leave"))])

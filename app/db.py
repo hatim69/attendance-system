@@ -214,18 +214,21 @@ def init():
     for col, decl in {"pin_hash": "TEXT", "shift_id": "INTEGER", "salary": "REAL NOT NULL DEFAULT 0", "joined": "TEXT",
                        "designation": "TEXT NOT NULL DEFAULT ''", "branch": "TEXT NOT NULL DEFAULT ''",
                        "mobile": "TEXT NOT NULL DEFAULT ''", "father_name": "TEXT NOT NULL DEFAULT ''",
-                       "remote_ok": "INTEGER NOT NULL DEFAULT 0",
-                       "left_on": "TEXT"}.items():   # last working day of someone who resigned   # may check in from anywhere (remote / field work)
+                       "remote_ok": "INTEGER NOT NULL DEFAULT 0",   # may check in from anywhere (remote / field work)
+                       "left_on": "TEXT"}.items():   # last working day of someone who resigned
         if col not in emp_cols:
             c.execute(f"ALTER TABLE employees ADD COLUMN {col} {decl}")
     leave_cols = {r["name"] for r in c.execute("PRAGMA table_info(leaves)")}
     for col, decl in {"status": "TEXT NOT NULL DEFAULT 'approved'",   # approved | pending | rejected
                       "applied_on": "TEXT", "requested_by": "TEXT NOT NULL DEFAULT ''",
                       "decided_by": "TEXT NOT NULL DEFAULT ''", "decided_at": "TEXT",
-                      "group_id": "TEXT"}.items():   # one application split into Normal / Adhoc / Unpaid parts shares a group
+                      "group_id": "TEXT",   # one application split into several parts (Casual / Adhoc / ...) shares a group
+                      "lop": "REAL NOT NULL DEFAULT 0"}.items():   # pay cut in days' salary per leave day (1.5 / 2 beyond balance)
         if col not in leave_cols:
             c.execute(f"ALTER TABLE leaves ADD COLUMN {col} {decl}")
-    for table, cols in {"payroll_adjustments": {"date": "TEXT"},   # when the bonus / fine / ... was given
+    c.execute("UPDATE leaves SET type='Casual' WHERE type='Normal'")   # the policy calls it Casual
+    for table, cols in {"payroll_adjustments": {"date": "TEXT"},                   # when the bonus / fine / ... was given
+                        "holidays": {"optional": "INTEGER NOT NULL DEFAULT 0"},   # festival list: taken as Festive leave
                         "shifts": {"break_start": "TEXT NOT NULL DEFAULT ''", "break_end": "TEXT NOT NULL DEFAULT ''"},
                         "sites": {"kind": "TEXT NOT NULL DEFAULT 'office'",      # office | home
                                   "device_user_id": "TEXT"}}.items():           # home sites belong to one employee

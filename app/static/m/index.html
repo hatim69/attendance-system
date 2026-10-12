@@ -72,7 +72,8 @@
   <div class="card" id="leaveCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>Leave</h3>
     <div id="lbal" class="muted" style="margin-bottom:12px"></div>
     <div id="lform" class="hide">
-      <label for="lty">Type</label><select id="lty"><option value="Normal">Normal (apply 7+ days ahead)</option><option value="Adhoc">Adhoc (emergency)</option></select>
+      <label for="lty">Type</label><select id="lty"><option value="Casual">Casual (apply 7+ days ahead)</option><option value="Adhoc">Adhoc / Sick (emergency)</option><option value="Festive">Festive (festival list only)</option></select>
+      <div id="lfest" class="muted hide" style="margin:-6px 0 12px;font-size:13.5px"></div>
       <div class="row2"><div><label for="lfr">From</label><input id="lfr" type="date"></div><div><label for="lto">To</label><input id="lto" type="date"></div></div>
       <label for="lre">Reason</label><input id="lre" placeholder="Optional" maxlength="200">
       <div id="lprev"></div>
@@ -117,10 +118,12 @@ async function start(){
 const fmtD=d=>new Date(d+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'});
 async function loadLeave(){
   try{const [b,l]=await Promise.all([api('/leave-balance'),api('/leaves')]);
+   const tile=(n,q,l)=>`<div><b>${n}<small style="font-size:14px;color:#94a3b8"> / ${q}</small></b><span>${l}</span></div>`;
    if(!b.eligible)$('#lbal').textContent=`Paid leave starts on ${fmtD(b.eligible_from)} (3 months after joining). Leave before that is unpaid.`;
-   else $('#lbal').innerHTML=`<div class="bal"><div><b>${b.normal.left}<small style="font-size:14px;color:#94a3b8"> / ${b.normal.quota}</small></b><span>Normal this month</span></div><div><b>${b.adhoc.left}<small style="font-size:14px;color:#94a3b8"> / ${b.adhoc.quota}</small></b><span>Adhoc this period</span></div></div>`;
+   else $('#lbal').innerHTML=`<div class="bal">${tile(b.casual.month_left,b.casual.month_quota,'Casual this month')}${tile(b.adhoc.left,b.adhoc.quota,'Adhoc / Sick this quarter')}${tile(b.festive.left,b.festive.quota,'Festive this year')}${tile(b.year.left,b.year.entitlement,'All leave left this year')}</div>`;
+   FEST=b.festive.dates||[];
    $('#lform').classList.remove('hide');   // before eligibility the days are unpaid; the preview explains it
-   $('#llist').innerHTML=l.slice(0,8).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''} · ${x.type}</span><span><span class="tag ${x.status}">${x.status}</span>${x.status=='pending'?` <button class="link" data-c="${x.id}" style="padding:0 0 0 6px">cancel</button>`:''}</span></li>`).join('')||'<li class="muted">No leave yet</li>';
+   $('#llist').innerHTML=l.slice(0,8).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''} · ${x.type=='Adhoc'?'Adhoc / Sick':x.type}${x.lop?` <span class="tag rejected">${x.lop}× cut</span>`:''}</span><span><span class="tag ${x.status}">${x.status}</span>${x.status=='pending'?` <button class="link" data-c="${x.id}" style="padding:0 0 0 6px">cancel</button>`:''}</span></li>`).join('')||'<li class="muted">No leave yet</li>';
    document.querySelectorAll('#llist button').forEach(bt=>bt.onclick=async()=>{if(!confirm('Cancel this application?'))return;try{await api('/leave/'+bt.dataset.c,{method:'DELETE'});loadLeave()}catch(e){msg($('#lmsg'),e.message,'err')}});
   }catch(e){}
 }
@@ -130,18 +133,23 @@ async function previewLeave(){const box=$('#lprev'); PLAN=null; $('#lcons').clas
   if(!$('#lfr').value){box.innerHTML='';return}
   try{const q=new URLSearchParams({type:$('#lty').value,start_date:$('#lfr').value,end_date:$('#lto').value||$('#lfr').value});
    const p=PLAN=await api('/leave/preview?'+q);
-   box.innerHTML=`<div class="split">${p.normal_days?`<span>${p.normal_days} Normal</span>`:''}${p.adhoc_days?`<span class="a">${p.adhoc_days} Adhoc</span>`:''}${p.unpaid_days?`<span class="u">${p.unpaid_days} unpaid</span>`:''}</div>`+
-    p.warnings.filter(w=>!(p.salary_known&&/will be deducted/.test(w))).map(w=>`<div class="warn ${/unpaid|deducted/.test(w)?'bad':''}">${esc(w)}</div>`).join('')+
-    (p.unpaid_days&&p.salary_known?`<div class="warn bad"><b>Not enough leave balance: ₹ ${p.deduction.toLocaleString('en-IN',{minimumFractionDigits:2})} will be deducted</b>${p.unpaid_days} extra day(s) unpaid × ₹ ${p.per_day.toLocaleString('en-IN',{minimumFractionDigits:2})} per day, as per the leave policy.</div>`:'');
+   const rs=v=>'₹ '+v.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+   box.innerHTML=`<div class="split">${p.casual_days?`<span>${p.casual_days} Casual</span>`:''}${p.adhoc_days?`<span class="a">${p.adhoc_days} Adhoc / Sick</span>`:''}${p.festive_days?`<span>${p.festive_days} Festive</span>`:''}${p.excess_days?`<span class="u">${p.excess_days} beyond balance</span>`:''}${p.unpaid_days?`<span class="u">${p.unpaid_days} unpaid</span>`:''}</div>`+
+    p.warnings.map(w=>`<div class="warn ${/unpaid|cut/.test(w)?'bad':''}">${esc(w)}</div>`).join('')+
+    (p.deduction&&p.salary_known?`<div class="warn bad"><b>Total salary cut: ${rs(p.deduction)}</b>A day's salary is about ${rs(p.per_day)}.</div>`:'');
    if(p.needs_consent){$('#lctext').textContent=p.consent_text;$('#lcons').classList.remove('hide');$('#lap').textContent='I agree, apply for leave'}
-   else if(p.adhoc_days&&$('#lty').value=='Normal')$('#lap').textContent='Apply (uses Adhoc)';
+   else if(p.adhoc_days&&$('#lty').value=='Casual')$('#lap').textContent='Apply (uses Adhoc / Sick)';
   }catch(e){box.innerHTML=`<div class="warn bad">${esc(e.message)}</div>`}}
+let FEST=[];
+$('#lty').addEventListener('change',()=>{const f=$('#lty').value=='Festive';$('#lfest').classList.toggle('hide',!f);
+  $('#lfest').innerHTML=f?(FEST.length?'Festival dates: '+FEST.map(x=>`<a href="#" data-d="${esc(x.date)}">${esc(fmtD(x.date))} ${esc(x.name)}</a>`).join(', '):'No upcoming festival dates have been set by the office.'):'';
+  document.querySelectorAll('#lfest a').forEach(a=>a.onclick=e=>{e.preventDefault();$('#lfr').value=$('#lto').value=a.dataset.d;previewLeave()})});
 ['#lty','#lfr','#lto'].forEach(k=>$(k).addEventListener('change',previewLeave));
 $('#lap').onclick=async()=>{const m=$('#lmsg'); try{
   if(!PLAN)await previewLeave(); if(!PLAN)throw new Error('Check the dates first');
   if(PLAN.needs_consent&&!$('#lcname').value.trim())throw new Error('Part of this leave is unpaid. Type your full name to agree before applying.');
   const r=await api('/leave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:$('#lty').value,start_date:$('#lfr').value,end_date:$('#lto').value||$('#lfr').value,reason:$('#lre').value,consent_name:$('#lcname').value})});
-  msg(m,`Applied for ${r.days} working day(s)${r.unpaid_days?`, ${r.unpaid_days} unpaid`:''}. HR will approve it.`,'ok'); $('#lre').value=''; $('#lcname').value=''; $('#lprev').innerHTML=''; $('#lcons').classList.add('hide'); PLAN=null; loadLeave();
+  msg(m,`Applied for ${r.days} day(s)${r.excess_days?`, ${r.excess_days} beyond balance`:''}${r.unpaid_days?`, ${r.unpaid_days} unpaid`:''}. HR will approve it.`,'ok'); $('#lre').value=''; $('#lcname').value=''; $('#lprev').innerHTML=''; $('#lcons').classList.add('hide'); PLAN=null; loadLeave();
  }catch(e){msg(m,e.message,'err')}};
 async function loadSlips(){
   try{const l=await api('/payslips'); $('#slipCard').classList.toggle('hide',!l.length);

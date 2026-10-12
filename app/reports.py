@@ -9,7 +9,8 @@ from .timeutil import now_local
 WEEKDAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 WORKED = {"Present", "Late", "Half Day"}
 CODES = {"Present": "P", "Late": "L", "Half Day": "HD", "Absent": "A", "Leave": "LV", "Holiday": "H", "Weekly Off": "WO", "": ""}
-LEAVE_TYPES = ["Normal", "Adhoc", "Casual", "Sick", "Paid", "Unpaid", "Other"]   # Normal/Adhoc follow the leave policy
+LEAVE_TYPES = ["Casual", "Adhoc", "Festive", "Sick", "Paid", "Unpaid", "Other"]   # Casual/Adhoc/Festive follow the leave policy
+WFH_PAY = 0.8   # a work-from-home day is paid at 0.8 of a day (leave policy)
 
 
 def _hm(s: str) -> int:
@@ -27,7 +28,8 @@ def _load(scoped: bool = True):
                         "SELECT MIN(start_date) FROM leaves WHERE status='approved')").fetchone()[0] or ""
     for e in emps:   # nothing is counted before the first day this system has any attendance for
         e["count_from"] = max(e.get("joined") or "", started)
-    holidays = {r["date"]: r["name"] for r in c.execute("SELECT * FROM holidays")}
+    # festival (optional) holidays are working days unless the person takes Festive leave on them
+    holidays = {r["date"]: r["name"] for r in c.execute("SELECT * FROM holidays WHERE optional=0")}
     leaves = [dict(r) for r in c.execute("SELECT * FROM leaves WHERE status='approved'")]
     changes: dict = {}
     for r in c.execute("SELECT * FROM shift_changes ORDER BY id"):
@@ -105,6 +107,7 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
             kind = "holiday" if d in holidays else "weekly off"
             out["note"] = (out["note"] + "; " if out["note"] else "") + f"worked on {kind}"
         if dict(p).get("w"):
+            out["wfh"] = True
             out["note"] = "WFH" + ("; " + out["note"] if out["note"] else "")
         out["status"] = status
         return out
@@ -123,6 +126,8 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
         out["status"] = "Weekly Off"
     elif leave:
         out["status"], out["note"] = "Leave", leave["type"]
+        if leave.get("lop"):     # beyond the balance: still a leave day, but salary is cut lop x a day
+            out["lop"], out["note"] = leave["lop"], f"{leave['type']} beyond balance ({leave['lop']:g}x pay cut)"
     else:
         out["status"] = "Absent"
     return out
@@ -171,6 +176,7 @@ def _summary(e: dict, sh: dict | None, res: list[dict]) -> dict:
     cnt = lambda st: sum(r["status"] == st for r in res)
     paid_leave = sum(r["status"] == "Leave" and r["note"] != "Unpaid" for r in res)
     full = cnt("Present") + cnt("Late")
+    wfh_cut = sum((1 if r["status"] != "Half Day" else 0.5) * (1 - WFH_PAY) for r in res if r.get("wfh"))
     return {
         "device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
         "designation": e["designation"], "branch": e["branch"], "shift": sh["name"] if sh else "",
@@ -179,7 +185,9 @@ def _summary(e: dict, sh: dict | None, res: list[dict]) -> dict:
         "total_hours": round(sum(r["hours"] for r in res), 2),
         "late_minutes": sum(r["late_min"] for r in res), "early_minutes": sum(r["early_min"] for r in res),
         "overtime_hours": round(sum(r["ot_min"] for r in res) / 60, 2),
-        "paid_days": full + 0.5 * cnt("Half Day") + paid_leave + cnt("Holiday") + cnt("Weekly Off"),
+        "wfh_days": sum(1 for r in res if r.get("wfh")),
+        "leave_cut_days": sum(r.get("lop", 0) for r in res),   # days' salary cut for leave beyond the balance
+        "paid_days": round(full + 0.5 * cnt("Half Day") + paid_leave + cnt("Holiday") + cnt("Weekly Off") - wfh_cut, 2),
     }
 
 
@@ -258,11 +266,12 @@ def payroll(month: str, device: str | None = None) -> list[dict]:
         base = sal.get(r["device_user_id"], 0) or 0
         extra = round(sum(a["amount"] for a in adj.get(r["device_user_id"], [])), 2)
         loan_cut = round(sum(x["amount"] for x in emi.get(r["device_user_id"], [])), 2)
+        leave_cut = round(base / len(days) * r["leave_cut_days"], 2)
         out.append({"device_user_id": r["device_user_id"], "name": r["name"], "department": r["department"],
                     "monthly_salary": base, "days_in_month": len(days), "paid_days": r["paid_days"],
                     "unpaid_days": round(len(days) - r["paid_days"], 2) if complete else "",
-                    "adjustments": extra, "loan_deduction": loan_cut,
-                    "net_pay": round(base / len(days) * r["paid_days"] + extra - loan_cut, 2),
+                    "adjustments": extra, "loan_deduction": loan_cut, "leave_cut": leave_cut,
+                    "net_pay": round(base / len(days) * r["paid_days"] + extra - loan_cut - leave_cut, 2),
                     "month_complete": complete, "payslip_ready": payslip_ready(month, r["device_user_id"])})
     return out
 
@@ -288,6 +297,7 @@ def payslip(month: str, uid: str) -> dict | None:
     earnings = [("Salary for the month", round(base, 2))] + [(a["label"], round(a["amount"], 2)) for a in adjs if a["amount"] > 0]
     lop = round(base - base / n * row["paid_days"], 2)
     deductions = ([(f"Loss of pay ({round(n - row['paid_days'], 2):g} unpaid days)", lop)] if lop > 0 else []) + \
+                 ([(f"Leave beyond balance ({summ['leave_cut_days']:g} days' salary)", row["leave_cut"])] if row["leave_cut"] else []) + \
                  [(a["label"], round(-a["amount"], 2)) for a in adjs if a["amount"] < 0] + \
                  [(x["label"], x["amount"]) for x in loans.deductions(month).get(uid, [])]
     return {

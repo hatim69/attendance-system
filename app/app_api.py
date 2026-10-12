@@ -136,7 +136,7 @@ def my_payslip_pdf(month: str, emp: dict = Depends(current_employee)):
 class LeaveRequest(BaseModel):
     start_date: str
     end_date: str
-    type: str          # Normal | Adhoc
+    type: str          # Casual | Adhoc | Festive
     reason: str = ""
     consent_name: str = ""     # typed full name = signature, required when part of the leave is unpaid
 
@@ -149,7 +149,7 @@ def my_leave_balance(emp: dict = Depends(current_employee)):
 @router.get("/leaves")
 def my_leaves(emp: dict = Depends(current_employee)):
     rows = db.conn().execute(
-        "SELECT id, start_date, end_date, type, note, status, applied_on FROM leaves WHERE device_user_id=? "
+        "SELECT id, start_date, end_date, type, lop, note, status, applied_on FROM leaves WHERE device_user_id=? "
         "AND end_date >= date('now','-400 day') ORDER BY start_date DESC LIMIT 50", (emp["device_user_id"],))
     return [dict(r) for r in rows]
 
@@ -180,10 +180,10 @@ def apply_leave(body: LeaveRequest, request: Request, emp: dict = Depends(curren
     group, now = uuid.uuid4().hex[:12], now_local().strftime("%Y-%m-%d %H:%M:%S")
     c = db.conn()
     for part in p["parts"]:
-        c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by,group_id) "
-                  "VALUES (?,?,?,?,?, 'pending', ?, ?, ?)",
+        c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by,group_id,lop) "
+                  "VALUES (?,?,?,?,?, 'pending', ?, ?, ?, ?)",
                   (emp["device_user_id"], part["start_date"], part["end_date"], part["type"], body.reason[:200],
-                   today.isoformat(), emp["device_user_id"], group))
+                   today.isoformat(), emp["device_user_id"], group, part["lop"]))
     if p["needs_consent"]:
         c.execute("INSERT INTO leave_consents(group_id,device_user_id,text,typed_name,ip,user_agent,at) VALUES (?,?,?,?,?,?,?)",
                   (group, emp["device_user_id"], p["consent_text"], body.consent_name.strip()[:100],
@@ -191,7 +191,7 @@ def apply_leave(body: LeaveRequest, request: Request, emp: dict = Depends(curren
                    request.headers.get("user-agent", "")[:300], now))
     c.commit()
     return {"ok": True, "group_id": group, "days": p["working_days"], "unpaid_days": p["unpaid_days"],
-            "adhoc_days": p["adhoc_days"], "status": "pending"}
+            "adhoc_days": p["adhoc_days"], "excess_days": p["excess_days"], "deduction": p["deduction"], "status": "pending"}
 
 
 @router.delete("/leave/{leave_id}")

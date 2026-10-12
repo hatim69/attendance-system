@@ -82,9 +82,20 @@ def used(emp: dict, kind: str, key: str, start: date | None, ctx, exclude_id: in
     return n
 
 
-def validate(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict: bool = True) -> dict:
-    """Check an application against the policy. Returns {"days": [...]} or {"error": "..."}.
-    strict=True is for employees applying themselves (also limits back-dating)."""
+LOP_MULTIPLIER = 1.0   # pay cut per unpaid day = monthly salary / calendar days in that month x this (to be set per policy)
+
+
+def per_day_pay(salary: float, d: date) -> float:
+    return round((salary or 0) / calendar.monthrange(d.year, d.month)[1] * LOP_MULTIPLIER, 2)
+
+
+def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict: bool = True) -> dict:
+    """Work out how an application would be taken: each working day becomes Normal, Adhoc or Unpaid.
+
+    Normal (with 7 days' notice) uses the Normal balance first, then falls back to Adhoc; Adhoc uses the Adhoc balance;
+    anything left over, and days before leave starts (3 months after joining), is Unpaid. Returns the split, the pay
+    deduction, warnings to show, and whether the employee must sign a consent (any unpaid day), or {"error": "..."}.
+    strict=True is for employees applying themselves (limits back-dating)."""
     emp, *rest = ctx = _context(uid)
     if not emp:
         return {"error": "Employee not found"}
@@ -93,7 +104,7 @@ def validate(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, st
     try:
         start, end = date.fromisoformat(start_s), date.fromisoformat(end_s)
     except ValueError:
-        return {"error": "Dates must look like 2026-10-20"}
+        return {"error": "Choose the dates"}
     if end < start:
         return {"error": "The end date is before the start date"}
     if (end - start).days >= MAX_RANGE_DAYS:
@@ -104,21 +115,65 @@ def validate(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, st
     if not days:
         return {"error": "There are no working days in that range (weekly offs and holidays are not counted)"}
     elig = eligible_from(emp.get("joined"))
-    if elig and days[0] < elig:
-        return {"error": f"Leave under the policy starts on {elig.isoformat()} (3 months after joining)"}
-    if kind == "Normal" and (start - applied_on).days < NOTICE_DAYS:
-        return {"error": f"Normal leave must be applied at least {NOTICE_DAYS} days before the leave date. "
-                         "For an emergency use Adhoc leave."}
-    per_period: dict[str, list[date]] = {}
+    notice_ok = (start - applied_on).days >= NOTICE_DAYS
+    left: dict[tuple, float] = {}
+
+    def slot(k: str, d: date) -> tuple:
+        key = (k, period(k, d, elig)[0])
+        if key not in left:
+            left[key] = quota(k) - used(emp, k, key[1], elig, ctx)
+        return key
+
+    alloc = []
     for d in days:
-        per_period.setdefault(period(kind, d, elig)[0], []).append(d)
-    for key, ds in per_period.items():
-        left = quota(kind) - used(emp, kind, key, elig, ctx)
-        if len(ds) > left:
-            _, first, last = period(kind, ds[0], elig)
-            span = first.strftime("%b %Y") if kind == "Normal" else f"{first:%d %b %Y} to {last:%d %b %Y}"
-            return {"error": f"Not enough {kind} leave for {span}: {max(left, 0):g} left, {len(ds)} requested"}
-    return {"days": [d.isoformat() for d in days]}
+        t = "Unpaid"
+        if not (elig and d < elig):
+            for k in (["Normal"] if kind == "Normal" and notice_ok else []) + ["Adhoc"]:
+                key = slot(k, d)
+                if left[key] > 0:
+                    left[key] -= 1
+                    t = k
+                    break
+        alloc.append((d, t))
+    n = {t: sum(1 for _, x in alloc if x == t) for t in ("Normal", "Adhoc", "Unpaid")}
+    unpaid = [d for d, t in alloc if t == "Unpaid"]
+    deduction = round(sum(per_day_pay(emp.get("salary") or 0, d) for d in unpaid), 2)
+    per_day = round(deduction / len(unpaid), 2) if unpaid else 0
+    adhoc_left = max(left.get(slot("Adhoc", days[0]), 0), 0) if not (elig and days[0] < elig) else 0
+
+    warnings = []
+    if elig and days[0] < elig:
+        warnings.append(f"Your leave starts on {elig:%d %b %Y} (3 months after joining), so days before that are unpaid.")
+    if kind == "Normal" and not notice_ok and n["Adhoc"]:
+        warnings.append(f"Normal leave needs {NOTICE_DAYS} days' notice, so {n['Adhoc']} day(s) will use your Adhoc "
+                        f"(emergency) leave. Adhoc left after this: {adhoc_left:g}.")
+    elif kind == "Normal" and n["Adhoc"]:
+        warnings.append(f"Your Normal leave balance is not enough, so {n['Adhoc']} day(s) will use your Adhoc leave. "
+                        f"Adhoc left after this: {adhoc_left:g}.")
+    if unpaid:
+        cut = (f"Rs {per_day:,.2f} per day x {len(unpaid)} = Rs {deduction:,.2f} will be deducted from your salary"
+               if emp.get("salary") else "your daily salary will be deducted for each of these days")
+        warnings.append(f"You don't have enough leave balance: {len(unpaid)} extra day(s) will be unpaid, and {cut}.")
+    consent = ""
+    if unpaid:
+        consent = (f"I, {emp['name']} (employee ID {emp['device_user_id']}), am applying for leave from {start:%d %b %Y} to "
+                   f"{end:%d %b %Y} ({len(days)} working day(s)). I understand that my leave balance is not enough and "
+                   f"{len(unpaid)} day(s) will be unpaid"
+                   + (f", and that Rs {deduction:,.2f} (Rs {per_day:,.2f} per day) will be deducted from my salary"
+                      if emp.get("salary") else ", and that my daily salary will be deducted for each of these days")
+                   + " as per the company's leave policy. I agree to this deduction.")
+    # consecutive calendar days of the same kind become one leave record (weekends/holidays split records,
+    # so an unpaid stretch never swallows a paid weekly off)
+    parts: list[dict] = []
+    for d, t in alloc:
+        if parts and parts[-1]["type"] == t and date.fromisoformat(parts[-1]["end_date"]) + timedelta(days=1) == d:
+            parts[-1]["end_date"] = d.isoformat()
+        else:
+            parts.append({"type": t, "start_date": d.isoformat(), "end_date": d.isoformat()})
+    return {"days": [d.isoformat() for d in days], "working_days": len(days), "normal_days": n["Normal"],
+            "adhoc_days": n["Adhoc"], "unpaid_days": n["Unpaid"], "per_day": per_day, "deduction": deduction,
+            "salary_known": bool(emp.get("salary")), "warnings": warnings, "needs_consent": bool(unpaid),
+            "consent_text": consent, "parts": parts}
 
 
 def balance(uid: str, on: date) -> dict | None:

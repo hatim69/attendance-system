@@ -91,6 +91,61 @@ CREATE TABLE IF NOT EXISTS payroll_adjustments (
     label TEXT NOT NULL,
     amount REAL NOT NULL                       -- positive = extra pay, negative = deduction
 );
+CREATE TABLE IF NOT EXISTS employee_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_user_id TEXT NOT NULL,
+    doc_type TEXT NOT NULL DEFAULT 'Other',     -- Aadhaar card, PAN card, Offer letter, ...
+    filename TEXT NOT NULL,                     -- original name, for display/download
+    stored TEXT NOT NULL,                       -- path under DOCS_DIR (generated, never user-controlled)
+    size INTEGER NOT NULL DEFAULT 0,
+    uploaded_by TEXT NOT NULL DEFAULT '',
+    uploaded_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS masters (            -- pick lists for the employee form
+    kind TEXT NOT NULL,                         -- department | designation | branch
+    name TEXT NOT NULL COLLATE NOCASE,
+    PRIMARY KEY(kind, name)
+);
+CREATE TABLE IF NOT EXISTS loans (              -- loans and salary advances, recovered from salary in monthly instalments
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_user_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'Loan',          -- Loan | Advance
+    amount REAL NOT NULL,
+    emi REAL NOT NULL,                          -- deducted each month from start_month until repaid
+    start_month TEXT NOT NULL,                  -- YYYY-MM
+    note TEXT NOT NULL DEFAULT '',
+    closed INTEGER NOT NULL DEFAULT 0,          -- 1 = stopped / written off by HR
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS loan_repayments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    loan_id INTEGER NOT NULL,
+    month TEXT NOT NULL,                        -- YYYY-MM
+    amount REAL NOT NULL,
+    source TEXT NOT NULL DEFAULT 'payroll',     -- payroll (recorded when the month is published) | manual (cash etc.)
+    note TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS roster (             -- day-by-day shift plan; overrides shift changes and the normal shift
+    device_user_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    shift_id INTEGER,                           -- NULL with off=1 means a day off
+    off INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(device_user_id, date)
+);
+CREATE TABLE IF NOT EXISTS leave_consents (     -- the employee's signed acknowledgement when a leave goes beyond their balance
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id TEXT NOT NULL,
+    device_user_id TEXT NOT NULL,
+    text TEXT NOT NULL,                         -- exactly what the employee was shown and agreed to
+    typed_name TEXT NOT NULL,
+    ip TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -158,15 +213,26 @@ def init():
     emp_cols = {r["name"] for r in c.execute("PRAGMA table_info(employees)")}
     for col, decl in {"pin_hash": "TEXT", "shift_id": "INTEGER", "salary": "REAL NOT NULL DEFAULT 0", "joined": "TEXT",
                        "designation": "TEXT NOT NULL DEFAULT ''", "branch": "TEXT NOT NULL DEFAULT ''",
-                       "mobile": "TEXT NOT NULL DEFAULT ''", "father_name": "TEXT NOT NULL DEFAULT ''"}.items():
+                       "mobile": "TEXT NOT NULL DEFAULT ''", "father_name": "TEXT NOT NULL DEFAULT ''",
+                       "remote_ok": "INTEGER NOT NULL DEFAULT 0",
+                       "left_on": "TEXT"}.items():   # last working day of someone who resigned   # may check in from anywhere (remote / field work)
         if col not in emp_cols:
             c.execute(f"ALTER TABLE employees ADD COLUMN {col} {decl}")
     leave_cols = {r["name"] for r in c.execute("PRAGMA table_info(leaves)")}
     for col, decl in {"status": "TEXT NOT NULL DEFAULT 'approved'",   # approved | pending | rejected
                       "applied_on": "TEXT", "requested_by": "TEXT NOT NULL DEFAULT ''",
-                      "decided_by": "TEXT NOT NULL DEFAULT ''", "decided_at": "TEXT"}.items():
+                      "decided_by": "TEXT NOT NULL DEFAULT ''", "decided_at": "TEXT",
+                      "group_id": "TEXT"}.items():   # one application split into Normal / Adhoc / Unpaid parts shares a group
         if col not in leave_cols:
             c.execute(f"ALTER TABLE leaves ADD COLUMN {col} {decl}")
+    for table, cols in {"payroll_adjustments": {"date": "TEXT"},   # when the bonus / fine / ... was given
+                        "shifts": {"break_start": "TEXT NOT NULL DEFAULT ''", "break_end": "TEXT NOT NULL DEFAULT ''"},
+                        "sites": {"kind": "TEXT NOT NULL DEFAULT 'office'",      # office | home
+                                  "device_user_id": "TEXT"}}.items():           # home sites belong to one employee
+        have_cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+        for col, decl in cols.items():
+            if col not in have_cols:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
     if "permissions" not in {r["name"] for r in c.execute("PRAGMA table_info(users)")}:
         c.execute("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '*'")
     _canonicalize(c)

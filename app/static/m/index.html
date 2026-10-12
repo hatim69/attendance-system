@@ -42,6 +42,10 @@
  input{min-width:0;display:block}
  .login-hero{text-align:center;padding-bottom:80px}.login-hero h1{margin-top:22px}
  .center{text-align:center}
+ .warn{background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-radius:12px;padding:12px 14px;font-size:14px;margin:0 0 14px}
+ .warn.bad{background:#fef2f2;border-color:#fecaca;color:#7f1d1d} .warn b{display:block;margin-bottom:4px}
+ .split{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}.split span{font-size:13px;font-weight:600;padding:4px 10px;border-radius:20px;background:#eef2ff;color:#3730a3}.split span.u{background:#fee2e2;color:#991b1b}.split span.a{background:#fef3c7;color:#92400e}
+ .consent{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;font-size:13.5px;line-height:1.55;margin:0 0 12px;color:#334155}
 </style></head><body><div class="wrap">
 
 <div id="login" class="hide">
@@ -71,6 +75,9 @@
       <label for="lty">Type</label><select id="lty"><option value="Normal">Normal (apply 7+ days ahead)</option><option value="Adhoc">Adhoc (emergency)</option></select>
       <div class="row2"><div><label for="lfr">From</label><input id="lfr" type="date"></div><div><label for="lto">To</label><input id="lto" type="date"></div></div>
       <label for="lre">Reason</label><input id="lre" placeholder="Optional" maxlength="200">
+      <div id="lprev"></div>
+      <div id="lcons" class="hide"><div class="consent" id="lctext"></div>
+        <label for="lcname">Type your full name to sign</label><input id="lcname" autocomplete="name" placeholder="Your full name"></div>
       <button id="lap">Apply for leave</button>
     </div>
     <div id="lmsg"></div><ul id="llist" style="margin-top:8px"></ul></div>
@@ -110,16 +117,31 @@ async function start(){
 const fmtD=d=>new Date(d+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'});
 async function loadLeave(){
   try{const [b,l]=await Promise.all([api('/leave-balance'),api('/leaves')]);
-   if(!b.eligible)$('#lbal').textContent=`Leave starts on ${fmtD(b.eligible_from)} (3 months after joining).`;
+   if(!b.eligible)$('#lbal').textContent=`Paid leave starts on ${fmtD(b.eligible_from)} (3 months after joining). Leave before that is unpaid.`;
    else $('#lbal').innerHTML=`<div class="bal"><div><b>${b.normal.left}<small style="font-size:14px;color:#94a3b8"> / ${b.normal.quota}</small></b><span>Normal this month</span></div><div><b>${b.adhoc.left}<small style="font-size:14px;color:#94a3b8"> / ${b.adhoc.quota}</small></b><span>Adhoc this period</span></div></div>`;
-   $('#lform').classList.toggle('hide',!b.eligible);
+   $('#lform').classList.remove('hide');   // before eligibility the days are unpaid; the preview explains it
    $('#llist').innerHTML=l.slice(0,8).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''} · ${x.type}</span><span><span class="tag ${x.status}">${x.status}</span>${x.status=='pending'?` <button class="link" data-c="${x.id}" style="padding:0 0 0 6px">cancel</button>`:''}</span></li>`).join('')||'<li class="muted">No leave yet</li>';
    document.querySelectorAll('#llist button').forEach(bt=>bt.onclick=async()=>{if(!confirm('Cancel this application?'))return;try{await api('/leave/'+bt.dataset.c,{method:'DELETE'});loadLeave()}catch(e){msg($('#lmsg'),e.message,'err')}});
   }catch(e){}
 }
+let PLAN=null;
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function previewLeave(){const box=$('#lprev'); PLAN=null; $('#lcons').classList.add('hide'); $('#lap').textContent='Apply for leave';
+  if(!$('#lfr').value){box.innerHTML='';return}
+  try{const q=new URLSearchParams({type:$('#lty').value,start_date:$('#lfr').value,end_date:$('#lto').value||$('#lfr').value});
+   const p=PLAN=await api('/leave/preview?'+q);
+   box.innerHTML=`<div class="split">${p.normal_days?`<span>${p.normal_days} Normal</span>`:''}${p.adhoc_days?`<span class="a">${p.adhoc_days} Adhoc</span>`:''}${p.unpaid_days?`<span class="u">${p.unpaid_days} unpaid</span>`:''}</div>`+
+    p.warnings.filter(w=>!(p.salary_known&&/will be deducted/.test(w))).map(w=>`<div class="warn ${/unpaid|deducted/.test(w)?'bad':''}">${esc(w)}</div>`).join('')+
+    (p.unpaid_days&&p.salary_known?`<div class="warn bad"><b>Not enough leave balance: ₹ ${p.deduction.toLocaleString('en-IN',{minimumFractionDigits:2})} will be deducted</b>${p.unpaid_days} extra day(s) unpaid × ₹ ${p.per_day.toLocaleString('en-IN',{minimumFractionDigits:2})} per day, as per the leave policy.</div>`:'');
+   if(p.needs_consent){$('#lctext').textContent=p.consent_text;$('#lcons').classList.remove('hide');$('#lap').textContent='I agree, apply for leave'}
+   else if(p.adhoc_days&&$('#lty').value=='Normal')$('#lap').textContent='Apply (uses Adhoc)';
+  }catch(e){box.innerHTML=`<div class="warn bad">${esc(e.message)}</div>`}}
+['#lty','#lfr','#lto'].forEach(k=>$(k).addEventListener('change',previewLeave));
 $('#lap').onclick=async()=>{const m=$('#lmsg'); try{
-  const r=await api('/leave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:$('#lty').value,start_date:$('#lfr').value,end_date:$('#lto').value||$('#lfr').value,reason:$('#lre').value})});
-  msg(m,`Applied for ${r.days} working day(s). HR will approve it.`,'ok'); $('#lre').value=''; loadLeave();
+  if(!PLAN)await previewLeave(); if(!PLAN)throw new Error('Check the dates first');
+  if(PLAN.needs_consent&&!$('#lcname').value.trim())throw new Error('Part of this leave is unpaid. Type your full name to agree before applying.');
+  const r=await api('/leave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:$('#lty').value,start_date:$('#lfr').value,end_date:$('#lto').value||$('#lfr').value,reason:$('#lre').value,consent_name:$('#lcname').value})});
+  msg(m,`Applied for ${r.days} working day(s)${r.unpaid_days?`, ${r.unpaid_days} unpaid`:''}. HR will approve it.`,'ok'); $('#lre').value=''; $('#lcname').value=''; $('#lprev').innerHTML=''; $('#lcons').classList.add('hide'); PLAN=null; loadLeave();
  }catch(e){msg(m,e.message,'err')}};
 async function loadSlips(){
   try{const l=await api('/payslips'); $('#slipCard').classList.toggle('hide',!l.length);

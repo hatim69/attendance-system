@@ -71,3 +71,31 @@ def build_pdf(d: dict) -> bytes:
               Paragraph(f"Generated {datetime.now():%d %b %Y}", small)]
     doc.build(story)
     return buf.getvalue()
+
+
+def consent_pdf(k: dict, parts: list[dict], company: str) -> bytes:
+    """Printable record of an employee's signed agreement to unpaid leave (kept as proof)."""
+    ss = getSampleStyleSheet()
+    body = ParagraphStyle("b", parent=ss["Normal"], fontSize=10.5, leading=15)
+    small = ParagraphStyle("s", parent=ss["Normal"], fontSize=8.5, textColor=colors.grey)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=20 * mm, rightMargin=20 * mm, topMargin=18 * mm, bottomMargin=18 * mm,
+                            title=f"Leave consent {k['name']}", pageCompression=0)
+    esc = lambda v: str(v or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    story = [Paragraph(esc(company) or "Leave consent", ParagraphStyle("h", parent=ss["Title"], fontSize=16)),
+             Paragraph("<b>Consent to unpaid leave</b>", ParagraphStyle("t", parent=ss["Normal"], fontSize=12, alignment=1)),
+             Spacer(1, 12), Paragraph(esc(k["text"]), body), Spacer(1, 12)]
+    rows = [["From", "To", "Counted as", "Status"]] + [[p["start_date"], p["end_date"], p["type"], p["status"]] for p in parts]
+    t = Table(rows, colWidths=[38 * mm, 38 * mm, 40 * mm, 40 * mm])
+    t.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9.5), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef2ff")),
+                           ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey)]))
+    sig = [("Signed by (typed name)", k["typed_name"]), ("Employee ID", k["device_user_id"]), ("Signed at", k["at"]),
+           ("From IP address", k["ip"]), ("Device", k["user_agent"][:90])]
+    s = Table([[a, Paragraph(esc(b), small if a == "Device" else ss["Normal"])] for a, b in sig], colWidths=[45 * mm, 115 * mm])
+    s.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9.5), ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                           ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEABOVE", (0, 0), (-1, 0), 0.5, colors.grey)]))
+    story += [t, Spacer(1, 16), s, Spacer(1, 18),
+              Paragraph("The employee agreed to this in the attendance phone app by typing their full name after seeing the "
+                        "deduction. Generated " + datetime.now().strftime("%d %b %Y %H:%M") + ".", small)]
+    doc.build(story)
+    return buf.getvalue()

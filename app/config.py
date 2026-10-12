@@ -2,6 +2,8 @@ import os
 
 DB_PATH = os.getenv("DB_PATH", "attendance.db")
 SELFIE_DIR = os.getenv("SELFIE_DIR", "selfies")
+DOCS_DIR = os.getenv("DOCS_DIR", "documents")          # employee documents (ID proofs, letters...)
+MAX_DOC_BYTES = int(os.getenv("MAX_DOC_BYTES", str(10 * 1024 * 1024)))
 RAW_LOG = os.getenv("RAW_LOG", "fkweb_raw.log")
 # Local timezone of the workplace. Devices report local time; app punches are stamped in this zone.
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")

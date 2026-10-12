@@ -546,6 +546,8 @@ def test_payslips_publish_adjustments_and_self_service(tmp_path, monkeypatch):
         for uid in ("P1", "P2"):
             c.post(f"/api/employees/{uid}/pin", json={"pin": "1234"})
         # June 2025 (30 days, 5 Sundays): present Mon 2 Jun only, rest absent -> paid = 1 + 5 Sundays = 6 days
+        # (P2's punch on Sun 1 Jun makes that the system's first day; days before the first punch are never counted)
+        c.post("/api/punches", json={"device_user_id": "P2", "ts": "2025-06-01 10:00:00"})
         c.post("/api/punches", json={"device_user_id": "P1", "ts": "2025-06-02 09:00:00"})
         c.post("/api/punches", json={"device_user_id": "P1", "ts": "2025-06-02 18:00:00"})
         row = [r for r in c.get("/api/reports/payroll?month=2025-06").json() if r["device_user_id"] == "P1"][0]
@@ -690,7 +692,7 @@ def test_leave_policy_normal_adhoc_and_workflow(tmp_path, monkeypatch):
         c.post("/api/shifts", json={"name": "Lv 9-6", "start": "09:00", "end": "18:00"})            # Sunday off
         sid = c.get("/api/shifts").json()[0]["id"]
         # L1 joined 5 Jan 2026 -> eligible from 5 Apr 2026; L2 joined 1 Aug 2026 -> eligible from 1 Nov 2026
-        c.post("/api/employees", json={"device_user_id": "LV1", "name": "Eli", "shift_id": sid, "joined": "2026-01-05", "department": "Ops"})
+        c.post("/api/employees", json={"device_user_id": "LV1", "name": "Eli", "shift_id": sid, "joined": "2026-01-05", "department": "Ops", "salary": 31000})
         c.post("/api/employees", json={"device_user_id": "LV2", "name": "New Nina", "shift_id": sid, "joined": "2026-08-01", "department": "Ops"})
         c.post("/api/holidays", json={"date": "2026-10-21", "name": "Test holiday"})                  # a Wednesday
         for uid in ("LV1", "LV2"):
@@ -702,32 +704,44 @@ def test_leave_policy_normal_adhoc_and_workflow(tmp_path, monkeypatch):
         b = c.get("/api/app/leave-balance", headers=h1).json()
         assert b["eligible_from"] == "2026-04-05" and b["eligible"] is True
         assert (b["normal"]["quota"], b["normal"]["left"], b["adhoc"]["quota"], b["adhoc"]["left"]) == (2, 2, 1, 1)
-        # Normal needs 7 days' notice
-        r = apply(h1, start_date="2026-10-14", end_date="2026-10-14", type="Normal")
-        assert r.status_code == 400 and "7 days" in r.json()["detail"] and "Adhoc" in r.json()["detail"]
+        preview = lambda h, **k: c.get("/api/app/leave/preview", params=k, headers=h)
+        # Normal without 7 days' notice falls back to Adhoc, with a warning
+        p = preview(h1, start_date="2026-10-14", end_date="2026-10-14", type="Normal").json()
+        assert (p["normal_days"], p["adhoc_days"], p["unpaid_days"], p["needs_consent"]) == (0, 1, 0, False)
+        assert "7 days' notice" in p["warnings"][0] and "Adhoc left after this: 0" in p["warnings"][0]
         r = apply(h1, start_date="2026-10-19", end_date="2026-10-19", type="Normal", reason="trip")
-        assert r.status_code == 200 and r.json() == {"ok": True, "id": r.json()["id"], "days": 1, "status": "pending"}
-        # a holiday and a Sunday inside a range are not counted: Tue 20, Wed 21 (holiday), Thu 22 -> 2 working days but only 1 Normal left
-        r = apply(h1, start_date="2026-10-20", end_date="2026-10-22", type="Normal")
-        assert r.status_code == 400 and "1 left, 2 requested" in r.json()["detail"]
-        assert apply(h1, start_date="2026-10-20", end_date="2026-10-21", type="Normal").status_code == 200       # Tue + holiday = 1 working day
-        r = apply(h1, start_date="2026-10-23", end_date="2026-10-23", type="Normal")                            # month's 2 Normal used up
-        assert r.status_code == 400 and "0 left" in r.json()["detail"] and "Oct 2026" in r.json()["detail"]
-        assert apply(h1, start_date="2026-11-23", end_date="2026-11-23", type="Normal").status_code == 200       # next month has its own 2
-        # only a Sunday: nothing to take
+        assert r.status_code == 200 and (r.json()["days"], r.json()["adhoc_days"], r.json()["unpaid_days"]) == (1, 0, 0)
+        # Tue 20, Wed 21 (holiday, not counted), Thu 22: only 1 Normal left, so the 2nd day uses the Adhoc balance
+        p = preview(h1, start_date="2026-10-20", end_date="2026-10-22", type="Normal").json()
+        assert (p["working_days"], p["normal_days"], p["adhoc_days"]) == (2, 1, 1) and "Normal leave balance is not enough" in p["warnings"][0]
+        assert [x["type"] for x in p["parts"]] == ["Normal", "Adhoc"]           # the holiday splits the records
+        assert apply(h1, start_date="2026-10-20", end_date="2026-10-22", type="Normal").json()["adhoc_days"] == 1
+        # nothing left: the day is unpaid, the deduction is shown, and the employee must sign
+        p = preview(h1, start_date="2026-10-23", end_date="2026-10-23", type="Normal").json()
+        assert (p["unpaid_days"], p["deduction"], p["needs_consent"]) == (1, 1000.0, True)      # 31000 / 31 days
+        assert "Rs 1,000.00 per day x 1 = Rs 1,000.00" in p["warnings"][-1] and "I agree" in p["consent_text"]
+        r = apply(h1, start_date="2026-10-23", end_date="2026-10-23", type="Normal")
+        assert r.status_code == 400 and "full name" in r.json()["detail"]
+        assert apply(h1, start_date="2026-10-23", end_date="2026-10-23", type="Normal", consent_name="someone else").status_code == 400
+        assert apply(h1, start_date="2026-10-23", end_date="2026-10-23", type="Normal", consent_name="  eli ").json()["unpaid_days"] == 1
+        lv = {x["start_date"]: x for x in c.get("/api/leaves?month=2026-10").json()}
+        assert lv["2026-10-23"]["type"] == "Unpaid" and lv["2026-10-23"]["consent_id"] and not lv["2026-10-19"]["consent_id"]
+        k = c.get(f"/api/leave-consents/{lv['2026-10-23']['consent_id']}").json()
+        assert k["typed_name"] == "eli" and "Rs 1,000.00" in k["text"] and k["device_user_id"] == "LV1"
+        assert c.get(f"/api/leave-consents/{lv['2026-10-23']['consent_id']}/pdf").content.startswith(b"%PDF")
+        assert apply(h1, start_date="2026-11-23", end_date="2026-11-23", type="Normal").json()["unpaid_days"] == 0   # next month has its own 2
+        # only a Sunday: nothing to take; too old for self-service
         assert "no working days" in apply(h1, start_date="2026-10-25", end_date="2026-10-25", type="Adhoc").json()["detail"]
-        # Adhoc: emergencies with no notice, 1 per 3-month period (5 Oct 2026 - 4 Jan 2027 is the current one)
-        assert apply(h1, start_date="2026-10-12", end_date="2026-10-12", type="Adhoc", reason="emergency").status_code == 200
-        r = apply(h1, start_date="2026-12-01", end_date="2026-12-01", type="Adhoc")
-        assert r.status_code == 400 and "Adhoc" in r.json()["detail"] and "0 left" in r.json()["detail"]
-        assert apply(h1, start_date="2026-07-06", end_date="2026-07-06", type="Adhoc").status_code == 400      # 3 months back: too old for self-service
+        assert apply(h1, start_date="2026-07-06", end_date="2026-07-06", type="Adhoc").status_code == 400
+        # Adhoc used up in this 3-month period (5 Oct 2026 - 4 Jan 2027): unpaid, needs consent
+        assert preview(h1, start_date="2026-12-01", end_date="2026-12-01", type="Adhoc").json()["unpaid_days"] == 1
         # balance reflects pending applications
         b = c.get("/api/app/leave-balance", headers=h1).json()
         assert (b["normal"]["used"], b["normal"]["left"], b["adhoc"]["used"], b["adhoc"]["left"]) == (2, 0, 1, 0)
-        # not yet eligible
-        r = apply(h2, start_date="2026-10-20", end_date="2026-10-20", type="Normal")
-        assert r.status_code == 400 and "2026-11-01" in r.json()["detail"]
-        assert apply(h2, start_date="2026-11-03", end_date="2026-11-03", type="Normal").status_code == 200
+        # not yet eligible: unpaid with consent; after eligibility (with notice) it is Normal
+        p = preview(h2, start_date="2026-10-20", end_date="2026-10-20", type="Normal").json()
+        assert p["unpaid_days"] == 1 and "01 Nov 2026" in p["warnings"][0] and p["salary_known"] is False
+        assert apply(h2, start_date="2026-11-03", end_date="2026-11-03", type="Normal").json()["unpaid_days"] == 0
         assert c.get("/api/app/leave-balance", headers=h2).json()["eligible"] is False
         # bad input
         assert apply(h1, start_date="2026-10-30", end_date="2026-10-29", type="Normal").status_code == 400
@@ -735,32 +749,31 @@ def test_leave_policy_normal_adhoc_and_workflow(tmp_path, monkeypatch):
         assert apply(h1, start_date="2026-12-10", end_date="2026-12-10", type="Casual").status_code == 400      # self-service: policy types only
         assert c.get("/api/app/leaves").status_code == 401
 
-        # my list, cancelling, and ownership
+        # my list (one application can be several records), cancelling, and ownership
         mine = c.get("/api/app/leaves", headers=h1).json()
-        assert {x["status"] for x in mine} == {"pending"} and len(mine) == 4
+        assert {x["status"] for x in mine} == {"pending"} and len(mine) == 5
         lid = [x["id"] for x in mine if x["start_date"] == "2026-10-19"][0]
         assert c.delete(f"/api/app/leave/{lid}", headers=h2).status_code == 404                                   # not theirs
         assert c.delete(f"/api/app/leave/{lid}", headers=h1).status_code == 200
         assert c.get("/api/app/leave-balance", headers=h1).json()["normal"]["left"] == 1                          # balance freed
-        # HR sees the pending request, approves one, rejects another
+        # HR approves an application as a whole (both its parts), rejects another
         pend = {x["start_date"]: x for x in c.get("/api/leaves?month=2026-10").json() if x["status"] == "pending"}
         assert c.post(f"/api/leaves/{pend['2026-10-20']['id']}/approve").status_code == 200
-        assert c.post(f"/api/leaves/{pend['2026-10-20']['id']}/approve").status_code == 400                       # already decided
-        assert c.post(f"/api/leaves/{pend['2026-10-12']['id']}/reject").status_code == 200
-        assert c.get("/api/app/leave-balance", headers=h1).json()["adhoc"]["left"] == 1                           # rejected frees the Adhoc
+        assert c.post(f"/api/leaves/{pend['2026-10-22']['id']}/approve").status_code == 400                       # decided with its group
+        assert c.post(f"/api/leaves/{pend['2026-10-23']['id']}/reject").status_code == 200
         assert c.delete(f"/api/app/leave/{pend['2026-10-20']['id']}", headers=h1).status_code == 400              # approved: cannot self-cancel
-        # only approved leave counts in reports; rejected / pending do not
-        c.post("/api/leaves", json={"device_user_id": "LV1", "start_date": "2026-10-08", "end_date": "2026-10-08", "type": "Adhoc"})   # HR records a past Adhoc
+        # HR records a past Adhoc with none left: it is recorded as unpaid; reports show it
+        r = c.post("/api/leaves", json={"device_user_id": "LV1", "start_date": "2026-10-08", "end_date": "2026-10-08", "type": "Adhoc"})
+        assert [x["type"] for x in r.json()["parts"]] == ["Unpaid"]
         row = {r["device_user_id"]: r for r in c.get("/api/reports/daily?day=2026-10-08").json()}["LV1"]
-        assert (row["status"], row["note"]) == ("Leave", "Adhoc")
-
-        # HR entry: policy still applies unless overridden
+        assert (row["status"], row["note"]) == ("Leave", "Unpaid")
+        # HR entry before eligibility becomes unpaid unless overridden; legacy types are unrestricted
         r = c.post("/api/leaves", json={"device_user_id": "LV2", "start_date": "2026-10-06", "end_date": "2026-10-06", "type": "Normal"})
-        assert r.status_code == 400 and "override" in r.json()["detail"]
-        assert c.post("/api/leaves", json={"device_user_id": "LV2", "start_date": "2026-10-06", "end_date": "2026-10-06", "type": "Normal", "override": True}).status_code == 200
-        assert c.post("/api/leaves", json={"device_user_id": "LV2", "start_date": "2026-10-07", "end_date": "2026-10-07", "type": "Casual"}).status_code == 200   # legacy types unrestricted
-        assert c.post("/api/leaves", json={"device_user_id": "LV2", "start_date": "2026-10-07", "end_date": "2026-10-07", "type": "Normal", "applied_on": "2026-09-20", "override": False}).status_code == 400   # still before eligibility
-        b = c.get("/api/leave-balance?employee=00L1".replace("00L1", "LV1")).json()
+        assert [x["type"] for x in r.json()["parts"]] == ["Unpaid"]
+        assert c.post("/api/leaves", json={"device_user_id": "LV2", "start_date": "2026-10-05", "end_date": "2026-10-05", "type": "Normal", "override": True}).json()["parts"][0]["type"] == "Normal"
+        assert c.post("/api/leaves", json={"device_user_id": "LV2", "start_date": "2026-10-07", "end_date": "2026-10-07", "type": "Casual"}).status_code == 200
+        assert c.get("/api/leave-preview", params={"employee": "LV1", "type": "Normal", "start_date": "2026-11-24", "end_date": "2026-11-24"}).json()["normal_days"] == 1
+        b = c.get("/api/leave-balance?employee=LV1").json()
         assert b["eligible_from"] == "2026-04-05" and c.get("/api/leave-balance?employee=NOPE").status_code == 404
 
 
@@ -828,3 +841,104 @@ def test_punch_log_file_safety_net(tmp_path, monkeypatch):
     with TestClient(app):
         post(fkweb.bound_port, "DEV-LOG", b'{"user_id":"777","io_mode":1,"io_time":"20250707110000"}')
         assert [p["device_user_id"] for p in TestClient(app).get("/api/punches?day=2025-07-07").json() if p["device_user_id"] == "777"] == ["777"]
+
+
+def test_documents_lists_loans_roster_breaks_wfh_and_payslip_rules(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "hr.db"))
+    monkeypatch.setattr(config, "DOCS_DIR", str(tmp_path / "docs"))
+    monkeypatch.setattr(config, "SELFIE_DIR", str(tmp_path / "selfies"))
+    _freeze_today(monkeypatch)                                   # Saturday 10 Oct 2026
+    with TestClient(app) as c:
+        # shift with an unpaid lunch break 13:00-14:00
+        assert c.post("/api/shifts", json={"name": "B 9-6", "start": "09:00", "end": "18:00", "break_start": "13:00", "break_end": "14:00"}).status_code == 200
+        assert c.post("/api/shifts", json={"name": "Bad", "start": "09:00", "end": "18:00", "break_start": "19:00", "break_end": "20:00"}).status_code == 400
+        c.post("/api/shifts", json={"name": "Eve 14-22", "start": "14:00", "end": "22:00"})
+        sh = {s["name"]: s["id"] for s in c.get("/api/shifts").json()}
+        c.post("/api/employees", json={"device_user_id": "H1", "name": "Hana", "shift_id": sh["B 9-6"], "salary": 31000,
+                                       "department": "Accounts", "designation": "Clerk"})
+        c.post("/api/employees", json={"device_user_id": "H2", "name": "Wfh Wasim", "shift_id": sh["B 9-6"], "remote_ok": True})
+        # department / designation pick lists: typed values are added; rename moves people; in-use cannot be deleted
+        m = c.get("/api/masters").json()
+        assert {"name": "Accounts", "employees": 1} in m["departments"] and m["designations"][0]["name"] == "Clerk"
+        assert c.post("/api/masters/department", json={"name": "Sales"}).status_code == 200
+        assert c.delete("/api/masters/department/Accounts").status_code == 400
+        assert c.post("/api/masters/department", json={"name": "Accounts", "new_name": "Finance"}).status_code == 200
+        assert [e for e in c.get("/api/employees").json() if e["device_user_id"] == "H1"][0]["department"] == "Finance"
+        assert c.delete("/api/masters/department/Sales").status_code == 200 and c.post("/api/masters/zzz", json={"name": "x"}).status_code == 404
+
+        # documents: content decides the type; path tricks in the name are harmless
+        up = lambda data, name="a.pdf", t="PAN card": c.post("/api/employees/H1/documents", files={"file": (name, data)}, data={"doc_type": t})
+        assert up(b"%PDF-1.4 hello", "../../pan.pdf").status_code == 200
+        assert up(b"MZ\x90\x00 not a doc", "x.exe").status_code == 400
+        docs = c.get("/api/employees/H1/documents").json()
+        assert len(docs) == 1 and docs[0]["doc_type"] == "PAN card" and "/" not in docs[0]["filename"]
+        r = c.get(f"/api/documents/{docs[0]['id']}")
+        assert r.status_code == 200 and r.content.startswith(b"%PDF") and r.headers["content-type"] == "application/pdf"
+        assert [e for e in c.get("/api/employees").json() if e["device_user_id"] == "H1"][0]["documents"] == 1
+        assert c.delete(f"/api/documents/{docs[0]['id']}").status_code == 200 and c.get("/api/employees/H1/documents").json() == []
+
+        # attendance: break deducted; a single punch counts as present (late in the morning, not late when it is the out punch)
+        for ts in ("2026-10-05 09:00:00", "2026-10-05 18:00:00", "2026-10-06 09:30:00", "2026-10-07 17:55:00"):
+            c.post("/api/punches", json={"device_user_id": "H1", "ts": ts})
+        d = lambda day: {r["device_user_id"]: r for r in c.get(f"/api/reports/daily?day={day}").json()}["H1"]
+        assert (d("2026-10-05")["hours"], d("2026-10-05")["status"]) == (8.0, "Present")
+        assert (d("2026-10-06")["status"], d("2026-10-06")["note"]) == ("Late", "missing out punch")
+        assert (d("2026-10-07")["status"], d("2026-10-07")["late_min"], d("2026-10-07")["note"]) == ("Present", 0, "missing in punch")
+        assert d("2026-10-04")["status"] == ""                     # before the first punch in the system: not counted
+
+        # roster: Thu 8 Oct on the evening shift, Fri 9 Oct off, Sun 11 Oct (normally off) a working day
+        for day, v in (("2026-10-08", str(sh["Eve 14-22"])), ("2026-10-09", "off"), ("2026-10-11", str(sh["B 9-6"]))):
+            assert c.post("/api/roster", json={"device_user_id": "H1", "date": day, "value": v}).status_code == 200
+        c.post("/api/punches", json={"device_user_id": "H1", "ts": "2026-10-08 14:20:00"})
+        assert (d("2026-10-08")["shift"], d("2026-10-08")["late_min"]) == ("Eve 14-22", 20)
+        assert d("2026-10-09")["status"] == "Weekly Off"
+        g = c.get("/api/roster?start=2026-10-05").json()
+        assert g["dates"][0] == "2026-10-05" and [r for r in g["rows"] if r["device_user_id"] == "H1"][0]["cells"]["2026-10-09"] == "off"
+        assert c.post("/api/roster/copy", json={"from_start": "2026-10-05", "to_start": "2026-10-12"}).json()["copied"] == 3
+        assert c.post("/api/roster", json={"device_user_id": "H1", "date": "2026-10-09", "value": "999"}).status_code == 404
+
+        # work from home: a home site for one employee; a remote employee may punch anywhere
+        assert c.post("/api/sites", json={"name": "Office", "lat": 19.0, "lng": 72.8, "radius_m": 100}).status_code == 200
+        assert c.post("/api/sites", json={"name": "Hana home", "lat": 19.2, "lng": 72.9, "radius_m": 100, "kind": "home", "device_user_id": "H1"}).status_code == 200
+        for uid in ("H1", "H2"):
+            c.post(f"/api/employees/{uid}/pin", json={"pin": "1234"})
+        tok = lambda uid: {"Authorization": "Bearer " + c.post("/api/app/login", json={"employee_id": uid, "pin": "1234"}).json()["token"]}
+        jpg = b"\xff\xd8\xff\xe0" + b"0" * 100
+        punch = lambda h, lat, lng: c.post("/api/app/punch", data={"lat": lat, "lng": lng, "accuracy": 5}, files={"selfie": ("s.jpg", jpg)}, headers=h)
+        r = punch(tok("H1"), 19.2, 72.9)
+        assert r.status_code == 200 and r.json()["site"] == "Hana home"
+        r = punch(tok("H2"), 25.0, 80.0)                                     # far from everything, but H2 may work remotely
+        assert r.status_code == 200 and r.json()["site"] == "Work from home" and r.json()["flag"] == ""
+        assert [s["name"] for s in c.get("/api/app/me", headers=tok("H2")).json()["sites"]] == ["Office"]   # others' homes are private
+        assert d("2026-10-10")["note"].startswith("WFH")
+
+        # loans: 50,000 over 5 months = 10,000 EMI, deducted from payroll; publishing records it in the ledger
+        r = c.post("/api/loans", json={"device_user_id": "H1", "amount": 50000, "months": 5, "start_month": "2026-09", "note": "bike"})
+        assert r.status_code == 200 and r.json()["emi"] == 10000
+        lid = r.json()["id"]
+        assert c.post("/api/loans", json={"device_user_id": "H1", "amount": 100, "months": 0, "start_month": "2026-09"}).status_code == 400
+        sep = [x for x in c.get("/api/reports/payroll?month=2026-09").json() if x["device_user_id"] == "H1"][0]
+        assert sep["loan_deduction"] == 10000 and sep["payslip_ready"] is True
+        octo = [x for x in c.get("/api/reports/payroll?month=2026-10").json() if x["device_user_id"] == "H1"][0]
+        assert octo["loan_deduction"] == 10000 and octo["payslip_ready"] is False
+        assert c.post("/api/payroll/2026-09/publish").status_code == 200
+        assert c.post(f"/api/loans/{lid}/repay", json={"month": "2026-09", "amount": 5000, "note": "cash"}).status_code == 200
+        L = c.get("/api/loans?employee=H1").json()[0]
+        assert (L["repaid"], L["outstanding"], L["status"]) == (15000, 35000, "Active")
+        led = c.get("/api/loans/ledger/H1").json()
+        assert [e["balance"] for e in led] == [50000, 40000, 35000]
+        assert c.delete(f"/api/loans/{lid}").status_code == 400 and c.post(f"/api/loans/{lid}/close").status_code == 200
+        assert c.post("/api/payroll/2026-09/unpublish").status_code == 200
+        assert c.get("/api/loans?employee=H1").json()[0]["repaid"] == 5000          # unpublishing removes the salary deduction
+
+        # dated adjustment lands in that date's month
+        assert c.post("/api/payroll/adjustments", json={"date": "2026-10-03", "device_user_id": "H1", "label": "Bonus", "amount": 700}).status_code == 200
+        assert c.get("/api/payroll/adjustments?month=2026-10").json()[0]["date"] == "2026-10-03"
+
+        # payslips: not mid-month, except for someone whose last working day has passed
+        assert c.get("/api/payslips/H1/2026-10.pdf").status_code == 400
+        c.post("/api/employees", json={"device_user_id": "H1", "name": "Hana", "shift_id": sh["B 9-6"], "salary": 31000,
+                                       "department": "Finance", "active": False, "left_on": "2026-10-08"})
+        assert c.get("/api/payslips/H1/2026-10.pdf").content.startswith(b"%PDF")
+        assert "H1" in {r["device_user_id"] for r in c.get("/api/reports/payroll?month=2026-10").json()}   # still paid for days worked
+        assert "H1" not in {r["device_user_id"] for r in c.get("/api/reports/daily?day=2026-10-10").json()}  # gone after leaving

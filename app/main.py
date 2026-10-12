@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from . import access, adms, app_api, auth, config, db, fkweb, hub, importer, leavepolicy, payslip, reports, zk_poller
+from . import access, adms, app_api, auth, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, payslip, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 
@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Attendance System", lifespan=lifespan)
 app.include_router(adms.router)  # device-facing, no auth (devices can't do Basic auth)
 app.include_router(app_api.router)  # employee app, token auth
+app.include_router(hr_api.router)   # documents, pick lists, loans, roster
 
 
 
@@ -55,6 +56,8 @@ class EmployeeIn(BaseModel):
     branch: str = ""
     mobile: str = ""
     father_name: str = ""
+    remote_ok: bool = False   # may check in with the phone app from anywhere (work from home / field work)
+    left_on: str = ""         # last working day, for someone who resigned
 
 
 class ShiftIn(BaseModel):
@@ -66,6 +69,8 @@ class ShiftIn(BaseModel):
     half_day_hours: float = 4
     ot_after_min: int = 30
     weekly_off: str = "SUN"  # comma list of MON..SUN, empty for none
+    break_start: str = ""    # optional unpaid break, HH:MM
+    break_end: str = ""
 
 
 class HolidayIn(BaseModel):
@@ -80,7 +85,7 @@ class LeaveIn(BaseModel):
     type: str = "Casual"
     note: str = ""
     applied_on: str = ""      # when the application was made (default today); matters for Normal leave's 7-day notice
-    override: bool = False    # skip the leave-policy checks (recorded in the audit log)
+    override: bool = False    # record exactly as given, skipping the leave policy (recorded in the audit log)
 
 
 class DeviceIn(BaseModel):
@@ -97,6 +102,8 @@ class SiteIn(BaseModel):
     lat: float
     lng: float
     radius_m: float = 150
+    kind: str = "office"            # office | home (one employee's work-from-home location)
+    device_user_id: str = ""        # for home sites
 
 
 class ReviewIn(BaseModel):
@@ -286,7 +293,8 @@ def list_employees():
     frag, args = access.scope_sql("e.department")
     rows = [dict(r) for r in db.conn().execute(
         "SELECT e.id, e.device_user_id, e.name, e.department, e.designation, e.branch, e.mobile, e.father_name, e.active, e.pin_hash IS NOT NULL AS pin_hash, e.shift_id, "
-        "e.salary, COALESCE(e.joined,'') joined, COALESCE(s.name,'') shift FROM employees e LEFT JOIN shifts s ON s.id=e.shift_id "
+        "e.salary, COALESCE(e.joined,'') joined, e.remote_ok, COALESCE(e.left_on,'') left_on, COALESCE(s.name,'') shift, "
+        "(SELECT COUNT(*) FROM employee_documents d WHERE d.device_user_id=e.device_user_id) documents FROM employees e LEFT JOIN shifts s ON s.id=e.shift_id "
         "WHERE 1=1" + frag + " ORDER BY e.name", args)]
     if not access.salary_visible.get():       # only hr and admin see salaries
         for r in rows:
@@ -304,18 +312,25 @@ def upsert_employee(e: EmployeeIn):
         existing = db.conn().execute("SELECT department FROM employees WHERE device_user_id=?", (e.device_user_id,)).fetchone()
         if e.department != team or (existing and existing["department"] != team):
             raise HTTPException(403, "You can only add or edit people in your own team")
-    if e.joined:
-        _valid_date(e.joined)
+    for d in (e.joined, e.left_on):
+        if d:
+            _valid_date(d)
+    if e.active:
+        e.left_on = ""
     c = db.conn()
     c.execute(
-        "INSERT INTO employees(device_user_id,name,department,active,shift_id,salary,joined,designation,branch,mobile,father_name) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+        "INSERT INTO employees(device_user_id,name,department,active,shift_id,salary,joined,designation,branch,mobile,father_name,remote_ok,left_on) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(device_user_id) DO UPDATE SET name=excluded.name, department=excluded.department, "
         "active=excluded.active, shift_id=excluded.shift_id, salary=excluded.salary, joined=excluded.joined, "
-        "designation=excluded.designation, branch=excluded.branch, mobile=excluded.mobile, father_name=excluded.father_name",
+        "designation=excluded.designation, branch=excluded.branch, mobile=excluded.mobile, father_name=excluded.father_name, "
+        "remote_ok=excluded.remote_ok, left_on=excluded.left_on",
         (e.device_user_id, e.name, e.department, int(e.active), e.shift_id, e.salary, e.joined or None,
-         e.designation, e.branch, e.mobile, e.father_name),
+         e.designation, e.branch, e.mobile, e.father_name, int(e.remote_ok), e.left_on or None),
     )
+    for kind, v in (("department", e.department), ("designation", e.designation)):
+        if v.strip():
+            c.execute("INSERT OR IGNORE INTO masters(kind,name) VALUES (?,?)", (kind, v.strip()))
     c.commit()
     return {"ok": True}
 
@@ -449,13 +464,20 @@ async def save_shift(sh: ShiftIn, u: dict = Depends(access.need("manager", "shif
     offs = [o.strip().upper() for o in sh.weekly_off.split(",") if o.strip()]
     if any(o not in reports.WEEKDAYS for o in offs):
         raise HTTPException(400, "Weekly off must be a comma list of MON,TUE,WED,THU,FRI,SAT,SUN")
+    if sh.break_start or sh.break_end:
+        if not all(re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", t) for t in (sh.break_start, sh.break_end)):
+            raise HTTPException(400, "Break times must be HH:MM (24-hour), or leave both empty")
+        if not (sh.start <= sh.break_start < sh.break_end <= sh.end):
+            raise HTTPException(400, "The break must be inside the shift and end after it starts")
     c = db.conn()
-    vals = (sh.name.strip(), sh.start, sh.end, sh.grace_min, sh.half_day_hours, sh.ot_after_min, ",".join(offs))
+    vals = (sh.name.strip(), sh.start, sh.end, sh.grace_min, sh.half_day_hours, sh.ot_after_min, ",".join(offs),
+            sh.break_start, sh.break_end)
     if sh.id:
-        c.execute("UPDATE shifts SET name=?, start=?, end=?, grace_min=?, half_day_hours=?, ot_after_min=?, weekly_off=? WHERE id=?",
-                  vals + (sh.id,))
+        c.execute("UPDATE shifts SET name=?, start=?, end=?, grace_min=?, half_day_hours=?, ot_after_min=?, weekly_off=?, "
+                  "break_start=?, break_end=? WHERE id=?", vals + (sh.id,))
     else:
-        c.execute("INSERT INTO shifts(name,start,end,grace_min,half_day_hours,ot_after_min,weekly_off) VALUES (?,?,?,?,?,?,?)", vals)
+        c.execute("INSERT INTO shifts(name,start,end,grace_min,half_day_hours,ot_after_min,weekly_off,break_start,break_end) "
+                  "VALUES (?,?,?,?,?,?,?,?,?)", vals)
     c.commit()
     return {"ok": True}
 
@@ -543,7 +565,8 @@ def list_leaves(month: str | None = None):
     month = month or now_local().strftime("%Y-%m")
     frag, args = access.scope_sql("e.department")
     return [dict(r) for r in db.conn().execute(
-        "SELECT l.*, COALESCE(e.name, l.device_user_id) name FROM leaves l LEFT JOIN employees e ON e.device_user_id=l.device_user_id "
+        "SELECT l.*, COALESCE(e.name, l.device_user_id) name, "
+        "(SELECT id FROM leave_consents k WHERE k.group_id=l.group_id) consent_id FROM leaves l LEFT JOIN employees e ON e.device_user_id=l.device_user_id "
         "WHERE substr(l.start_date,1,7)<=? AND substr(l.end_date,1,7)>=?" + frag + " ORDER BY l.start_date DESC", (month, month, *args))]
 
 
@@ -564,14 +587,48 @@ def add_leave(l: LeaveIn):
     if l.applied_on:
         _valid_date(l.applied_on)
     applied = date.fromisoformat(l.applied_on) if l.applied_on else today
-    if l.type in leavepolicy.POLICY_TYPES and not l.override:
-        check = leavepolicy.validate(l.device_user_id, l.type, l.start_date, l.end_date, applied, strict=False)
-        if "error" in check:
-            raise HTTPException(400, check["error"] + " (HR can tick 'override policy' to record it anyway)")
-    c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by) VALUES (?,?,?,?,?,?,?,?)",
-              (l.device_user_id, l.start_date, l.end_date, l.type, l.note, "approved", applied.isoformat(), ""))
+    parts = [{"type": l.type, "start_date": l.start_date, "end_date": l.end_date}]
+    if l.type in leavepolicy.POLICY_TYPES and not l.override:   # split into Normal / Adhoc / Unpaid like the phone app
+        p = leavepolicy.plan(l.device_user_id, l.type, l.start_date, l.end_date, applied, strict=False)
+        if "error" in p:
+            raise HTTPException(400, p["error"] + " (tick 'override' to record it anyway)")
+        parts = p["parts"]
+    group = secrets.token_hex(6)
+    for part in parts:
+        c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by,group_id) "
+                  "VALUES (?,?,?,?,?,?,?,?,?)", (l.device_user_id, part["start_date"], part["end_date"], part["type"], l.note,
+                                                "approved", applied.isoformat(), "", group))
     c.commit()
-    return {"ok": True}
+    return {"ok": True, "parts": parts}
+
+
+@app.get("/api/leave-preview", dependencies=[Depends(access.need("hr", "leave"))])
+def leave_preview(employee: str, type: str, start_date: str, end_date: str, applied_on: str = ""):
+    uid = db.canon_id(employee)
+    access.assert_in_scope(uid)
+    applied = date.fromisoformat(applied_on) if applied_on else now_local().date()
+    p = leavepolicy.plan(uid, type, start_date, end_date or start_date, applied, strict=False)
+    if "error" in p:
+        raise HTTPException(400, p["error"])
+    return p
+
+
+@app.get("/api/leave-consents/{consent_id}", dependencies=[Depends(access.need("hr", "leave"))])
+def leave_consent(consent_id: int):
+    row = db.conn().execute("SELECT k.*, COALESCE(e.name,k.device_user_id) name FROM leave_consents k "
+                            "LEFT JOIN employees e ON e.device_user_id=k.device_user_id WHERE k.id=?", (consent_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such consent")
+    access.assert_in_scope(row["device_user_id"])
+    return dict(row)
+
+
+@app.get("/api/leave-consents/{consent_id}/pdf", dependencies=[Depends(access.need("hr", "leave"))])
+def leave_consent_pdf(consent_id: int):
+    k = leave_consent(consent_id)
+    parts = [dict(r) for r in db.conn().execute("SELECT * FROM leaves WHERE group_id=? ORDER BY start_date", (k["group_id"],))]
+    return Response(payslip.consent_pdf(k, parts, config.COMPANY_NAME), media_type="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename=leave-consent-{consent_id}.pdf"})
 
 
 @app.post("/api/leaves/{leave_id}/approve")
@@ -592,8 +649,9 @@ def _decide_leave(leave_id: int, status: str, u: dict) -> dict:
     access.assert_in_scope(row["device_user_id"])
     if row["status"] != "pending":
         raise HTTPException(400, f"This leave is already {row['status']}")
-    c.execute("UPDATE leaves SET status=?, decided_by=?, decided_at=? WHERE id=?",
-              (status, u["username"], now_local().strftime("%Y-%m-%d %H:%M:%S"), leave_id))
+    # an application split into Normal / Adhoc / Unpaid parts is decided as a whole
+    c.execute("UPDATE leaves SET status=?, decided_by=?, decided_at=? WHERE status='pending' AND (id=? OR group_id=?)",
+              (status, u["username"], now_local().strftime("%Y-%m-%d %H:%M:%S"), leave_id, row["group_id"] or "-"))
     c.commit()
     return {"ok": True}
 
@@ -613,10 +671,10 @@ def leave_balance(employee: str, on: str | None = None):
 @app.delete("/api/leaves/{leave_id}", dependencies=[Depends(access.need("hr", "leave"))])
 def delete_leave(leave_id: int):
     c = db.conn()
-    row = c.execute("SELECT device_user_id FROM leaves WHERE id=?", (leave_id,)).fetchone()
+    row = c.execute("SELECT device_user_id, group_id FROM leaves WHERE id=?", (leave_id,)).fetchone()
     if row:
         access.assert_in_scope(row["device_user_id"])
-    c.execute("DELETE FROM leaves WHERE id=?", (leave_id,))
+        c.execute("DELETE FROM leaves WHERE id=? OR group_id=?", (leave_id, row["group_id"] or "-"))
     c.commit()
     return {"ok": True}
 
@@ -648,7 +706,9 @@ def import_template(kind: str):
 
 @app.get("/api/sites", dependencies=[Depends(access.need("manager"))])
 def list_sites():
-    return [dict(r) for r in db.conn().execute("SELECT * FROM sites WHERE active=1 ORDER BY name")]
+    return [dict(r) for r in db.conn().execute(
+        "SELECT s.*, COALESCE(e.name,'') employee FROM sites s LEFT JOIN employees e ON e.device_user_id=s.device_user_id "
+        "WHERE s.active=1 ORDER BY s.kind DESC, s.name")]
 
 
 @app.post("/api/sites", dependencies=[Depends(access.need("admin", "sites"))])
@@ -656,7 +716,15 @@ def add_site(s: SiteIn):
     if not (-90 <= s.lat <= 90 and -180 <= s.lng <= 180 and s.radius_m > 0):
         raise HTTPException(400, "Invalid latitude/longitude/radius")
     c = db.conn()
-    c.execute("INSERT INTO sites(name,lat,lng,radius_m) VALUES (?,?,?,?)", (s.name, s.lat, s.lng, s.radius_m))
+    uid = None
+    if s.kind == "home":
+        uid = db.canon_id(s.device_user_id)
+        if not c.execute("SELECT 1 FROM employees WHERE device_user_id=?", (uid,)).fetchone():
+            raise HTTPException(400, "Choose the employee whose home this is")
+    elif s.kind != "office":
+        raise HTTPException(400, "Site type must be office or home")
+    c.execute("INSERT INTO sites(name,lat,lng,radius_m,kind,device_user_id) VALUES (?,?,?,?,?,?)",
+              (s.name, s.lat, s.lng, s.radius_m, s.kind, uid))
     c.commit()
     return {"ok": True}
 
@@ -906,7 +974,8 @@ def _published(month: str) -> bool:
 
 
 class AdjustmentIn(BaseModel):
-    month: str
+    month: str = ""           # payroll month; taken from `date` when that is given
+    date: str = ""            # the day the bonus / fine / ... was given
     device_user_id: str
     label: str
     amount: float  # positive = extra pay, negative = deduction
@@ -929,6 +998,7 @@ async def payroll_publish(month: str, u: dict = Depends(access.need("hr", "payro
               "ON CONFLICT(month) DO UPDATE SET published=1, published_by=excluded.published_by, published_at=excluded.published_at",
               (month, u["username"], now_local().strftime("%Y-%m-%d %H:%M:%S")))
     c.commit()
+    loans.record_month(month, u["username"])   # this month's EMIs become repayments in each loan's ledger
     return {"ok": True}
 
 
@@ -937,6 +1007,7 @@ def payroll_unpublish(month: str):
     c = db.conn()
     c.execute("UPDATE payroll_months SET published=0 WHERE month=?", (_valid_month(month),))
     c.commit()
+    loans.unrecord_month(month)
     return {"ok": True}
 
 
@@ -949,6 +1020,9 @@ def list_adjustments(month: str):
 
 @app.post("/api/payroll/adjustments", dependencies=[Depends(access.need("hr", "payroll_edit"))])
 def add_adjustment(a: AdjustmentIn):
+    if a.date:
+        _valid_date(a.date)
+        a.month = a.date[:7]
     _valid_month(a.month)
     uid = db.canon_id(a.device_user_id)
     if not a.label.strip() or a.amount == 0 or abs(a.amount) > 10_000_000:
@@ -958,7 +1032,8 @@ def add_adjustment(a: AdjustmentIn):
     c = db.conn()
     if not c.execute("SELECT 1 FROM employees WHERE device_user_id=?", (uid,)).fetchone():
         raise HTTPException(404, "No such employee")
-    c.execute("INSERT INTO payroll_adjustments(month,device_user_id,label,amount) VALUES (?,?,?,?)", (a.month, uid, a.label.strip()[:60], a.amount))
+    c.execute("INSERT INTO payroll_adjustments(month,device_user_id,label,amount,date) VALUES (?,?,?,?,?)",
+              (a.month, uid, a.label.strip()[:60], a.amount, a.date or None))
     c.commit()
     return {"ok": True}
 
@@ -976,7 +1051,11 @@ def delete_adjustment(adj_id: int):
 
 @app.get("/api/payslips/{uid}/{month}.pdf", dependencies=[Depends(access.need("hr", "payroll"))])
 def payslip_pdf(uid: str, month: str):
-    d = reports.payslip(_valid_month(month), db.canon_id(uid))
+    uid = db.canon_id(uid)
+    if not reports.payslip_ready(_valid_month(month), uid):
+        raise HTTPException(400, "A payslip can be made only after the month has ended, or for someone who has "
+                                 "left (set their last working day in Employees)")
+    d = reports.payslip(month, uid)
     if not d:
         raise HTTPException(404, "No payroll for this employee and month")
     return Response(payslip.build_pdf(d), media_type="application/pdf",

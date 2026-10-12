@@ -3,7 +3,7 @@ import calendar
 from datetime import date as Date
 from datetime import datetime
 
-from . import access, config, db
+from . import access, config, db, loans
 from .timeutil import now_local
 
 WEEKDAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
@@ -21,26 +21,57 @@ def _load(scoped: bool = True):
     c = db.conn()
     shifts = {r["id"]: dict(r) for r in c.execute("SELECT * FROM shifts")}
     frag, args = access.scope_sql("department") if scoped else ("", [])
-    emps = [dict(r) for r in c.execute("SELECT * FROM employees WHERE active=1" + frag + " ORDER BY name", args)]
+    # resigned people with a last working day stay in the months they worked; days outside [count_from, left_on] are blank
+    emps = [dict(r) for r in c.execute("SELECT * FROM employees WHERE (active=1 OR left_on IS NOT NULL)" + frag + " ORDER BY name", args)]
+    started = c.execute("SELECT MIN(d) FROM (SELECT MIN(date(ts)) d FROM punches UNION ALL "
+                        "SELECT MIN(start_date) FROM leaves WHERE status='approved')").fetchone()[0] or ""
+    for e in emps:   # nothing is counted before the first day this system has any attendance for
+        e["count_from"] = max(e.get("joined") or "", started)
     holidays = {r["date"]: r["name"] for r in c.execute("SELECT * FROM holidays")}
     leaves = [dict(r) for r in c.execute("SELECT * FROM leaves WHERE status='approved'")]
-    changes: dict[str, list[dict]] = {}
+    changes: dict = {}
     for r in c.execute("SELECT * FROM shift_changes ORDER BY id"):
         changes.setdefault(r["device_user_id"], []).append(dict(r))
+    for r in c.execute("SELECT * FROM roster"):   # roster days sit in the same dict under ("R", id, date) keys
+        changes[("R", r["device_user_id"], r["date"])] = dict(r)
     return shifts, emps, holidays, leaves, changes
 
 
+ALL_DAYS = ",".join(WEEKDAYS)
+OFF_SHIFT = {"id": None, "name": "Off (roster)", "start": "00:00", "end": "00:00", "grace_min": 0, "half_day_hours": 0,
+             "ot_after_min": 0, "weekly_off": ALL_DAYS, "break_start": "", "break_end": ""}
+
+
 def shift_on(e: dict, d: str, shifts: dict, changes: dict) -> dict | None:
-    """The shift an employee works on date `d`: the latest date-range change that covers it, else their normal shift."""
+    """The shift an employee works on date `d`: their roster entry for that day, else the latest date-range shift change
+    that covers it, else their normal shift. A roster day is a working day even if the shift's weekly off falls on it,
+    and a roster 'off' day is a day off whatever the shift says."""
+    r = changes.get(("R", e["device_user_id"], d))
+    if r:
+        if r["off"]:
+            base = shifts.get(e["shift_id"])
+            return {**base, "weekly_off": ALL_DAYS} if base else OFF_SHIFT
+        sh = shifts.get(r["shift_id"])
+        if sh:
+            return {**sh, "weekly_off": ""}
     for ch in reversed(changes.get(e["device_user_id"], [])):
         if ch["start_date"] <= d <= ch["end_date"]:
             return shifts.get(ch["shift_id"])
     return shifts.get(e["shift_id"])
 
 
+def break_minutes(shift: dict | None, first: datetime, last: datetime) -> int:
+    """Unpaid break: the part of the shift's break window that falls inside the worked span."""
+    if not shift or not shift.get("break_start") or not shift.get("break_end"):
+        return 0
+    b1, b2 = _hm(shift["break_start"]), _hm(shift["break_end"])
+    a, b = first.hour * 60 + first.minute, last.hour * 60 + last.minute
+    return max(0, min(b, b2) - max(a, b1))
+
+
 def _punch_map(d1: str, d2: str, device: str | None) -> dict:
     rows = db.conn().execute(
-        "SELECT device_user_id u, date(ts) d, MIN(ts) a, MAX(ts) b, COUNT(*) n FROM punches "
+        "SELECT device_user_id u, date(ts) d, MIN(ts) a, MAX(ts) b, COUNT(*) n, SUM(COALESCE(note,'')='WFH') w FROM punches "
         "WHERE date(ts) BETWEEN ? AND ? AND COALESCE(flag,'')!='rejected' AND (? IS NULL OR source=?) GROUP BY u, d",
         (d1, d2, device, device))
     return {(r["u"], r["d"]): r for r in rows}
@@ -55,44 +86,54 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
            "late_min": 0, "early_min": 0, "ot_min": 0, "note": ""}
     if p:
         first, last, n = datetime.fromisoformat(p["a"]), datetime.fromisoformat(p["b"]), p["n"]
-        out.update(first_in=p["a"][11:19], punches=n)
+        fm, lm = first.hour * 60 + first.minute, last.hour * 60 + last.minute
+        working = bool(shift) and not off and d not in holidays
+        # A single punch still counts as present. If it falls in the second half of the shift it was the out punch.
+        single_out = n == 1 and working and fm >= (_hm(shift["start"]) + _hm(shift["end"])) / 2
         if n > 1:
-            out["last_out"] = p["b"][11:19]
-            out["hours"] = round((last - first).total_seconds() / 3600, 2)
+            out.update(first_in=p["a"][11:19], last_out=p["b"][11:19], punches=n)
+            out["hours"] = round(((last - first).total_seconds() / 60 - break_minutes(shift, first, last)) / 60, 2)
+        elif single_out:
+            out.update(last_out=p["b"][11:19], punches=n, note="missing in punch")
         else:
-            out["note"] = "missing out punch"
+            out.update(first_in=p["a"][11:19], punches=n, note="missing out punch")
         status = "Present"
-        if shift and not off and d not in holidays:
+        if working:
             start, end = _hm(shift["start"]), _hm(shift["end"])
-            fm = first.hour * 60 + first.minute
-            if fm > start + shift["grace_min"]:
+            if not single_out and fm > start + shift["grace_min"]:
                 out["late_min"], status = fm - start, "Late"
-            if n > 1:
-                lm = last.hour * 60 + last.minute
+            if n > 1 or single_out:
                 if lm < end:
                     out["early_min"] = end - lm
                 if lm - end >= shift["ot_after_min"]:
                     out["ot_min"] = lm - end
-                if out["hours"] < shift["half_day_hours"]:
-                    status = "Half Day"
+            if n > 1 and out["hours"] < shift["half_day_hours"]:
+                status = "Half Day"
         else:  # came in on a holiday / weekly off: all worked time counts as overtime
             out["ot_min"] = int(out["hours"] * 60)
             kind = "holiday" if d in holidays else "weekly off"
             out["note"] = (out["note"] + "; " if out["note"] else "") + f"worked on {kind}"
+        if dict(p).get("w"):
+            out["note"] = "WFH" + ("; " + out["note"] if out["note"] else "")
         out["status"] = status
         return out
-    if d > today or (emp.get("joined") and d < emp["joined"]):
-        return out  # in the future, or before the employee's joining date: not counted
+    if d > today or d < (emp.get("count_from") or emp.get("joined") or "") or (emp.get("left_on") and d > emp["left_on"]):
+        return out  # in the future, before joining / before the system started, or after leaving: not counted
     leave = next((l for l in leaves if l["device_user_id"] == emp["device_user_id"] and l["start_date"] <= d <= l["end_date"]), None)
-    if leave:
-        out["status"], out["note"] = "Leave", leave["type"]
-    elif d in holidays:
+    if d in holidays:     # holidays and weekly offs inside a leave stay holidays / weekly offs (only working days are leave)
         out["status"], out["note"] = "Holiday", holidays[d]
     elif off:
         out["status"] = "Weekly Off"
+    elif leave:
+        out["status"], out["note"] = "Leave", leave["type"]
     else:
         out["status"] = "Absent"
     return out
+
+
+def in_period(e: dict, d1: str, d2: str) -> bool:
+    """Active people always; a resigned person only for periods that start on or before their last working day."""
+    return bool(e["active"]) or (bool(e.get("left_on")) and d1 <= e["left_on"])
 
 
 def _month_days(month: str) -> tuple[list[str], str, str]:
@@ -108,6 +149,8 @@ def daily(date: str, device: str | None = None) -> list[dict]:
     pm, today = _punch_map(date, date, device), now_local().date().isoformat()
     rows = []
     for e in emps:
+        if not in_period(e, date, date):
+            continue
         sh = shift_on(e, date, shifts, changes)
         r = evaluate(e, sh, date, pm.get((e["device_user_id"], date)), holidays, leaves, today)
         r.update(device_user_id=e["device_user_id"], name=e["name"], department=e["department"],
@@ -121,6 +164,8 @@ def _month_results(month: str, device: str | None):
     days, d1, d2 = _month_days(month)
     pm, today = _punch_map(d1, d2, device), now_local().date().isoformat()
     for e in emps:
+        if not in_period(e, d1, d2):
+            continue
         yield e, shifts.get(e["shift_id"]), [
             evaluate(e, shift_on(e, d, shifts, changes), d, pm.get((e["device_user_id"], d)), holidays, leaves, today) for d in days]
 
@@ -210,17 +255,28 @@ def payroll(month: str, device: str | None = None) -> list[dict]:
     days, _, d2 = _month_days(month)
     complete = d2 < now_local().date().isoformat()
     sal = {r["device_user_id"]: r["salary"] for r in db.conn().execute("SELECT device_user_id, salary FROM employees")}
-    adj = _adjustments(month)
+    adj, emi = _adjustments(month), loans.deductions(month)
     out = []
     for r in monthly(month, device):
         base = sal.get(r["device_user_id"], 0) or 0
         extra = round(sum(a["amount"] for a in adj.get(r["device_user_id"], [])), 2)
+        loan_cut = round(sum(x["amount"] for x in emi.get(r["device_user_id"], [])), 2)
         out.append({"device_user_id": r["device_user_id"], "name": r["name"], "department": r["department"],
                     "monthly_salary": base, "days_in_month": len(days), "paid_days": r["paid_days"],
                     "unpaid_days": round(len(days) - r["paid_days"], 2) if complete else "",
-                    "adjustments": extra, "net_pay": round(base / len(days) * r["paid_days"] + extra, 2),
-                    "month_complete": complete})
+                    "adjustments": extra, "loan_deduction": loan_cut,
+                    "net_pay": round(base / len(days) * r["paid_days"] + extra - loan_cut, 2),
+                    "month_complete": complete, "payslip_ready": payslip_ready(month, r["device_user_id"])})
     return out
+
+
+def payslip_ready(month: str, uid: str) -> bool:
+    """Payslips only for a finished month, or for someone whose last working day (in that month) has passed."""
+    today = now_local().date().isoformat()
+    if _month_days(month)[2] < today:
+        return True
+    row = db.conn().execute("SELECT active, left_on FROM employees WHERE device_user_id=?", (uid,)).fetchone()
+    return bool(row and not row["active"] and row["left_on"] and row["left_on"][:7] == month and row["left_on"] < today)
 
 
 def payslip(month: str, uid: str) -> dict | None:
@@ -235,7 +291,8 @@ def payslip(month: str, uid: str) -> dict | None:
     earnings = [("Salary for the month", round(base, 2))] + [(a["label"], round(a["amount"], 2)) for a in adjs if a["amount"] > 0]
     lop = round(base - base / n * row["paid_days"], 2)
     deductions = ([(f"Loss of pay ({round(n - row['paid_days'], 2):g} unpaid days)", lop)] if lop > 0 else []) + \
-                 [(a["label"], round(-a["amount"], 2)) for a in adjs if a["amount"] < 0]
+                 [(a["label"], round(-a["amount"], 2)) for a in adjs if a["amount"] < 0] + \
+                 [(x["label"], x["amount"]) for x in loans.deductions(month).get(uid, [])]
     return {
         "company": config.COMPANY_NAME, "address": config.COMPANY_ADDRESS, "month": month,
         "employee": {"code": uid, "name": emp["name"], "department": emp["department"], "designation": emp["designation"],

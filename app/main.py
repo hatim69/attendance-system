@@ -87,6 +87,7 @@ class LeaveIn(BaseModel):
     note: str = ""
     applied_on: str = ""      # when the application was made (default today); matters for Normal leave's 7-day notice
     override: bool = False    # record exactly as given, skipping the leave policy (recorded in the audit log)
+    half: bool = False        # half-day leave (one date)
 
 
 class DeviceIn(BaseModel):
@@ -593,27 +594,29 @@ def add_leave(l: LeaveIn):
     if l.applied_on:
         _valid_date(l.applied_on)
     applied = date.fromisoformat(l.applied_on) if l.applied_on else today
-    parts = [{"type": l.type, "lop": 0, "start_date": l.start_date, "end_date": l.end_date}]
+    if l.half and l.end_date != l.start_date:
+        raise HTTPException(400, "A half day is a single date")
+    parts = [{"type": l.type, "lop": 0, "half": int(l.half), "start_date": l.start_date, "end_date": l.end_date}]
     if l.type in leavepolicy.POLICY_TYPES and not l.override:   # split by the leave policy, like the phone app
-        p = leavepolicy.plan(l.device_user_id, l.type, l.start_date, l.end_date, applied, strict=False)
+        p = leavepolicy.plan(l.device_user_id, l.type, l.start_date, l.end_date, applied, strict=False, half=l.half)
         if "error" in p:
             raise HTTPException(400, p["error"] + " (tick 'override' to record it anyway)")
         parts = p["parts"]
     group = secrets.token_hex(6)
     for part in parts:
-        c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by,group_id,lop) "
-                  "VALUES (?,?,?,?,?,?,?,?,?,?)", (l.device_user_id, part["start_date"], part["end_date"], part["type"], l.note,
-                                                  "approved", applied.isoformat(), "", group, part["lop"]))
+        c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by,group_id,lop,half) "
+                  "VALUES (?,?,?,?,?,?,?,?,?,?,?)", (l.device_user_id, part["start_date"], part["end_date"], part["type"], l.note,
+                                                    "approved", applied.isoformat(), "", group, part["lop"], part["half"]))
     c.commit()
     return {"ok": True, "parts": parts}
 
 
 @app.get("/api/leave-preview", dependencies=[Depends(access.need("hr", "leave"))])
-def leave_preview(employee: str, type: str, start_date: str, end_date: str, applied_on: str = ""):
+def leave_preview(employee: str, type: str, start_date: str, end_date: str = "", applied_on: str = "", half: bool = False):
     uid = db.canon_id(employee)
     access.assert_in_scope(uid)
     applied = date.fromisoformat(applied_on) if applied_on else now_local().date()
-    p = leavepolicy.plan(uid, type, start_date, end_date or start_date, applied, strict=False)
+    p = leavepolicy.plan(uid, type, start_date, end_date or start_date, applied, strict=False, half=half)
     if "error" in p:
         raise HTTPException(400, p["error"])
     return p

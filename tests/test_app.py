@@ -977,3 +977,44 @@ def test_documents_lists_loans_roster_breaks_wfh_and_payslip_rules(tmp_path, mon
         assert c.get("/api/payslips/H1/2026-10.pdf").content.startswith(b"%PDF")
         assert "H1" in {r["device_user_id"] for r in c.get("/api/reports/payroll?month=2026-10").json()}   # still paid for days worked
         assert "H1" not in {r["device_user_id"] for r in c.get("/api/reports/daily?day=2026-10-10").json()}  # gone after leaving
+
+
+def test_half_day_leave(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "half.db"))
+    _freeze_today(monkeypatch)                                   # Saturday 10 Oct 2026
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "H 9-6", "start": "09:00", "end": "18:00"})
+        sid = c.get("/api/shifts").json()[0]["id"]
+        c.post("/api/employees", json={"device_user_id": "HD", "name": "Hafsa", "shift_id": sid, "joined": "2026-01-05", "salary": 31000})
+        c.post("/api/employees/HD/pin", json={"pin": "1234"})
+        h = {"Authorization": "Bearer " + c.post("/api/app/login", json={"employee_id": "HD", "pin": "1234"}).json()["token"]}
+        prev = lambda **k: c.get("/api/app/leave/preview", params={"type": "Casual", **k}, headers=h).json()
+        apply = lambda **k: c.post("/api/app/leave", json={"type": "Casual", **k}, headers=h)
+        # half day on Mon 12 Oct (no notice needed): half a Casual day, paid in full
+        p = prev(start_date="2026-10-12", half=True)
+        assert (p["working_days"], p["casual_days"], p["needs_consent"]) == (0.5, 1, False) and "paid in full" in p["warnings"][0]
+        assert prev(start_date="2026-10-12", end_date="2026-10-13", half=True)["detail"] == "A half day is a single date"
+        assert apply(start_date="2026-10-12", half=True).status_code == 200
+        assert c.get("/api/app/leave-balance", headers=h).json()["casual"]["month_left"] == 1.5
+        assert apply(start_date="2026-10-26").status_code == 200                       # full Casual: 0.5 left
+        assert apply(start_date="2026-10-13", type="Adhoc").status_code == 200         # the quarter's Adhoc
+        assert apply(start_date="2026-10-14", half=True).json()["excess_days"] == 0    # the last 0.5 Casual
+        # no balance left: 0.5 x 1.5 = 0.75 of a day's salary (31000 / 31 = 1000) is cut, with consent
+        p = prev(start_date="2026-10-15", half=True)
+        assert (p["excess_days"], p["deduction"], p["needs_consent"], p["parts"][0]["lop"]) == (1, 750.0, True, 0.75)
+        assert apply(start_date="2026-10-15", half=True, consent_name="Hafsa").status_code == 200
+        for x in c.get("/api/leaves?month=2026-10").json():
+            if x["status"] == "pending":
+                c.post(f"/api/leaves/{x['id']}/approve")
+        # worked the other half of 12 Oct: a half day, no late mark, paid as a full day
+        for ts in ("2026-10-12 13:40:00", "2026-10-12 18:00:00"):
+            c.post("/api/punches", json={"device_user_id": "HD", "ts": ts})
+        r = {x["device_user_id"]: x for x in c.get("/api/reports/daily?day=2026-10-12").json()}["HD"]
+        assert (r["status"], r["late_min"]) == ("Half Day", 0) and "half-day Casual leave" in r["note"]
+        # HR records a past half day with no balance left: 0.75 day cut in payroll; the other half (no punch) is absent
+        r = c.post("/api/leaves", json={"device_user_id": "HD", "start_date": "2026-10-09", "end_date": "2026-10-09", "type": "Casual", "half": True})
+        assert [(x["type"], x["lop"], x["half"]) for x in r.json()["parts"]] == [("Casual", 0.75, 1)]
+        r = {x["device_user_id"]: x for x in c.get("/api/reports/daily?day=2026-10-09").json()}["HD"]
+        assert r["status"] == "Absent" and "0.75x pay cut" in r["note"]
+        pay = {x["device_user_id"]: x for x in c.get("/api/reports/payroll?month=2026-10").json()}["HD"]
+        assert pay["leave_cut"] == 750.0

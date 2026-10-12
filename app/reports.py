@@ -77,6 +77,15 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
     off = wd in offs
     out = {"date": d, "status": "", "first_in": "", "last_out": "", "hours": 0.0, "punches": 0,
            "late_min": 0, "early_min": 0, "ot_min": 0, "note": ""}
+    leave = next((l for l in leaves if l["device_user_id"] == emp["device_user_id"] and l["start_date"] <= d <= l["end_date"]), None)
+    half = leave if leave and leave.get("half") and not off and d not in holidays else None
+
+    def half_leave():   # half-day leave: the other half is paid from the leave balance (or cut if beyond it)
+        out["half_leave"] = 0 if half["type"] == "Unpaid" else 0.5
+        if half.get("lop"):
+            out["lop"] = half["lop"]
+        out["note"] = (out["note"] + "; " if out["note"] else "") + f"half-day {half['type']} leave" + \
+            (f" ({half['lop']:g}x pay cut)" if half.get("lop") else "")
     if p:
         first, last, n = datetime.fromisoformat(p["a"]), datetime.fromisoformat(p["b"]), p["n"]
         fm, lm = first.hour * 60 + first.minute, last.hour * 60 + last.minute
@@ -109,6 +118,9 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
         if dict(p).get("w"):
             out["wfh"] = True
             out["note"] = "WFH" + ("; " + out["note"] if out["note"] else "")
+        if half:            # worked the other half: a half day, without late / early marks
+            status, out["late_min"], out["early_min"] = "Half Day", 0, 0
+            half_leave()
         out["status"] = status
         return out
     if d > today or d < (emp.get("joined") or "") or (emp.get("left_on") and d > emp["left_on"]):
@@ -119,11 +131,13 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
         elif off:
             out["status"] = "Weekly Off"
         return out
-    leave = next((l for l in leaves if l["device_user_id"] == emp["device_user_id"] and l["start_date"] <= d <= l["end_date"]), None)
     if d in holidays:     # holidays and weekly offs inside a leave stay holidays / weekly offs (only working days are leave)
         out["status"], out["note"] = "Holiday", holidays[d]
     elif off:
         out["status"] = "Weekly Off"
+    elif half:              # half-day leave but no punch: the worked half is absent
+        out["status"] = "Absent"
+        half_leave()
     elif leave:
         out["status"], out["note"] = "Leave", leave["type"]
         if leave.get("lop"):     # beyond the balance: still a leave day, but salary is cut lop x a day
@@ -181,13 +195,14 @@ def _summary(e: dict, sh: dict | None, res: list[dict]) -> dict:
         "device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
         "designation": e["designation"], "branch": e["branch"], "shift": sh["name"] if sh else "",
         "days_present": full + cnt("Half Day"), "late_days": cnt("Late"), "half_days": cnt("Half Day"),
-        "absent": cnt("Absent"), "leave": cnt("Leave"), "holidays": cnt("Holiday"), "weekly_offs": cnt("Weekly Off"),
+        "absent": cnt("Absent"), "leave": cnt("Leave") + 0.5 * sum(1 for r in res if "half_leave" in r), "holidays": cnt("Holiday"), "weekly_offs": cnt("Weekly Off"),
         "total_hours": round(sum(r["hours"] for r in res), 2),
         "late_minutes": sum(r["late_min"] for r in res), "early_minutes": sum(r["early_min"] for r in res),
         "overtime_hours": round(sum(r["ot_min"] for r in res) / 60, 2),
         "wfh_days": sum(1 for r in res if r.get("wfh")),
         "leave_cut_days": sum(r.get("lop", 0) for r in res),   # days' salary cut for leave beyond the balance
-        "paid_days": round(full + 0.5 * cnt("Half Day") + paid_leave + cnt("Holiday") + cnt("Weekly Off") - wfh_cut, 2),
+        "paid_days": round(full + 0.5 * cnt("Half Day") + paid_leave + cnt("Holiday") + cnt("Weekly Off") - wfh_cut
+                           + sum(r.get("half_leave", 0) for r in res), 2),
     }
 
 

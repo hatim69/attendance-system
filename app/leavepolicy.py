@@ -7,6 +7,8 @@
   * ADHOC / SICK (emergency, uninformed, or less than 7 days' notice): 1 per quarter (Apr-Jun, Jul-Sep, Oct-Dec,
     Jan-Mar). Beyond the limit each day costs 2 x a day's salary and also uses 1 day of the Casual balance.
   * FESTIVE: only on a date from the office's festival list (holidays marked as festival / optional); 8 a year.
+  * HALF DAY: half a day from the Casual (then Adhoc / Sick) balance, so the day is paid in full; with no balance,
+    0.5 x 1.5 = 0.75 of a day's salary is cut. No notice needed.
   * A day's salary = monthly salary / calendar days in that month.
 
 Only working days count (weekly offs and holidays inside a leave are free). Pending applications reserve balance;
@@ -108,9 +110,11 @@ def usage(emp: dict, ctx) -> Counter:
             continue
         s, e = date.fromisoformat(r["start_date"]), date.fromisoformat(r["end_date"])
         days = [s] if t == "Festive" else working_days(emp, s, e, ctx)
+        unit = 0.5 if r["half"] else 1
+        lop = (r["lop"] or 0) / unit                 # per full day, so a half-day Adhoc beyond balance is still 2x
         for d in days:
-            for k in _keys(t, r["lop"] or 0, d):
-                u[k] += 1
+            for k in _keys(t, lop, d):
+                u[k] += unit
     return u
 
 
@@ -123,7 +127,7 @@ def left(u: Counter, kind: str, d: date) -> float:
     return FESTIVE_PER_YEAR - u[("F-Y", fy(d))]
 
 
-def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict: bool = True) -> dict:
+def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict: bool = True, half: bool = False) -> dict:
     """Work out how an application would be taken. Each working day becomes Casual, Adhoc or Festive (paid), Casual /
     Adhoc beyond the balance (paid, then a pay cut of 1.5x / 2x a day's salary), or Unpaid (before leave starts).
     Returns the split, the pay cut, warnings to show, and whether the employee must sign a consent, or {"error": ...}.
@@ -144,6 +148,12 @@ def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict
         return {"error": f"A leave can cover at most {MAX_RANGE_DAYS} days"}
     if strict and start < applied_on - timedelta(days=BACKDATE_DAYS):
         return {"error": f"You can apply for leave that started at most {BACKDATE_DAYS} days ago. Ask HR to record older leave."}
+    if half:
+        if end != start:
+            return {"error": "A half day is a single date"}
+        if kind == "Festive":
+            return {"error": "Festive leave is for a whole day"}
+        kind = "Casual"   # half days use Casual, then Adhoc / Sick, with no notice needed
     if kind == "Festive":
         fest = festival_dates()
         days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
@@ -156,34 +166,35 @@ def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict
     if not days:
         return {"error": "There are no working days in that range (weekly offs and holidays are not counted)"}
     elig = eligible_from(emp.get("joined"))
-    notice_ok = (start - applied_on).days >= NOTICE_DAYS
+    notice_ok = half or (start - applied_on).days >= NOTICE_DAYS
+    unit = 0.5 if half else 1
     u = usage(emp, ctx)
-    alloc = []   # (day, type, lop)
+    alloc = []   # (day, type, lop per full day)
     for d in days:
         if elig and d < elig:
             t, lop = "Unpaid", 0.0
         elif kind == "Festive":
-            if left(u, "Festive", d) <= 0:
+            if left(u, "Festive", d) < 1:
                 return {"error": f"All {FESTIVE_PER_YEAR} festive leaves of this year are used. Apply for Casual leave instead."}
             t, lop = "Festive", 0.0
-        elif kind == "Casual" and notice_ok and left(u, "Casual", d) > 0:
+        elif kind == "Casual" and notice_ok and left(u, "Casual", d) >= unit:
             t, lop = "Casual", 0.0
-        elif left(u, "Adhoc", d) > 0:
+        elif left(u, "Adhoc", d) >= unit:
             t, lop = "Adhoc", 0.0
         elif kind == "Casual" and notice_ok:
             t, lop = "Casual", CASUAL_EXCESS_CUT
         else:
             t, lop = "Adhoc", ADHOC_EXCESS_CUT
         for k in _keys(t, lop, d):
-            u[k] += 1
+            u[k] += unit
         alloc.append((d, t, lop))
 
     salary = emp.get("salary") or 0
     cnt = lambda t, ex=False: sum(1 for _, x, lop in alloc if x == t and (lop > 0) == ex)
     unpaid = [d for d, t, _ in alloc if t == "Unpaid"]
     excess = [(d, lop) for d, t, lop in alloc if lop > 0]
-    cut_unpaid = round(sum(per_day_pay(salary, d) for d in unpaid), 2)
-    cut_excess = round(sum(per_day_pay(salary, d) * lop for d, lop in excess), 2)
+    cut_unpaid = round(sum(per_day_pay(salary, d) * unit for d in unpaid), 2)
+    cut_excess = round(sum(per_day_pay(salary, d) * lop * unit for d, lop in excess), 2)
     deduction = round(cut_unpaid + cut_excess, 2)
     adhoc_left = max(left(u, "Adhoc", days[0]), 0)
     rs = lambda v: f"Rs {v:,.2f}"
@@ -199,7 +210,13 @@ def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict
     elif kind == "Casual" and converted:
         warnings.append(f"Your Casual balance is not enough, so {converted} day(s) will use your Adhoc / Sick leave. "
                         f"Adhoc left this quarter after this: {adhoc_left:g}.")
-    if excess:
+    if half:
+        warnings.insert(0, "Half day: half of the day comes from your leave balance, so the day is paid in full"
+                        + (" (not this time: see below)." if excess or unpaid else "."))
+    if excess and half:
+        warnings.append("You don't have enough leave balance for the half day: 0.5 x 1.5 = 0.75 of a day's salary"
+                        + (f" ({rs(cut_excess)})" if salary else "") + " will be cut.")
+    elif excess:
         n15, n2 = cnt("Casual", True), cnt("Adhoc", True)
         bits = ([f"{n15} Casual day(s) x 1.5 day's salary"] if n15 else []) + \
                ([f"{n2} Adhoc day(s) x 2 days' salary (each also uses 1 Casual day)"] if n2 else [])
@@ -221,8 +238,9 @@ def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict
                 date.fromisoformat(parts[-1]["end_date"]) + timedelta(days=1) == d:
             parts[-1]["end_date"] = d.isoformat()
         else:
-            parts.append({"type": t, "lop": lop, "start_date": d.isoformat(), "end_date": d.isoformat()})
-    return {"days": [d.isoformat() for d in days], "working_days": len(days),
+            parts.append({"type": t, "lop": round(lop * unit, 2), "half": int(half),
+                          "start_date": d.isoformat(), "end_date": d.isoformat()})
+    return {"days": [d.isoformat() for d in days], "working_days": len(days) * unit, "half": half,
             "casual_days": cnt("Casual"), "adhoc_days": cnt("Adhoc"), "festive_days": cnt("Festive"),
             "excess_days": len(excess), "unpaid_days": len(unpaid), "deduction": deduction,
             "per_day": per_day_pay(salary, days[0]), "salary_known": bool(salary), "warnings": warnings,

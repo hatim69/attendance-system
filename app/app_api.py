@@ -145,10 +145,11 @@ def my_payslip_pdf(month: str, emp: dict = Depends(current_employee)):
 
 class LeaveRequest(BaseModel):
     start_date: str
-    end_date: str
+    end_date: str = ""         # empty = one day
     type: str          # Casual | Adhoc | Festive
     reason: str = ""
     consent_name: str = ""     # typed full name = signature, required when part of the leave is unpaid
+    half: bool = False         # half-day leave (one date)
 
 
 @router.get("/leave-balance")
@@ -159,15 +160,15 @@ def my_leave_balance(emp: dict = Depends(current_employee)):
 @router.get("/leaves")
 def my_leaves(emp: dict = Depends(current_employee)):
     rows = db.conn().execute(
-        "SELECT id, start_date, end_date, type, lop, note, status, applied_on FROM leaves WHERE device_user_id=? "
+        "SELECT id, start_date, end_date, type, lop, half, note, status, applied_on FROM leaves WHERE device_user_id=? "
         "AND end_date >= date('now','-400 day') ORDER BY start_date DESC LIMIT 50", (emp["device_user_id"],))
     return [dict(r) for r in rows]
 
 
 @router.get("/leave/preview")
-def preview_leave(type: str, start_date: str, end_date: str, emp: dict = Depends(current_employee)):
-    """What applying would mean: Normal / Adhoc / unpaid split, pay deduction, warnings, consent text."""
-    p = leavepolicy.plan(emp["device_user_id"], type, start_date, end_date or start_date, now_local().date(), strict=True)
+def preview_leave(type: str, start_date: str, end_date: str = "", half: bool = False, emp: dict = Depends(current_employee)):
+    """What applying would mean: Casual / Adhoc / Festive split, pay cut, warnings, consent text."""
+    p = leavepolicy.plan(emp["device_user_id"], type, start_date, end_date or start_date, now_local().date(), strict=True, half=half)
     if "error" in p:
         raise HTTPException(400, p["error"])
     return p
@@ -182,7 +183,8 @@ def apply_leave(body: LeaveRequest, request: Request, emp: dict = Depends(curren
     """Apply for Normal or Adhoc leave. It stays pending (and reserves the balance) until HR approves it.
     Beyond the balance it falls back to Adhoc, then unpaid days, which need the employee's signed consent."""
     today = now_local().date()
-    p = leavepolicy.plan(emp["device_user_id"], body.type, body.start_date, body.end_date or body.start_date, today, strict=True)
+    p = leavepolicy.plan(emp["device_user_id"], body.type, body.start_date, body.end_date or body.start_date, today, strict=True,
+                         half=body.half)
     if "error" in p:
         raise HTTPException(400, p["error"])
     if p["needs_consent"] and _norm(body.consent_name) != _norm(emp["name"]):
@@ -190,10 +192,10 @@ def apply_leave(body: LeaveRequest, request: Request, emp: dict = Depends(curren
     group, now = uuid.uuid4().hex[:12], now_local().strftime("%Y-%m-%d %H:%M:%S")
     c = db.conn()
     for part in p["parts"]:
-        c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by,group_id,lop) "
-                  "VALUES (?,?,?,?,?, 'pending', ?, ?, ?, ?)",
+        c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by,group_id,lop,half) "
+                  "VALUES (?,?,?,?,?, 'pending', ?, ?, ?, ?, ?)",
                   (emp["device_user_id"], part["start_date"], part["end_date"], part["type"], body.reason[:200],
-                   today.isoformat(), emp["device_user_id"], group, part["lop"]))
+                   today.isoformat(), emp["device_user_id"], group, part["lop"], part["half"]))
     if p["needs_consent"]:
         c.execute("INSERT INTO leave_consents(group_id,device_user_id,text,typed_name,ip,user_agent,at) VALUES (?,?,?,?,?,?,?)",
                   (group, emp["device_user_id"], p["consent_text"], body.consent_name.strip()[:100],

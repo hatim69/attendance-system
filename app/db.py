@@ -157,6 +157,25 @@ CREATE TABLE IF NOT EXISTS wfh_requests (      -- work-from-home days asked for 
     decided_by TEXT NOT NULL DEFAULT '',
     decided_at TEXT
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_subscriptions (  -- phones that turned on reminders (Web Push)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_user_id TEXT NOT NULL,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_log (           -- one reminder of each kind per person per day
+    device_user_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    kind TEXT NOT NULL,                         -- in | out
+    sent_at TEXT NOT NULL,
+    PRIMARY KEY(device_user_id, date, kind)
+);
 CREATE TABLE IF NOT EXISTS sites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

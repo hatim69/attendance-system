@@ -42,6 +42,16 @@
  input{min-width:0;display:block}
  .login-hero{text-align:center;padding-bottom:80px}.login-hero h1{margin-top:22px}
  .center{text-align:center}
+ #home{padding-bottom:calc(84px + env(safe-area-inset-bottom))}
+ .phead{background:radial-gradient(400px 200px at 0 0,#818cf8 0,transparent 70%),linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;margin:0 -16px;padding:calc(26px + env(safe-area-inset-top)) 22px 60px;border-radius:0 0 28px 28px}
+ .phead h2{margin:0;font-size:24px;letter-spacing:-.01em}.phead .sub{opacity:.85;font-size:14px;margin-top:2px}
+ .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;justify-content:space-around;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);border-top:1px solid #e5e8f0;padding:6px 6px calc(6px + env(safe-area-inset-bottom));max-width:440px;margin:0 auto;box-shadow:0 -6px 20px rgba(15,23,42,.05)}
+ .tabbar button{background:none;color:#64748b;height:auto;width:auto;flex:1;padding:6px 0;font-size:11.5px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:12px}
+ .tabbar button svg{width:22px;height:22px}.tabbar button.on{color:#4f46e5}.tabbar button.on svg{background:#eef2ff;border-radius:10px;padding:3px 10px;width:42px;height:28px}
+ button.ghost{background:#fff;color:#dc2626;border:1px solid #fecaca} button.sm{height:42px;font-size:15px;margin-top:12px}
+ .selfie{display:flex;align-items:center;justify-content:center;gap:10px;height:96px;border:2px dashed #c7d2fe;border-radius:16px;background:#f8faff;color:#4f46e5;font-weight:650;font-size:16px;margin:0;cursor:pointer}
+ .selfie svg{width:26px;height:26px}.selfie.done{border-style:solid;background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+ .nudge{background:linear-gradient(135deg,#eef2ff,#f5f3ff);border:1px solid #c7d2fe}.nudge b{display:block;margin-bottom:4px}.nudge span{font-size:14px;color:#475569}
  .warn{background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-radius:12px;padding:12px 14px;font-size:14px;margin:0 0 14px}
  .warn.bad{background:#fef2f2;border-color:#fecaca;color:#7f1d1d} .warn b{display:block;margin-bottom:4px}
  .split{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}.split span{font-size:13px;font-weight:600;padding:4px 10px;border-radius:20px;background:#eef2ff;color:#3730a3}.split span.u{background:#fee2e2;color:#991b1b}.split span.a{background:#fef3c7;color:#92400e}
@@ -60,16 +70,22 @@
 </div>
 
 <div id="home" class="hide">
+ <section class="tab" id="t-home">
   <div class="hero"><div class="top"><div class="logo"><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg></div>Attendance</div>
     <h1 id="greet">Hello</h1><div class="sub"><span id="who"></span> · <span id="dateNow"></span></div><div class="clock" id="clock"></div><div class="sub" id="siteInfo"></div></div>
   <div class="card lift" id="camCard">
     <div class="camwrap"><video id="vid" autoplay playsinline muted></video></div>
-    <input id="fileFallback" type="file" accept="image/*" capture="user" class="hide">
+    <input id="fileFallback" type="file" accept="image/*" capture="user" style="display:none">
+    <label for="fileFallback" id="selfieBtn" class="selfie hide"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg><span id="selfieLbl">Take a selfie</span></label>
     <div class="punch"><button id="punchBtn" class="big" disabled><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg><span id="punchLbl">Check in</span></button></div>
     <div id="status" class="msg info">Getting your location…</div>
   </div>
   <div class="card"><h3><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Today</h3><ul id="today"></ul></div>
-  <div class="card" id="leaveCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>Leave</h3>
+  <div class="card nudge hide" id="pushNudge"><b>Never forget to check in</b><span>Turn on reminders: we'll notify you if you haven't checked in an hour into your shift, and 15 minutes before it ends.</span><button class="sm" onclick="go('me')">Turn on reminders</button></div>
+ </section>
+ <section class="tab hide" id="t-leave">
+  <div class="phead"><h2>Leave</h2><div class="sub">Balance, applications and their status</div></div>
+  <div class="card lift" id="leaveCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>Leave</h3>
     <div id="lbal" class="muted" style="margin-bottom:12px"></div>
     <div id="lform" class="hide">
       <label for="lty">Type</label><select id="lty"><option value="Casual">Casual (apply 7+ days ahead)</option><option value="Adhoc">Adhoc / Sick (emergency)</option><option value="Festive">Festive (festival list only)</option></select>
@@ -83,15 +99,37 @@
       <button id="lap">Apply for leave</button>
     </div>
     <div id="lmsg"></div><ul id="llist" style="margin-top:8px"></ul></div>
-  <div class="card" id="wfhCard"><h3><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>Work from home</h3>
+ </section>
+ <section class="tab hide" id="t-wfh">
+  <div class="phead"><h2>Work from home</h2><div class="sub">Request it and see when it's approved</div></div>
+  <div class="card lift" id="wfhCard"><h3><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>Work from home</h3>
     <div id="wtoday"></div>
     <p class="muted" style="margin:0 0 12px;font-size:14px">Ask your team lead or HR. On approved days you can check in from anywhere; the day is paid at 0.8.</p>
     <div class="row2"><div><label for="wfr">From</label><input id="wfr" type="date"></div><div><label for="wto">To</label><input id="wto" type="date"></div></div>
     <label for="wre">Reason</label><input id="wre" placeholder="e.g. plumber visit" maxlength="200">
     <button id="wap">Request work from home</button>
     <div id="wmsg"></div><ul id="wlist" style="margin-top:8px"></ul></div>
-  <div class="card hide" id="slipCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18"/><path d="M6 6V5a2 2 0 0 1 2-2h9"/></svg>My payslips</h3><ul id="slips"></ul></div>
-  <div class="center"><button class="link" id="logout">Sign out</button></div>
+ </section>
+ <section class="tab hide" id="t-pay">
+  <div class="phead"><h2>Payslips</h2><div class="sub">Available once HR publishes a finished month</div></div>
+  <div class="card lift" id="slipCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18"/><path d="M6 6V5a2 2 0 0 1 2-2h9"/></svg>My payslips</h3><ul id="slips"></ul></div>
+ </section>
+ <section class="tab hide" id="t-me">
+  <div class="phead"><h2 id="meName">Me</h2><div class="sub" id="meId"></div></div>
+  <div class="card lift"><h3><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>Reminders</h3>
+    <p class="muted" style="margin:0 0 12px;font-size:14px">A notification if you haven't checked in an hour after your shift starts, and 15 minutes before your shift ends if you haven't checked out.</p>
+    <div id="pushState"></div><button id="pushBtn">Turn on reminders</button></div>
+  <div class="card"><h3><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg>About</h3>
+    <ul><li><span>Your data and privacy</span><a href="/privacy" target="_blank" style="color:#4f46e5;font-weight:600;text-decoration:none">Read</a></li><li><span>Forgot your PIN?</span><span class="muted">Ask HR</span></li></ul></div>
+  <button id="logout" class="ghost">Sign out</button>
+ </section>
+ <nav class="tabbar">
+  <button data-go="home" class="on"><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg>Check in</button>
+  <button data-go="leave"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>Leave</button>
+  <button data-go="wfh"><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>WFH</button>
+  <button data-go="pay"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18"/><path d="M6 6V5a2 2 0 0 1 2-2h9"/></svg>Payslips</button>
+  <button data-go="me"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.5-6 8-6s7 2 8 6"/></svg>Me</button>
+ </nav>
 </div>
 <canvas id="cv" class="hide"></canvas>
 </div>
@@ -112,12 +150,13 @@ $('#loginBtn').onclick=async()=>{
     token=j.token; try{localStorage.setItem('att_token',token)}catch(e){} $('#pin').value=''; start();
   }catch(e){const m=$('#loginMsg'); msg(m,e.message,'err')}
 };
-function logout(){token=null;try{localStorage.removeItem('att_token')}catch(e){} stopCam(); show('login')}
+let LEAVING=false;
+async function logout(){if(LEAVING)return;LEAVING=true;await pushOff().catch(()=>{});LEAVING=false;token=null;try{localStorage.removeItem('att_token')}catch(e){} stopCam(); go('home'); show('login')}
 $('#logout').onclick=logout;
 function stopCam(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
 async function start(){
   try{me=await api('/me')}catch(e){return show('login')}
-  show('home'); $('#who').textContent='ID '+me.employee_id; const h=new Date().getHours(); $('#greet').textContent=(h<12?'Good morning':h<17?'Good afternoon':'Good evening')+', '+me.name.split(' ')[0];
+  show('home'); $('#who').textContent='ID '+me.employee_id; $('#meName').textContent=me.name; $('#meId').textContent='Employee ID '+me.employee_id; pushUI(); const h=new Date().getHours(); $('#greet').textContent=(h<12?'Good morning':h<17?'Good afternoon':'Good evening')+', '+me.name.split(' ')[0];
   $('#siteInfo').textContent=me.sites.length?'Allowed at: '+me.sites.map(s=>s.name).join(', '):'';
   $('#today').innerHTML=me.today.length?me.today.map(p=>`<li><span class="tl"><i class="${p.status?'o':''}"></i>${p.status?'Check out':'Check in'}${p.flag=='outside_geofence'?' <span class="tag pending">outside area</span>':''}</span><b>${p.ts.slice(11,16)}</b></li>`).join(''):'<li class="muted">No punches yet today</li>';
   const out=me.today.length%2==1; $('#punchLbl').textContent=out?'Check out':'Check in'; $('#punchBtn').classList.toggle('out',out);
@@ -175,15 +214,16 @@ $('#wap').onclick=async()=>{const m=$('#wmsg');try{
   msg(m,'Requested. Your team lead or HR will approve it.','ok');$('#wre').value='';loadWfh();
  }catch(e){msg(m,e.message,'err')}};
 async function loadSlips(){
-  try{const l=await api('/payslips'); $('#slipCard').classList.toggle('hide',!l.length);
-   $('#slips').innerHTML=l.map(x=>`<li><span>${x.month}</span><span><button class="link" data-m="${x.month}" style="color:#4f46e5;font-weight:600">Download PDF</button></span></li>`).join('');
+  try{const l=await api('/payslips');
+   if(!l.length){$('#slips').innerHTML='<li class="muted">No payslips yet. They appear here once HR publishes a finished month.</li>';return}
+   $('#slips').innerHTML=l.map(x=>`<li><span>${new Date(x.month+"-01T00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"})}</span><span><button class="link" data-m="${x.month}" style="color:#4f46e5;font-weight:600">Download PDF</button></span></li>`).join('');
    document.querySelectorAll('#slips button').forEach(b=>b.onclick=async()=>{b.textContent='Opening…';
     try{const r=await fetch('/api/app/payslip/'+b.dataset.m+'.pdf',{headers:{Authorization:'Bearer '+token}}); if(!r.ok)throw new Error('Not available');
      const url=URL.createObjectURL(await r.blob()); window.open(url,'_blank')||(location.href=url)}catch(e){alert(e.message)} b.textContent='Download PDF'})}catch(e){}
 }
 async function startCam(){
   try{stopCam(); stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640}},audio:false}); $('#vid').srcObject=stream}
-  catch(e){$('#vid').closest('.camwrap').classList.add('hide'); $('#fileFallback').classList.remove('hide')}
+  catch(e){$('#vid').closest('.camwrap').classList.add('hide'); $('#selfieBtn').classList.remove('hide')}
 }
 function locate(){return new Promise(res=>{
   if(!navigator.geolocation){msg($('#status'),'This device has no location support.','err');return res()}
@@ -206,9 +246,40 @@ $('#punchBtn').onclick=async()=>{
     msg($('#status'),`${j.type} recorded at ${j.time.slice(11,16)}${j.site?' · '+j.site:''}${j.flag?' (flagged: outside allowed area)':''}`,j.flag?'info':'ok');
   }catch(e){msg($('#status'),e.message,'err'); b.disabled=false}
 };
-document.addEventListener('visibilitychange',()=>{if(document.hidden)stopCam(); else if(token&&!$('#home').classList.contains('hide'))startCam()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopCam(); else if(token&&TAB=='home'&&!$('#home').classList.contains('hide'))startCam()});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('/m/sw.js').catch(()=>{});
 function tick(){const d=new Date();$('#clock').textContent=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});$('#dateNow').textContent=d.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'short'})}
 tick(); setInterval(tick,10000);
-if(token) start(); else show('login');
+// ---- sections ----
+let TAB='home';
+$('#fileFallback').addEventListener('change',()=>{const f=$('#fileFallback').files[0];$('#selfieBtn').classList.toggle('done',!!f);$('#selfieLbl').textContent=f?'Selfie ready · tap to retake':'Take a selfie'});
+function go(t){TAB=t;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('hide',x.id!='t-'+t));
+  document.querySelectorAll('.tabbar button').forEach(b=>b.classList.toggle('on',b.dataset.go==t));window.scrollTo(0,0);
+  if(t=='home'){if(token&&!stream)startCam()}else stopCam();
+  try{history.replaceState(null,'',t=='home'?'#':'#'+t)}catch(e){}}
+document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>go(b.dataset.go));
+// ---- reminders (web push) ----
+const pushOK=()=>'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
+const b64u=s=>{const p='='.repeat((4-s.length%4)%4),b=atob((s+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(b,c=>c.charCodeAt(0))};
+async function pushSub(){if(!pushOK())return null;const reg=await navigator.serviceWorker.ready;return reg.pushManager.getSubscription()}
+async function pushOff(){const s=await pushSub();if(!s)return;try{await api('/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s.toJSON())})}catch(e){}await s.unsubscribe()}
+async function pushOn(){
+  if(!pushOK())throw new Error('This phone or browser does not support notifications.');
+  const perm=await Notification.requestPermission();
+  if(perm!='granted')throw new Error('Notifications are blocked. Allow them for this app in your phone settings, then try again.');
+  const {key}=await api('/push/key'); const reg=await navigator.serviceWorker.ready;
+  const s=(await reg.pushManager.getSubscription())||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(key)});
+  await api('/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s.toJSON())});
+}
+async function pushUI(){const st=$('#pushState'),bt=$('#pushBtn');
+  if(!pushOK()){st.innerHTML='<div class="msg info" style="margin:0 0 12px">Reminders need the app from the Play Store (or Chrome on Android).</div>';bt.classList.add('hide');$('#pushNudge').classList.add('hide');return}
+  let on=false;try{on=!!(await pushSub())&&Notification.permission=='granted'}catch(e){}
+  if(on){try{await api('/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify((await pushSub()).toJSON())})}catch(e){}}  // keep the server in sync (e.g. after signing in as someone else)
+  st.innerHTML=on?'<div class="msg ok" style="margin:0 0 12px">Reminders are on for this phone.</div>':'';
+  bt.textContent=on?'Turn off reminders':'Turn on reminders';bt.className=on?'ghost':'';bt.classList.remove('hide');
+  $('#pushNudge').classList.toggle('hide',on);
+  st.className='';
+  bt.onclick=async()=>{bt.disabled=true;let err='';try{on?await pushOff():await pushOn()}catch(e){err=e.message}bt.disabled=false;
+   if(err)st.innerHTML=`<div class="msg err" style="margin:0 0 12px">${esc(err)}</div>`;else pushUI()}}
+if(token){start();const h=location.hash.slice(1);if(['leave','wfh','pay','me'].includes(h))go(h)} else show('login');
 </script></body></html>

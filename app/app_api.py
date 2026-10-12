@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
-from . import auth, config, db, geo, hub, leavepolicy, payslip, reports
+from . import auth, config, db, geo, hub, leavepolicy, payslip, push, reports
 from .timeutil import now_local
 
 router = APIRouter(prefix="/api/app")
@@ -269,5 +269,41 @@ def cancel_wfh(req_id: int, emp: dict = Depends(current_employee)):
     if row["status"] != "pending":
         raise HTTPException(400, "Only a pending request can be cancelled")
     c.execute("DELETE FROM wfh_requests WHERE id=?", (req_id,))
+    c.commit()
+    return {"ok": True}
+
+
+class PushKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscription(BaseModel):
+    endpoint: str
+    keys: PushKeys
+
+
+@router.get("/push/key")
+def push_key(emp: dict = Depends(current_employee)):
+    return {"key": push.public_key()}
+
+
+@router.post("/push/subscribe")
+def push_subscribe(sub: PushSubscription, emp: dict = Depends(current_employee)):
+    """Turn on check-in / check-out reminders for this phone. A phone belongs to whoever subscribed it last."""
+    if not sub.endpoint.startswith("https://") or len(sub.endpoint) > 1000:
+        raise HTTPException(400, "Invalid subscription")
+    c = db.conn()
+    c.execute("INSERT INTO push_subscriptions(device_user_id,endpoint,p256dh,auth,created_at) VALUES (?,?,?,?,?) "
+              "ON CONFLICT(endpoint) DO UPDATE SET device_user_id=excluded.device_user_id, p256dh=excluded.p256dh, auth=excluded.auth",
+              (emp["device_user_id"], sub.endpoint, sub.keys.p256dh[:200], sub.keys.auth[:100], now_local().strftime("%Y-%m-%d %H:%M:%S")))
+    c.commit()
+    return {"ok": True}
+
+
+@router.post("/push/unsubscribe")
+def push_unsubscribe(sub: PushSubscription, emp: dict = Depends(current_employee)):
+    c = db.conn()
+    c.execute("DELETE FROM push_subscriptions WHERE endpoint=? AND device_user_id=?", (sub.endpoint, emp["device_user_id"]))
     c.commit()
     return {"ok": True}

@@ -37,6 +37,14 @@ REQUIRE_LOGIN = os.getenv("REQUIRE_LOGIN", "") not in ("", "0", "false")
 # Shown on payslips
 COMPANY_NAME = os.getenv("COMPANY_NAME", "")
 COMPANY_ADDRESS = os.getenv("COMPANY_ADDRESS", "")
+# Android app (Play Store, Trusted Web Activity): package name and the SHA-256 fingerprint(s) of the app signing key
+# (Play Console > App integrity), comma separated. Served at /.well-known/assetlinks.json so the app opens full screen.
+ANDROID_PACKAGE = os.getenv("ANDROID_PACKAGE", "com.madarwala.attendance")
+ANDROID_CERT_SHA256 = [x.strip() for x in os.getenv("ANDROID_CERT_SHA256", "").split(",") if x.strip()]
+# Push reminders in the phone app (not checked in 1 h after shift start; check out 15 min before shift end)
+PUSH_REMINDERS = os.getenv("PUSH_REMINDERS", "1") not in ("", "0", "false")
+# Shown on the privacy policy page (required by the Play Store)
+PRIVACY_CONTACT = os.getenv("PRIVACY_CONTACT", "")
 # Optional safety net: append every scan received from a fingerprint device to this CSV file (the columns match the
 # Import tab, so the file can be loaded later). Leave empty to disable. Example: PUNCH_LOG_FILE=punches_log.csv
 PUNCH_LOG_FILE = os.getenv("PUNCH_LOG_FILE", "")

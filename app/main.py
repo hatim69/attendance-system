@@ -1,5 +1,6 @@
 import asyncio
 import csv
+import html
 import io
 import logging
 import secrets
@@ -10,13 +11,13 @@ import os
 import re
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from . import access, adms, app_api, auth, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, payslip, reports, zk_poller
+from . import access, adms, app_api, auth, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, payslip, push, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 
@@ -32,7 +33,10 @@ async def lifespan(app: FastAPI):
     hub.bind_loop(asyncio.get_running_loop())
     zk_poller.start()
     fk_server = await fkweb.start()
+    reminders = asyncio.create_task(push.loop()) if config.PUSH_REMINDERS else None
     yield
+    if reminders:
+        reminders.cancel()
     if fk_server:
         fk_server.close()
 
@@ -296,6 +300,7 @@ def list_employees():
     rows = [dict(r) for r in db.conn().execute(
         "SELECT e.id, e.device_user_id, e.name, e.department, e.designation, e.branch, e.mobile, e.father_name, e.active, e.pin_hash IS NOT NULL AS pin_hash, e.shift_id, "
         "e.salary, COALESCE(e.joined,'') joined, e.remote_ok, COALESCE(e.left_on,'') left_on, COALESCE(s.name,'') shift, "
+        "(SELECT COUNT(*) FROM push_subscriptions p WHERE p.device_user_id=e.device_user_id) reminders, "
         "(SELECT COUNT(*) FROM employee_documents d WHERE d.device_user_id=e.device_user_id) documents FROM employees e LEFT JOIN shifts s ON s.id=e.shift_id "
         "WHERE 1=1" + frag + " ORDER BY e.name", args)]
     if not access.salary_visible.get():       # only hr and admin see salaries
@@ -1159,6 +1164,25 @@ def mobile_redirect():
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+@app.get("/.well-known/assetlinks.json")
+def assetlinks():
+    """Digital Asset Links: tells Android that the Play Store app and this website belong together, so the app shows
+    the site full screen without a browser bar."""
+    if not config.ANDROID_CERT_SHA256:
+        return JSONResponse([])
+    return JSONResponse([{"relation": ["delegate_permission/common.handle_all_urls"],
+                          "target": {"namespace": "android_app", "package_name": config.ANDROID_PACKAGE,
+                                     "sha256_cert_fingerprints": config.ANDROID_CERT_SHA256}}])
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy():
+    """Privacy policy for the employee app (the Play Store requires a public link)."""
+    company = html.escape(config.COMPANY_NAME or "The company")
+    contact = html.escape(config.PRIVACY_CONTACT or "your HR department")
+    return open("app/static/privacy.html", encoding="utf-8").read().replace("{{COMPANY}}", company).replace("{{CONTACT}}", contact)
 
 
 app.mount("/m", StaticFiles(directory="app/static/m", html=True), name="mobile")  # employee PWA (public shell)

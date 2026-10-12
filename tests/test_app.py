@@ -1018,3 +1018,64 @@ def test_half_day_leave(tmp_path, monkeypatch):
         assert r["status"] == "Absent" and "0.75x pay cut" in r["note"]
         pay = {x["device_user_id"]: x for x in c.get("/api/reports/payroll?month=2026-10").json()}["HD"]
         assert pay["leave_cut"] == 750.0
+
+
+def test_play_store_pages(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "ps.db"))
+    monkeypatch.setattr(config, "COMPANY_NAME", "Madarwala <Tours>")
+    monkeypatch.setattr(config, "PRIVACY_CONTACT", "hr@example.com")
+    with TestClient(app) as c:
+        assert c.get("/.well-known/assetlinks.json").json() == []          # nothing until the fingerprint is configured
+        monkeypatch.setattr(config, "ANDROID_CERT_SHA256", ["AA:BB"])
+        a = c.get("/.well-known/assetlinks.json").json()[0]
+        assert a["target"]["package_name"] == "com.madarwala.attendance" and a["target"]["sha256_cert_fingerprints"] == ["AA:BB"]
+        p = c.get("/privacy")
+        assert p.status_code == 200 and "hr@example.com" in p.text and "Madarwala &lt;Tours&gt;" in p.text and "{{" not in p.text
+        m = c.get("/m/manifest.webmanifest").json()
+        assert m["id"] == "/m/" and any(i["purpose"] == "maskable" for i in m["icons"])
+        assert all(c.get("/m/" + s["src"]).status_code == 200 for s in m["screenshots"] + m["icons"])
+
+
+def test_push_reminders(tmp_path, monkeypatch):
+    from datetime import datetime as dt
+    from app import push
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "push.db"))
+    _freeze_today(monkeypatch)                                   # Saturday 10 Oct 2026
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "P 9:30-18:30", "start": "09:30", "end": "18:30", "weekly_off": "SUN"})
+        sid = c.get("/api/shifts").json()[0]["id"]
+        for uid in ("R1", "R2", "R3"):
+            c.post("/api/employees", json={"device_user_id": uid, "name": uid, "shift_id": sid})
+            c.post(f"/api/employees/{uid}/pin", json={"pin": "1234"})
+        tok = lambda uid: {"Authorization": "Bearer " + c.post("/api/app/login", json={"employee_id": uid, "pin": "1234"}).json()["token"]}
+        key = c.get("/api/app/push/key", headers=tok("R1")).json()["key"]
+        assert len(key) > 80 and c.get("/api/app/push/key", headers=tok("R1")).json()["key"] == key      # stable
+        sub = lambda uid, n: c.post("/api/app/push/subscribe", headers=tok(uid),
+                                    json={"endpoint": f"https://push.example/{n}", "keys": {"p256dh": "p", "auth": "a"}})
+        assert sub("R1", 1).status_code == 200 and sub("R2", 2).status_code == 200
+        assert c.post("/api/app/push/subscribe", headers=tok("R3"), json={"endpoint": "http://x", "keys": {"p256dh": "p", "auth": "a"}}).status_code == 400
+        assert {e["device_user_id"]: e["reminders"] for e in c.get("/api/employees").json()} == {"R1": 1, "R2": 1, "R3": 0}
+        c.post("/api/leaves", json={"device_user_id": "R2", "start_date": "2026-10-10", "end_date": "2026-10-10", "type": "Paid"})
+        at = lambda h, m: dt(2026, 10, 10, h, m)
+        assert push.due(at(10, 29)) == []                                        # less than an hour after 09:30
+        d = push.due(at(10, 30))
+        assert [(x["uid"], x["kind"]) for x in d] == [("R1", "in")] and "09:30" in d[0]["body"]   # R2 is on leave, R3 has no phone
+        sent = []
+        monkeypatch.setattr(push, "webpush", lambda *a, **k: sent.append(a[0]["endpoint"]))
+        assert push.run_once(at(10, 31)) == 1 and sent == ["https://push.example/1"]
+        assert push.run_once(at(11, 0)) == 0                                     # once a day
+        c.post("/api/punches", json={"device_user_id": "R1", "ts": "2026-10-10 11:05:00"})
+        assert push.due(at(18, 14)) == []
+        assert [(x["uid"], x["kind"]) for x in push.due(at(18, 15))] == [("R1", "out")]
+        c.post("/api/punches", json={"device_user_id": "R1", "ts": "2026-10-10 18:16:00"})
+        assert push.due(at(18, 17)) == []                                        # already checked out
+        assert push.due(dt(2026, 10, 11, 11, 0)) == []                           # Sunday: weekly off
+        # a phone that uninstalled the app answers 410: its subscription is removed
+        from pywebpush import WebPushException
+        class Gone:
+            status_code = 410
+        def boom(*a, **k):
+            raise WebPushException("gone", response=Gone())
+        monkeypatch.setattr(push, "webpush", boom)
+        assert push.send("R1", "t", "b") == 0
+        assert {e["device_user_id"]: e["reminders"] for e in c.get("/api/employees").json()}["R1"] == 0

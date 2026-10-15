@@ -58,6 +58,7 @@ input[readonly]{background:#f8fafc;color:var(--muted)}
 .f{display:flex;flex-direction:column;gap:5px;min-width:0}.f>span{font-size:12px;font-weight:600;color:#475569}
 .f.w{grid-column:1/-1}
 .fg{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px}.fg.one{grid-template-columns:1fr}
+.fsec{grid-column:1/-1;margin-top:8px;padding-top:14px;border-top:1px solid var(--line2);font-size:13px;font-weight:700}.fsec small{font-weight:400;color:var(--muted);margin-left:6px}
 .chk{display:inline-flex;align-items:center;font-size:13px;color:#334155;cursor:pointer;min-height:36px}
 .btn,button{font:inherit;font-weight:600;font-size:13px;height:36px;padding:0 14px;border-radius:8px;border:1px solid #d6dbe6;background:#fff;color:#1e293b;cursor:pointer;display:inline-flex;align-items:center;gap:7px;white-space:nowrap;text-decoration:none}
 .btn:hover,button:hover{background:#f8fafc;border-color:#c5ccda}
@@ -295,6 +296,13 @@ const fixPunch=safe(async id=>{const r=punchMap[id];const v=await ask({title:'Fi
  if(!v||!v[0])return;await post(`/api/punches/${id}/correct`,{ts:v[0].replace('T',' '),remark:v[1]});toast('Punch corrected');render()});
 const ADJ=[['Bonus',1],['Incentive',1],['Overtime pay',1],['Reimbursement',1],['Arrears',1],['Fine',-1],['Deduction',-1],['Other deduction',-1]];
 const PL={employees:'Employees (add / edit)',shifts:'Shifts (edit shared)',leave:'Leave (record / approve)',holidays:'Holidays',punches:'Punches (fix)',import:'Import',payroll:'Payroll (view)',payroll_edit:'Payroll (edit / publish)',sites:'GPS sites',devices:'Devices'};
+// employee personal (p) and bank (b) fields: [field, label, input, section]
+const PF=[['mother_name',"Mother's name",'','p'],['spouse_name','Spouse name','','p'],['dob','Date of birth','date','p'],['gender','Gender',['Male','Female','Other'],'p'],
+ ['blood_group','Blood group',['A+','A-','B+','B-','AB+','AB-','O+','O-'],'p'],['nationality','Nationality','placeholder="Indian"','p'],['email','Personal e-mail','type="email"','p'],['work_email','Work e-mail','type="email"','p'],
+ ['govt_uid','Aadhaar / Govt. ID','inputmode="numeric"','p'],['pan','PAN','placeholder="ABCDE1234F" style="text-transform:uppercase"','p'],['passport_no','Passport number','','p'],['passport_expiry','Passport expiry','date','p'],
+ ['alt_contact','Emergency contact','placeholder="name, relation, number"','p'],['address','Address','area','p'],
+ ['bank_name','Bank name','placeholder="e.g. State Bank of India"','b'],['bank_account','Account number','inputmode="numeric"','b'],['bank_ifsc','IFSC code','placeholder="SBIN0001234" style="text-transform:uppercase"','b'],
+ ['bank_holder','Account holder name','','b'],['bank_type','Account type',['Savings','Current','Salary'],'b']];
 const HRD=['employees','shifts','leave','holidays','punches','import','payroll','payroll_edit'], MG=['employees','shifts','leave','holidays','payroll'];
 const ROLE={admin:['Admin','bad'],management:['Management','violet'],hr:['HR','sky'],manager:['Team lead','warn']};
 const PAGES={live:['Dashboard',()=>'Today at a glance · '+new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})],
@@ -457,10 +465,10 @@ async function render(){
 
  } else if(tab=='import'){
   m.innerHTML=card('',`<div class="steps">
-    <div class="step"><b><i>1</i>What are you importing?</b><select id="ik"><option value="shifts">Shifts</option><option value="employees">Employees</option><option value="holidays">Holidays</option><option value="leaves">Leave</option><option value="punches">Punches (attendance history)</option></select><a href="#" id="itpl" class="small">${I('down')} Download a sample file</a></div>
+    <div class="step"><b><i>1</i>What are you importing?</b><select id="ik"><option value="shifts">Shifts</option><option value="employees">Employees</option><option value="profiles">Employee details (personal &amp; bank)</option><option value="holidays">Holidays</option><option value="leaves">Leave</option><option value="punches">Punches (attendance history)</option></select><a href="#" id="itpl" class="small">${I('down')} Download a sample file</a></div>
     <div class="step"><b><i>2</i>Choose the file</b><input type="file" id="if" accept=".csv,.xlsx,.txt" style="height:auto;padding:8px"><label class="chk" title="For the InActive / resigned employee list: keeps their records but hides them from reports"><input type="checkbox" id="iina">These are resigned staff</label></div>
     <div class="step"><b><i>3</i>Check, then import</b><label class="chk"><input type="checkbox" id="idry" checked>Preview only (saves nothing)</label><button class="pri" id="ib">${I('upload')}Run</button></div>
-   </div><div class="cb" style="padding-top:0"><p class="hint">Excel (.xlsx) or CSV. Column names are matched automatically ("Emp Code", "Card No" and "ID" all work). Best order: <b>Shifts → Employees → Holidays → Leave → Punches</b>.</p></div><div id="t"></div>`);
+   </div><div class="cb" style="padding-top:0"><p class="hint">Excel (.xlsx) or CSV. Column names are matched automatically ("Emp Code", "Card No" and "ID" all work). Best order: <b>Shifts → Employees → Holidays → Leave → Punches</b>.<br><b>Employee details</b> fills in personal and bank details (for example the Google Form sheet) for people already in Employees. It never changes department, shift or salary, and fills mobile, father's name and joining date only where they are still empty.</p></div><div id="t"></div>`);
   $('#itpl').onclick=e=>{e.currentTarget.href='/api/import/'+$('#ik').value+'/template.csv'};
   $('#ib').onclick=safe(async()=>{const f=$('#if').files[0]; if(!f)throw new Error('Choose a file first');
    const dry=$('#idry').checked; if(!dry&&!await confirmBox('Import for real?','This writes '+f.name+' into the database.','Import',false))return;
@@ -519,13 +527,16 @@ async function render(){
 
  } else if(tab=='emp'){
   listCache=emps; const depts=[...new Set(emps.map(e=>e.department).filter(Boolean))].sort();
-  const canDocs=ME.role!='manager';
+  const canDocs=ME.role!='manager';   // HR and above: documents, personal and bank details
+  const pfld=([f,label,inp])=>fld(label,inp=='date'?`<input type="date" id="p_${f}">`:Array.isArray(inp)?`<select id="p_${f}"><option value="">—</option>${inp.map(o=>`<option>${o}</option>`).join('')}</select>`:inp=='area'?`<textarea id="p_${f}" rows="2"></textarea>`:`<input id="p_${f}" ${inp||''}>`,inp=='area');
   [MS,DOCT]=await Promise.all([j('/api/masters'),canDocs?j('/api/document-types'):[]]);
   m.innerHTML=card('',`<div class="tb">${fld('Search',`<input id="q" placeholder="Name, ID, department…" style="width:240px">`)}${fld('Department',`<select id="qd"><option value="">All</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select>`)}<label class="chk"><input type="checkbox" id="qr">Show resigned</label><div class="sp"></div><button class="pri" id="eadd">${I('plus')}Add employee</button></div>
    <div class="tb" style="background:#fafbfd">${fld('Shift for the ticked people',shiftSel('bs'))}<button id="bb">Assign shift</button><span class="hint" style="align-self:center" id="ecount"></span></div><div id="t"></div>`)+
-   formDlg('empDlg','Add employee',`<div class="fg">${fld('Employee / device ID',`<input id="i" placeholder="same as on the machine">`)}${fld('Full name',`<input id="n">`)}${fld("Father's name",`<input id="fn">`)}${fld('Mobile',`<input id="mb" inputmode="tel">`)}${fld('Department',`<select id="dp"></select>`)}${fld('Designation',`<select id="dg"></select>`)}${fld('Branch',`<input id="br">`)}${fld('Shift',shiftSel('es'))}${fld('Monthly salary',`<input id="sal" type="number" min="0">`)}${fld('Joining date',`<input type="date" id="jd">`)}
+   formDlg('empDlg','Add employee',`<div class="fg">${fld('Employee / device ID',`<input id="i" placeholder="same as on the machine">`)}${fld('Full name',`<input id="n">`)}${fld('Mobile',`<input id="mb" inputmode="tel">`)}${fld('Department',`<select id="dp"></select>`)}${fld('Designation',`<select id="dg"></select>`)}${fld('Branch',`<input id="br">`)}${fld('Shift',shiftSel('es'))}${fld('Monthly salary',`<input id="sal" type="number" min="0">`)}${fld('Joining date',`<input type="date" id="jd">`)}
      <label class="chk" style="grid-column:1/-1"><input type="checkbox" id="rmt">Can check in from anywhere with the phone app (work from home / field work)</label>
-     <label class="chk"><input type="checkbox" id="ac" checked>Active</label><div id="lwBox" style="display:none">${fld('Last working day',`<input type="date" id="lw">`)}</div></div>
+     <label class="chk"><input type="checkbox" id="ac" checked>Active</label><div id="lwBox" style="display:none">${fld('Last working day',`<input type="date" id="lw">`)}</div>
+     ${canDocs?`<div class="fsec">Personal details</div>${fld("Father's / husband's name",`<input id="fn">`)}${PF.filter(f=>f[3]=='p').map(pfld).join('')}
+     <div class="fsec">Bank details<small>for salary transfer</small></div>${PF.filter(f=>f[3]=='b').map(pfld).join('')}`:''}</div>
     ${canDocs?`<div class="f" style="margin-top:16px"><span>Documents</span><div class="perm" style="display:block;padding:12px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="dtp">${DOCT.map(t=>`<option>${esc(t)}</option>`).join('')}</select><input type="file" id="dfile" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx" style="height:auto;padding:6px;flex:1;min-width:180px"><button type="button" class="sm" id="dadd">${I('upload')}Add</button></div><div id="dlist" style="margin-top:10px"></div><p class="hint" style="margin-top:6px">PDF, photo or Word file, up to 10 MB each.</p></div></div>`:''}
     <p class="hint" style="margin-top:12px">IDs ignore leading zeros (00217315 = 217315). Set an app PIN from the list so the person can use the phone app.</p>`,'s','Save employee');
   const opts=(sel,list,kind,val)=>{const names=list.map(x=>x.name);if(val&&!names.includes(val))names.push(val);$(sel).innerHTML=`<option value="">—</option>${names.map(n=>`<option ${n==val?'selected':''}>${esc(n)}</option>`).join('')}<option value="__new">+ Add new ${kind}…</option>`};
@@ -540,7 +551,8 @@ async function render(){
   DRAWDOCS=drawDocs;
   if(canDocs)$('#dadd').onclick=safe(async()=>{const f=$('#dfile').files[0];if(!f)throw new Error('Choose a file first');if(f.size>10*1024*1024)throw new Error('File is larger than 10 MB');
    if($('#i').readOnly){await upDoc($('#i').value,f,$('#dtp').value);toast('Document uploaded')}else PENDING.push({file:f,type:$('#dtp').value});$('#dfile').value='';drawDocs()});
-  EMPFORM=(e)=>{const x=e||{};$('#i').value=x.device_user_id||'';$('#i').readOnly=!!e;$('#n').value=x.name||'';fillLists(x.department||'',x.designation||'');$('#br').value=x.branch||'';$('#mb').value=x.mobile||'';$('#fn').value=x.father_name||'';
+  EMPFORM=(e)=>{const x=e||{};if(canDocs)for(const [f] of PF){const el=$('#p_'+f),v=x[f]||'';if(el.tagName=='SELECT'&&v&&![...el.options].some(o=>o.value==v))el.add(new Option(v,v));el.value=v}
+   $('#i').value=x.device_user_id||'';$('#i').readOnly=!!e;$('#n').value=x.name||'';fillLists(x.department||'',x.designation||'');$('#br').value=x.branch||'';$('#mb').value=x.mobile||'';$('#fn').value=x.father_name||'';
    $('#ac').checked=e?!!x.active:true;$('#lw').value=x.left_on||'';$('#ac').onchange();$('#rmt').checked=!!x.remote_ok;$('#es').value=x.shift_id??'';$('#sal').value=x.salary||'';$('#jd').value=x.joined||'';PENDING=[];
    $('#empDlg .dt').textContent=e?'Edit '+x.name:'Add employee';$('#empDlg').showModal();drawDocs();if(!e)$('#i').focus()};
   const draw=()=>{const q=$('#q').value.toLowerCase(), dd=$('#qd').value, rs=$('#qr').checked;
@@ -554,7 +566,7 @@ async function render(){
   $('#bb').onclick=safe(async()=>{const ids=$$('.sel:checked').map(c=>c.value);if(!ids.length)throw new Error('Tick at least one employee in the list');
    const r=await post('/api/employees/bulk-shift',{ids,shift_id:$('#bs').value?+$('#bs').value:null});toast(r.updated+' employee'+(r.updated==1?'':'s')+' updated');render()});
   $('#s').onclick=safe(async()=>{if(!$('#ac').checked&&!$('#lw').value)throw new Error('Enter the last working day of the person who left');
-   await post('/api/employees',{device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value.replace('__new',''),designation:$('#dg').value.replace('__new',''),branch:$('#br').value,mobile:$('#mb').value,father_name:$('#fn').value,active:$('#ac').checked,left_on:$('#ac').checked?'':$('#lw').value,remote_ok:$('#rmt').checked,shift_id:$('#es').value?+$('#es').value:null,salary:+($('#sal').value||0),joined:$('#jd').value});
+   await post('/api/employees',{device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value.replace('__new',''),designation:$('#dg').value.replace('__new',''),branch:$('#br').value,mobile:$('#mb').value,...(canDocs?{father_name:$('#fn').value,...Object.fromEntries(PF.map(([f])=>[f,$('#p_'+f).value]))}:{}),active:$('#ac').checked,left_on:$('#ac').checked?'':$('#lw').value,remote_ok:$('#rmt').checked,shift_id:$('#es').value?+$('#es').value:null,salary:+($('#sal').value||0),joined:$('#jd').value});
    for(const p of PENDING)await upDoc($('#i').value,p.file,p.type);
    $('#empDlg').close();toast('Employee saved'+(PENDING.length?' with '+PENDING.length+' document'+(PENDING.length>1?'s':''):''));PENDING=[];render()});
 

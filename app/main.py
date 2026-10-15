@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from . import access, adms, app_api, auth, backup, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, payslip, push, reports, zk_poller
+from . import access, adms, app_api, auth, backup, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, payslip, profile, push, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 
@@ -64,6 +64,26 @@ class EmployeeIn(BaseModel):
     father_name: str = ""
     remote_ok: bool = False   # may check in with the phone app from anywhere (work from home / field work)
     left_on: str = ""         # last working day, for someone who resigned
+    # personal and bank details (db.PROFILE_FIELDS); left out = unchanged on an existing employee
+    dob: str | None = None
+    gender: str | None = None
+    blood_group: str | None = None
+    nationality: str | None = None
+    email: str | None = None
+    work_email: str | None = None
+    address: str | None = None
+    alt_contact: str | None = None
+    mother_name: str | None = None
+    spouse_name: str | None = None
+    govt_uid: str | None = None
+    pan: str | None = None
+    passport_no: str | None = None
+    passport_expiry: str | None = None
+    bank_name: str | None = None
+    bank_account: str | None = None
+    bank_ifsc: str | None = None
+    bank_holder: str | None = None
+    bank_type: str | None = None
 
 
 class ShiftIn(BaseModel):
@@ -314,12 +334,15 @@ def list_employees():
     rows = [dict(r) for r in db.conn().execute(
         "SELECT e.id, e.device_user_id, e.name, e.department, e.designation, e.branch, e.mobile, e.father_name, e.active, e.pin_hash IS NOT NULL AS pin_hash, e.shift_id, "
         "e.salary, COALESCE(e.joined,'') joined, e.remote_ok, COALESCE(e.left_on,'') left_on, COALESCE(s.name,'') shift, "
+        + "".join(f"e.{f}, " for f in db.PROFILE_FIELDS) +
         "(SELECT COUNT(*) FROM push_subscriptions p WHERE p.device_user_id=e.device_user_id) reminders, "
         "(SELECT COUNT(*) FROM employee_documents d WHERE d.device_user_id=e.device_user_id) documents FROM employees e LEFT JOIN shifts s ON s.id=e.shift_id "
         "WHERE 1=1" + frag + " ORDER BY e.name", args)]
-    if not access.salary_visible.get():       # only hr and admin see salaries
+    if not access.salary_visible.get():       # only hr and admin see salaries and personal / bank details
         for r in rows:
             r["salary"] = 0
+            for f in db.PROFILE_FIELDS:
+                r.pop(f)
     return rows
 
 
@@ -338,6 +361,10 @@ def upsert_employee(e: EmployeeIn):
             _valid_date(d)
     if e.active:
         e.left_on = ""
+    try:
+        prof = profile.clean_all({f: v for f in db.PROFILE_FIELDS if (v := getattr(e, f)) is not None}, strict=True)
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
     c = db.conn()
     c.execute(
         "INSERT INTO employees(device_user_id,name,department,active,shift_id,salary,joined,designation,branch,mobile,father_name,remote_ok,left_on) "
@@ -349,6 +376,9 @@ def upsert_employee(e: EmployeeIn):
         (e.device_user_id, e.name, e.department, int(e.active), e.shift_id, e.salary, e.joined or None,
          e.designation, e.branch, e.mobile, e.father_name, int(e.remote_ok), e.left_on or None),
     )
+    if prof:
+        c.execute("UPDATE employees SET " + ",".join(f"{f}=?" for f in prof) + " WHERE device_user_id=?",
+                  list(prof.values()) + [e.device_user_id])
     for kind, v in (("department", e.department), ("designation", e.designation)):
         if v.strip():
             c.execute("INSERT OR IGNORE INTO masters(kind,name) VALUES (?,?)", (kind, v.strip()))

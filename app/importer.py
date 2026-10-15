@@ -7,7 +7,7 @@ import io
 import re
 from datetime import date, datetime, time as dtime
 
-from . import db
+from . import db, profile
 from .reports import LEAVE_TYPES, WEEKDAYS
 
 MAX_ROWS = 100_000
@@ -15,15 +15,16 @@ MAX_ROWS = 100_000
 ALIASES = {
     "id": ["id", "employee id", "emp id", "emp code", "empcode", "employee code", "code", "card no", "cardno", "card no.",
            "enroll no", "enroll no.", "enrollno", "user id", "userid", "device_user_id", "pin", "emp.code"],
-    "name": ["name", "employee name", "empname", "emp name", "emp_name"],
+    "name": ["name", "employee name", "empname", "emp name", "emp_name", "full name"],
     "shift_name": ["shift name", "name", "shiftname", "shift_name", "shift"],
     "holiday_name": ["holiday name", "name", "holiday", "description", "occasion"],
     "department": ["department", "dept", "dept name", "dept_name", "department name"],
     "shift": ["shift", "shift name", "shiftname"],
     "designation": ["designation", "desig name", "desig_name", "desig", "designation name"],
     "branch": ["branch", "branch name", "branch_name", "location"],
-    "mobile": ["mobile", "phone", "phone.no", "phone no", "phone no.", "mobile no", "contact", "contact no"],
-    "father": ["father name", "father's name", "father/husband name", "husband name", "fathername"],
+    "mobile": ["mobile", "mobile number", "mobile no.", "phone", "phone.no", "phone no", "phone no.", "mobile no", "contact", "contact no"],
+    "father": ["father name", "father's name", "father/husband name", "husband name", "fathername",
+               "father's name, occupation and contact number"],
     "salary": ["salary", "monthly salary", "gross salary", "basic"],
     "joined": ["joined", "date of joining", "dateof join", "date of join", "doj", "joining date", "join date"],
     "start": ["start", "start time", "shift start", "from time", "in time"],
@@ -40,6 +41,27 @@ ALIASES = {
     "datetime": ["datetime", "date time", "attendance datetime", "punch time", "timestamp", "log time", "attendancedatetime"],
     "time": ["time", "times", "swipe record", "punches", "swipes"],
     "device": ["device", "device id", "deviceid", "device name", "serial", "machine"],
+    # personal and bank details (the old system's employee export and the MTT employee information form)
+    "dob": ["dob", "date of birth", "birth date", "birthday"],
+    "gender": ["gender", "sex"],
+    "blood_group": ["blood group", "blood"],
+    "nationality": ["nationality"],
+    "email": ["personal email address", "personal email", "email", "email address", "e-mail", "email id"],
+    "work_email": ["company mail address", "company email", "work email", "office email", "official email"],
+    "address": ["address", "house/hostel address", "residential address", "current address", "permanent address"],
+    "alt_contact": ["alternate number, name and relation", "alternate number", "emergency contact", "alternate contact"],
+    "mother_name": ["mother's name occupation and contact number", "mother's name", "mother name"],
+    "spouse_name": ["spouse name occupation and contact number", "wife's name occupation and contact number",
+                    "spouse name", "spouse", "wife's name", "husband's name"],
+    "govt_uid": ["govt. uid", "govt uid", "aadhaar", "aadhar", "aadhaar number", "aadhar number", "aadhaar no", "aadhar no", "uid"],
+    "pan": ["pan number", "pan", "pan no", "pan no.", "pan card number"],
+    "passport_no": ["passport number", "passport no", "passport no.", "passport"],
+    "passport_expiry": ["passport expiry date", "passport expiry", "passport valid till"],
+    "bank_name": ["bank name", "bank"],
+    "bank_account": ["bank account number", "bank a/c number", "account number", "account no", "a/c no", "bank account", "a/c number"],
+    "bank_ifsc": ["ifsc code", "bank ifsc code", "ifsc", "bank ifsc"],
+    "bank_holder": ["account holders name", "account holder's name", "account holder name", "account holder"],
+    "bank_type": ["account type", "bank account type", "type of account"],
 }
 TEMPLATES = {
     "employees": ["id", "name", "department", "designation", "branch", "mobile", "shift", "salary", "joined"],
@@ -47,13 +69,19 @@ TEMPLATES = {
     "holidays": ["date", "name"],
     "leaves": ["id", "from", "to", "type", "note"],
     "punches": ["id", "datetime", "device"],
+    "profiles": ["id", "dob", "gender", "blood_group", "address", "mobile", "email", "govt_uid", "pan",
+                 "bank_name", "bank_account", "bank_ifsc", "bank_holder", "bank_type"],
 }
+# HR-kept fields that a details sheet only fills in when they are still empty (it never overwrites them)
+PROFILE_FILL = {"mobile": "mobile", "father": "father_name", "joined": "joined"}
 TEMPLATE_EXAMPLES = {
     "employees": [["217315", "Asha Khan", "Sales", "Executive", "Mumbai", "9876543210", "Morning 9-6", "30000", "2025-04-01"]],
     "shifts": [["Morning 9-6", "09:00", "18:00", "10", "4", "30", "SUN"]],
     "holidays": [["2026-10-20", "Dussehra"]],
     "leaves": [["217315", "2026-10-12", "2026-10-13", "Casual", "family function"]],
     "punches": [["217315", "2026-10-05 09:12:00", "Mumbai Office"]],
+    "profiles": [["217315", "1995-06-21", "Female", "B+", "12 MG Road, Secunderabad", "9876543210", "asha@example.com",
+                  "123412341234", "ABCDE1234F", "State Bank of India", "12345678901", "SBIN0001234", "Asha Khan", "Savings"]],
 }
 
 
@@ -62,7 +90,15 @@ class ImportError_(Exception):
 
 
 def _norm(h) -> str:
-    return re.sub(r"\s+", " ", str(h or "").strip().lower())
+    """Header key: lower case, single spaces, without notes in brackets ("Address (if in hostel, both)" -> "address")."""
+    return re.sub(r"\s+", " ", re.sub(r"\(.*?\)", " ", str(h or ""))).strip().lower()
+
+
+def to_id(v) -> str:
+    """Employee id from a cell: Excel stores 217204 as the number 217204.0."""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return db.canon_id(v)
 
 
 def read_table(filename: str, data: bytes) -> list[dict]:
@@ -167,17 +203,18 @@ def run(kind: str, filename: str, data: bytes, dry: bool, inactive: bool = False
     for i, row in enumerate(rows):
         try:
             if kind == "employees":
-                uid, name = db.canon_id(pick(row, "id")), str(pick(row, "name") or "").strip()
+                uid, name = to_id(pick(row, "id")), str(pick(row, "name") or "").strip()
                 if not uid or not name:
                     raise ValueError("needs an id and a name")
                 sh = pick(row, "shift")
                 sid = shifts.get(str(sh).strip().lower()) if sh else None
                 if sh and sid is None:
                     raise ValueError(f"unknown shift {sh!r} (import shifts first)")
-                text = lambda f: str(pick(row, f) or "").strip()
+                text = lambda f: profile.text(pick(row, f))
                 vals = {"name": name, "department": text("department"), "designation": text("designation"),
                         "branch": text("branch"), "mobile": text("mobile"), "father_name": text("father"),
                         "salary": to_num(pick(row, "salary")), "joined": to_date(pick(row, "joined")), "shift_id": sid}
+                vals.update(profile.clean_all({f: pick(row, f) for f in db.PROFILE_FIELDS}, strict=False))
                 if inactive:       # the file lists resigned staff: keep their history but not in active reports
                     vals["active"] = 0
                 exists = uid in known_ids
@@ -187,12 +224,31 @@ def run(kind: str, filename: str, data: bytes, dry: bool, inactive: bool = False
                         c.execute("UPDATE employees SET " + ",".join(f"{k}=?" for k in sets) + " WHERE device_user_id=?",
                                   list(sets.values()) + [uid])
                     else:
-                        c.execute("INSERT INTO employees(device_user_id,name,department,salary,joined,shift_id,designation,branch,mobile,father_name,active) "
-                                  "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                                  (uid, name, vals["department"], vals["salary"], vals["joined"], sid, vals["designation"],
-                                   vals["branch"], vals["mobile"], vals["father_name"], vals.get("active", 1)))
+                        vals.setdefault("active", 1)
+                        c.execute(f"INSERT INTO employees(device_user_id,{','.join(vals)}) VALUES (?{',?' * len(vals)})",
+                                  [uid] + list(vals.values()))
                 known_ids.add(uid)
                 res["updated" if exists else "created"] += 1
+            elif kind == "profiles":   # personal / bank details for people who already exist; work details untouched
+                uid = to_id(pick(row, "id"))
+                if not uid:
+                    raise ValueError("needs an employee id")
+                if uid not in known_ids:
+                    raise ValueError(f"no employee with id {uid} (add them in Employees first)")
+                vals = {k: v for k, v in profile.clean_all({f: pick(row, f) for f in db.PROFILE_FIELDS}, strict=False).items() if v}
+                cur = c.execute("SELECT mobile, father_name, COALESCE(joined,'') joined FROM employees WHERE device_user_id=?", (uid,)).fetchone()
+                for alias, col in PROFILE_FILL.items():
+                    v = pick(row, alias)
+                    if v is not None and not cur[col]:
+                        vals[col] = to_date(v) if col == "joined" else profile.text(v)
+                vals = {k: v for k, v in vals.items() if v}
+                if not vals:
+                    res["skipped"] += 1
+                    continue
+                if not dry:
+                    c.execute("UPDATE employees SET " + ",".join(f"{k}=?" for k in vals) + " WHERE device_user_id=?",
+                              list(vals.values()) + [uid])
+                res["updated"] += 1
             elif kind == "shifts":
                 name = str(pick(row, "shift_name") or "").strip()
                 start, end = to_hm(pick(row, "start")), to_hm(pick(row, "end"))
@@ -226,7 +282,7 @@ def run(kind: str, filename: str, data: bytes, dry: bool, inactive: bool = False
                     c.execute("INSERT INTO holidays(date,name) VALUES (?,?) ON CONFLICT(date) DO UPDATE SET name=excluded.name", (d, name))
                 res["updated" if exists else "created"] += 1
             elif kind == "leaves":
-                uid, d1, d2 = db.canon_id(pick(row, "id")), to_date(pick(row, "from")), to_date(pick(row, "to")) or to_date(pick(row, "from"))
+                uid, d1, d2 = to_id(pick(row, "id")), to_date(pick(row, "from")), to_date(pick(row, "to")) or to_date(pick(row, "from"))
                 if not uid or not d1:
                     raise ValueError("needs an id and a from date")
                 if d2 < d1:
@@ -244,7 +300,7 @@ def run(kind: str, filename: str, data: bytes, dry: bool, inactive: bool = False
                               (uid, d1, d2, ltype, str(pick(row, "note") or "")))
                 res["created"] += 1
             else:  # punches
-                uid = db.canon_id(pick(row, "id"))
+                uid = to_id(pick(row, "id"))
                 if not uid:
                     raise ValueError("needs an employee id")
                 source = str(pick(row, "device") or "import").strip()

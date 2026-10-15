@@ -186,6 +186,11 @@ CREATE TABLE IF NOT EXISTS sites (
 );
 """
 # Columns added after the first release; applied idempotently.
+# Personal and bank details on the employee record (all optional text; dates as YYYY-MM-DD). Visible to HR and above only.
+PROFILE_FIELDS = ("dob", "gender", "blood_group", "nationality", "email", "work_email", "address", "alt_contact",
+                  "mother_name", "spouse_name", "govt_uid", "pan", "passport_no", "passport_expiry",
+                  "bank_name", "bank_account", "bank_ifsc", "bank_holder", "bank_type")
+
 PUNCH_COLUMNS = {
     "method": "TEXT DEFAULT 'device'",
     "lat": "REAL", "lng": "REAL", "accuracy": "REAL",
@@ -245,7 +250,8 @@ def init():
                        "designation": "TEXT NOT NULL DEFAULT ''", "branch": "TEXT NOT NULL DEFAULT ''",
                        "mobile": "TEXT NOT NULL DEFAULT ''", "father_name": "TEXT NOT NULL DEFAULT ''",
                        "remote_ok": "INTEGER NOT NULL DEFAULT 0",   # may check in from anywhere (remote / field work)
-                       "left_on": "TEXT"}.items():   # last working day of someone who resigned
+                       "left_on": "TEXT",   # last working day of someone who resigned
+                       **{f: "TEXT NOT NULL DEFAULT ''" for f in PROFILE_FIELDS}}.items():
         if col not in emp_cols:
             c.execute(f"ALTER TABLE employees ADD COLUMN {col} {decl}")
     leave_cols = {r["name"] for r in c.execute("PRAGMA table_info(leaves)")}

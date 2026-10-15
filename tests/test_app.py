@@ -1160,3 +1160,61 @@ def test_audit_dates_and_past_leave_years(tmp_path, monkeypatch):
         fy24 = {x["device_user_id"]: x for x in c.get("/api/leave-summary?fy=2024").json()}
         assert set(fy24) == {"Y1", "Y2"} and fy24["Y1"]["casual"] == 1 and fy24["Y1"]["balance"] == 23
         assert set(x["device_user_id"] for x in c.get("/api/leave-summary?fy=2025").json()) == {"Y2"}
+
+
+def test_personal_and_bank_details(tmp_path, monkeypatch):
+    import io as _io
+    from datetime import datetime as _dt
+    from openpyxl import Workbook
+    from app import access
+    with TestClient(app) as c:
+        c.post("/api/employees", json={"device_user_id": "8801", "name": "Asha", "mobile": "9000000001"})
+        c.post("/api/employees", json={"device_user_id": "8802", "name": "Ravi"})
+        # the form: cleaned and validated
+        r = c.post("/api/employees", json={"device_user_id": "8801", "name": "Asha", "mobile": "9000000001", "pan": " abcde1234f",
+                                           "bank_ifsc": "sbin0001234", "bank_account": "1234 5678 9012", "dob": "21/06/1995",
+                                           "blood_group": "b positive", "bank_type": "saving"})
+        assert r.status_code == 200
+        e = [x for x in c.get("/api/employees").json() if x["device_user_id"] == "8801"][0]
+        assert (e["pan"], e["bank_ifsc"], e["bank_account"], e["dob"], e["blood_group"], e["bank_type"]) == \
+            ("ABCDE1234F", "SBIN0001234", "123456789012", "1995-06-21", "B+", "Savings")
+        for bad, msg in (({"pan": "ABC"}, "PAN"), ({"bank_ifsc": "IDBI"}, "IFSC"), ({"bank_account": "12ab"}, "account"),
+                         ({"email": "nope"}, "e-mail"), ({"dob": "31/02/1990"}, "date")):
+            r = c.post("/api/employees", json={"device_user_id": "8801", "name": "Asha", **bad})
+            assert r.status_code == 400 and msg in r.json()["detail"], bad
+        # leaving the fields out (an older client, or a team lead's view) keeps them
+        c.post("/api/employees", json={"device_user_id": "8801", "name": "Asha", "mobile": "9000000001", "department": "Ops"})
+        e = [x for x in c.get("/api/employees").json() if x["device_user_id"] == "8801"][0]
+        assert e["pan"] == "ABCDE1234F" and e["department"] == "Ops"
+        # team leads (below HR) never receive personal or bank details
+        token = access.salary_visible.set(False)
+        try:
+            from app.main import list_employees
+            assert "bank_account" not in list_employees()[0] and "pan" not in list_employees()[0]
+        finally:
+            access.salary_visible.reset(token)
+        # Google Form sheet: messy headers and values, numeric ids, HR fields untouched
+        wb = Workbook(); ws = wb.active
+        ws.append(["Timestamp", "Full Name", "Employee ID", "  Date of Birth  ", "  Blood Group  ", "Gender ",
+                   "  House/Hostel  Address  \n(If staying in hostel add both)", "  Mobile Number  ", "Department and Designation ",
+                   "Branch ", "   Joining Date  ", "Current Salary", "  PAN number  ", "   Bank Name  ", "   IFSC Code  ",
+                   "  Bank Account Number  ", "Account holders Name", "Account type", "  Nationality   "])
+        ws.append([_dt(2026, 9, 1), "Asha K", 8801.0, _dt(1995, 6, 21), "O - ve", "Female", "12 MG Road", 9111111111.0, "accounts , biller",
+                   "Tirmulgherry", _dt(2020, 1, 2), 99999, "None", "IDBI BANK", "ibkl0000297", 297104000191371.0, "ASHA KHAN", "Saving", "INDIA"])
+        ws.append([_dt(2026, 9, 1), "Ravi", 8802.0, "05/01/1985", "0+", "Male", "Flat 2", 9222222222.0, "HR", "Mumbai", _dt(2019, 5, 6),
+                   50000, "nil", "nil", "nil", "nil", "nil", "", "Indian"])
+        ws.append([_dt(2026, 9, 1), "Ghost", 9999999.0, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""])
+        buf = _io.BytesIO(); wb.save(buf)
+        up = lambda dry: c.post(f"/api/import/profiles?dry_run={'true' if dry else 'false'}", files={"file": ("form.xlsx", buf.getvalue())}).json()
+        r = up(True)
+        assert (r["updated"], r["skipped"]) == (2, 1) and "no employee with id 9999999" in r["errors"][0]["message"]
+        assert [x for x in c.get("/api/employees").json() if x["device_user_id"] == "8802"][0]["blood_group"] == ""   # dry run
+        assert up(False)["updated"] == 2
+        emps = {x["device_user_id"]: x for x in c.get("/api/employees").json()}
+        a, b = emps["8801"], emps["8802"]
+        assert (a["blood_group"], a["bank_name"], a["bank_ifsc"], a["bank_account"], a["bank_holder"], a["bank_type"], a["nationality"]) == \
+            ("O-", "IDBI BANK", "IBKL0000297", "297104000191371", "Asha Khan", "Savings", "Indian")
+        assert a["pan"] == "ABCDE1234F"                          # "None" in the sheet does not wipe it
+        assert (a["mobile"], a["department"], a["salary"], a["branch"]) == ("9000000001", "Ops", 0, "")   # HR fields kept
+        assert a["joined"] == "2020-01-02"                       # was empty, so filled in
+        assert (b["mobile"], b["dob"], b["blood_group"], b["bank_account"], b["address"]) == ("9222222222", "1985-01-05", "O+", "", "Flat 2")

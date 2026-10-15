@@ -1218,3 +1218,34 @@ def test_personal_and_bank_details(tmp_path, monkeypatch):
         assert (a["mobile"], a["department"], a["salary"], a["branch"]) == ("9000000001", "Ops", 0, "")   # HR fields kept
         assert a["joined"] == "2020-01-02"                       # was empty, so filled in
         assert (b["mobile"], b["dob"], b["blood_group"], b["bank_account"], b["address"]) == ("9222222222", "1985-01-05", "O+", "", "Flat 2")
+
+
+def test_several_shifts_on_one_day(tmp_path, monkeypatch):
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "Split AM 10-2", "start": "10:00", "end": "14:00"})
+        c.post("/api/shifts", json={"name": "Split PM 7-9", "start": "19:00", "end": "21:00"})
+        ids = {x["name"]: x["id"] for x in c.get("/api/shifts").json()}
+        am, pm = ids["Split AM 10-2"], ids["Split PM 7-9"]
+        for uid, name in (("7701", "Split One"), ("7702", "Split Two"), ("7703", "Split Three")):
+            c.post("/api/employees", json={"device_user_id": uid, "name": name})
+            # evening shift first: stored earliest-first anyway
+            assert c.post("/api/roster", json={"device_user_id": uid, "date": "2025-09-03", "value": f"{pm},{am}"}).status_code == 200
+        cell = [r for r in c.get("/api/roster?start=2025-09-01").json()["rows"] if r["device_user_id"] == "7701"][0]["cells"]["2025-09-03"]
+        assert cell == f"{am},{pm}"
+        assert c.post("/api/roster", json={"device_user_id": "7701", "date": "2025-09-04", "value": f"{am},99999"}).status_code == 404
+        assert c.post("/api/roster", json={"device_user_id": "7701", "date": "2025-09-04", "value": "1,2,3,4,5"}).status_code == 400
+        punch = lambda uid, ts: c.post("/api/punches", json={"device_user_id": uid, "ts": ts})
+        punch("7701", "2025-09-03 10:05:00"); punch("7701", "2025-09-03 21:00:00")   # both shifts: 10:05-21:00 minus the 5 h gap
+        punch("7702", "2025-09-03 10:30:00"); punch("7702", "2025-09-03 21:30:00")
+        punch("7703", "2025-09-03 10:00:00"); punch("7703", "2025-09-03 12:00:00")   # 2 h of the 6 scheduled
+        rep = {r["device_user_id"]: r for r in c.get("/api/reports/daily?day=2025-09-03").json()}
+        one, two, three = rep["7701"], rep["7702"], rep["7703"]
+        assert one["shift"] == "Split AM 10-2 + Split PM 7-9"
+        assert (one["status"], one["hours"], one["late_min"], one["early_min"]) == ("Present", 5.92, 0, 0)
+        assert (two["status"], two["late_min"], two["ot_min"], two["hours"]) == ("Late", 30, 30, 6.0)
+        assert (three["status"], three["hours"], three["early_min"]) == ("Half Day", 2.0, 540)
+        card = c.get("/api/reports/timecard?month=2025-09&employee=7701").json()
+        assert [d for d in card if d["date"] == "2025-09-03"][0]["schedule"] == "10:00-14:00, 19:00-21:00"
+        # back to one shift, then normal
+        c.post("/api/roster", json={"device_user_id": "7701", "date": "2025-09-03", "value": str(am)})
+        assert {r["device_user_id"]: r["shift"] for r in c.get("/api/reports/daily?day=2025-09-03").json()}["7701"] == "Split AM 10-2"

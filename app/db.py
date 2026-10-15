@@ -266,6 +266,7 @@ def init():
     c.execute("UPDATE leaves SET type='Casual' WHERE type='Normal'")   # the policy calls it Casual
     for table, cols in {"payroll_adjustments": {"date": "TEXT"},                   # when the bonus / fine / ... was given
                         "holidays": {"optional": "INTEGER NOT NULL DEFAULT 0"},   # festival list: taken as Festive leave
+                        "roster": {"extra_shifts": "TEXT NOT NULL DEFAULT ''"},   # more shifts that day (comma ids)
                         "shifts": {"break_start": "TEXT NOT NULL DEFAULT ''", "break_end": "TEXT NOT NULL DEFAULT ''"},
                         "sites": {"kind": "TEXT NOT NULL DEFAULT 'office'",      # office | home
                                   "device_user_id": "TEXT"}}.items():           # home sites belong to one employee

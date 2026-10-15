@@ -269,7 +269,7 @@ def loan_ledger(uid: str):
 class RosterIn(BaseModel):
     device_user_id: str
     date: str
-    value: str = ""        # "" = back to normal, "off" = day off, otherwise a shift id
+    value: str = ""        # "" = back to normal, "off" = day off, otherwise a shift id, or several: "3,7"
 
 
 class RosterCopyIn(BaseModel):
@@ -296,10 +296,14 @@ def get_roster(start: str, days: int = 7):
         "LEFT JOIN shifts s ON s.id=e.shift_id WHERE e.active=1" + frag + " ORDER BY e.department, e.name", args)]
     cells: dict = {}
     for r in c.execute("SELECT * FROM roster WHERE date BETWEEN ? AND ?", (dates[0], dates[-1])):
-        cells.setdefault(r["device_user_id"], {})[r["date"]] = "off" if r["off"] else str(r["shift_id"])
+        cells.setdefault(r["device_user_id"], {})[r["date"]] = "off" if r["off"] else ",".join(
+            [str(r["shift_id"])] + [x for x in (r["extra_shifts"] or "").split(",") if x])
     for e in emps:
         e["cells"] = cells.get(e["device_user_id"], {})
     return {"dates": dates, "rows": emps}
+
+
+MAX_SHIFTS_PER_DAY = 4
 
 
 def _set_cell(c, uid: str, d: str, value: str, user: str):
@@ -308,12 +312,18 @@ def _set_cell(c, uid: str, d: str, value: str, user: str):
     elif value == "off":
         c.execute("INSERT INTO roster(device_user_id,date,shift_id,off,created_by) VALUES (?,?,NULL,1,?) "
                   "ON CONFLICT(device_user_id,date) DO UPDATE SET shift_id=NULL, off=1, created_by=excluded.created_by", (uid, d, user))
-    else:
-        if not value.isdigit() or not c.execute("SELECT 1 FROM shifts WHERE id=?", (int(value),)).fetchone():
+    else:   # one shift, or several on the same day (a split shift such as 10-2 and 7-9)
+        ids = list(dict.fromkeys(v.strip() for v in value.split(",") if v.strip()))
+        if not ids or len(ids) > MAX_SHIFTS_PER_DAY or not all(i.isdigit() for i in ids):
+            raise HTTPException(400, f"Choose 1 to {MAX_SHIFTS_PER_DAY} shifts")
+        rows = {r["id"]: r for r in c.execute(f"SELECT id, start FROM shifts WHERE id IN ({','.join('?' * len(ids))})", ids)}
+        if len(rows) != len(ids):
             raise HTTPException(404, "No such shift")
-        c.execute("INSERT INTO roster(device_user_id,date,shift_id,off,created_by) VALUES (?,?,?,0,?) "
-                  "ON CONFLICT(device_user_id,date) DO UPDATE SET shift_id=excluded.shift_id, off=0, created_by=excluded.created_by",
-                  (uid, d, int(value), user))
+        ids = sorted(ids, key=lambda i: rows[int(i)]["start"])     # earliest first: it sets the start of the day
+        c.execute("INSERT INTO roster(device_user_id,date,shift_id,off,extra_shifts,created_by) VALUES (?,?,?,0,?,?) "
+                  "ON CONFLICT(device_user_id,date) DO UPDATE SET shift_id=excluded.shift_id, off=0, "
+                  "extra_shifts=excluded.extra_shifts, created_by=excluded.created_by",
+                  (uid, d, int(ids[0]), ",".join(ids[1:]), user))
 
 
 @router.post("/roster")

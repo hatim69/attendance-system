@@ -44,6 +44,24 @@ OFF_SHIFT = {"id": None, "name": "Off (roster)", "start": "00:00", "end": "00:00
              "ot_after_min": 0, "weekly_off": ALL_DAYS, "break_start": "", "break_end": ""}
 
 
+def combine(parts: list[dict]) -> dict:
+    """Several shifts on one day (e.g. 10:00-14:00 and 19:00-21:00) worked as one day: it starts with the first shift
+    (late and grace from it) and ends with the last (early leaving and overtime from it). Time between the shifts is not
+    counted as worked, and less than half the scheduled time makes a half day."""
+    parts = sorted(parts, key=lambda s: s["start"])
+    windows: list[list[str]] = []
+    for s in parts:   # overlapping shifts merge into one window
+        if windows and s["start"] <= windows[-1][1]:
+            windows[-1][1] = max(windows[-1][1], s["end"])
+        else:
+            windows.append([s["start"], s["end"]])
+    last = max(parts, key=lambda s: s["end"])
+    scheduled = sum(_hm(b) - _hm(a) for a, b in windows)
+    return {**parts[0], "name": " + ".join(s["name"] for s in parts), "start": parts[0]["start"], "end": last["end"],
+            "ot_after_min": last["ot_after_min"], "half_day_hours": round(scheduled / 120, 2), "weekly_off": "",
+            "break_start": "", "break_end": "", "windows": [tuple(w) for w in windows]}
+
+
 def shift_on(e: dict, d: str, shifts: dict, changes: dict) -> dict | None:
     """The shift an employee works on date `d`: their roster entry for that day, else the latest date-range shift change
     that covers it, else their normal shift. A roster day is a working day even if the shift's weekly off falls on it,
@@ -53,9 +71,11 @@ def shift_on(e: dict, d: str, shifts: dict, changes: dict) -> dict | None:
         if r["off"]:
             base = shifts.get(e["shift_id"])
             return {**base, "weekly_off": ALL_DAYS} if base else OFF_SHIFT
-        sh = shifts.get(r["shift_id"])
-        if sh:
-            return {**sh, "weekly_off": ""}
+        parts = [shifts[i] for i in [r["shift_id"]] + [int(x) for x in (r.get("extra_shifts") or "").split(",") if x] if i in shifts]
+        if len(parts) > 1:
+            return combine(parts)
+        if parts:
+            return {**parts[0], "weekly_off": ""}
     for ch in reversed(changes.get(e["device_user_id"], [])):
         if ch["start_date"] <= d <= ch["end_date"]:
             return shifts.get(ch["shift_id"])
@@ -94,7 +114,10 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
         single_out = n == 1 and working and fm >= (_hm(shift["start"]) + _hm(shift["end"])) / 2
         if n > 1:
             out.update(first_in=p["a"][11:19], last_out=p["b"][11:19], punches=n)
-            out["hours"] = round((last - first).total_seconds() / 3600, 2)   # breaks are paid, so not taken off
+            worked = (last - first).total_seconds() / 60   # breaks are paid, so not taken off
+            for (_, a), (b, _) in zip((shift or {}).get("windows", []), (shift or {}).get("windows", [])[1:]):
+                worked -= max(0, min(lm, _hm(b)) - max(fm, _hm(a)))   # the gap between two shifts is not work
+            out["hours"] = round(worked / 60, 2)
         elif single_out:
             out.update(last_out=p["b"][11:19], punches=n, note="missing in punch")
         else:
@@ -256,7 +279,7 @@ def timecard(month: str, employee_id: str, device: str | None = None) -> list[di
         wd = WEEKDAYS[Date.fromisoformat(d).weekday()]
         rows.append({"date": d, "weekday": wd.title(),
                      "day_type": "HOLIDAY" if d in holidays else "WEEKLY OFF" if wd in offs else "WORKDAY",
-                     "schedule": f"{sh['start']}-{sh['end']}" if sh else "flexible",
+                     "schedule": ", ".join(f"{a}-{b}" for a, b in sh.get("windows", [(sh["start"], sh["end"])])) if sh else "flexible",
                      "in": r["first_in"], "out": r["last_out"], "hours": r["hours"], "late_min": r["late_min"],
                      "early_min": r["early_min"], "overtime_min": r["ot_min"], "status": r["status"], "note": r["note"]})
     return rows

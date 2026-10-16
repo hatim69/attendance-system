@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from . import access, adms, app_api, auth, backup, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, payslip, profile, push, reports, zk_poller
+from . import access, adms, app_api, auth, backup, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, lates, payslip, profile, push, reports, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 
@@ -35,8 +35,9 @@ async def lifespan(app: FastAPI):
     fk_server = await fkweb.start()
     reminders = asyncio.create_task(push.loop()) if config.PUSH_REMINDERS else None
     nightly = asyncio.create_task(backup.loop()) if config.BACKUP_HOUR >= 0 else None
+    late_mail = asyncio.create_task(lates.loop()) if config.LATE_EMAILS else None
     yield
-    for t in (reminders, nightly):
+    for t in (reminders, nightly, late_mail):
         if t:
             t.cancel()
     if fk_server:
@@ -102,14 +103,14 @@ class ShiftIn(BaseModel):
 class HolidayIn(BaseModel):
     date: str
     name: str
-    optional: bool = False   # festival list: a working day unless the person takes Festive leave
+    optional: bool = False   # no longer used (the festival list was removed); kept so older clients still work
 
 
 class LeaveIn(BaseModel):
     device_user_id: str
     start_date: str
     end_date: str
-    type: str = "Casual"
+    type: str = "Informed"
     note: str = ""
     applied_on: str = ""      # when the application was made (default today); matters for Normal leave's 7-day notice
     override: bool = False    # record exactly as given, skipping the leave policy (recorded in the audit log)
@@ -182,6 +183,7 @@ class UserIn(BaseModel):
     department: str = ""
     active: bool = True
     permissions: str = "*"   # hr only: comma list of areas (employees,shifts,leave,holidays,punches,import,payroll) or *
+    email: str = ""          # team leads receive late-arrival e-mails for their team here
 
 
 def _me(u: dict) -> dict:
@@ -239,7 +241,7 @@ async def auth_password(body: PasswordIn, u: dict = Depends(access.need("manager
 
 @app.get("/api/users", dependencies=[Depends(access.need("admin"))])
 def list_users():
-    return [dict(r) for r in db.conn().execute("SELECT username, display_name, role, department, active, permissions FROM users ORDER BY username")]
+    return [dict(r) for r in db.conn().execute("SELECT username, display_name, role, department, active, permissions, email FROM users ORDER BY username")]
 
 
 @app.post("/api/users")
@@ -266,6 +268,10 @@ async def save_user(body: UserIn, u: dict = Depends(access.need("admin"))):
         perm_text = "*"      # admin and management always have everything
     if body.password and len(body.password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
+    try:
+        email = profile.clean("email", body.email, strict=True)
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
     c = db.conn()
     row = c.execute("SELECT * FROM users WHERE username=?", (name,)).fetchone()
     if not row and not body.password:
@@ -274,13 +280,13 @@ async def save_user(body: UserIn, u: dict = Depends(access.need("admin"))):
         if c.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND username!=?", (name,)).fetchone()[0] == 0:
             raise HTTPException(400, "There must be at least one active admin")
     if row:
-        c.execute("UPDATE users SET display_name=?, role=?, department=?, active=?, permissions=? WHERE username=?",
-                  (body.display_name, body.role, body.department.strip(), int(body.active), perm_text, name))
+        c.execute("UPDATE users SET display_name=?, role=?, department=?, active=?, permissions=?, email=? WHERE username=?",
+                  (body.display_name, body.role, body.department.strip(), int(body.active), perm_text, email, name))
         if body.password:
             c.execute("UPDATE users SET password_hash=? WHERE username=?", (auth.hash_password(body.password), name))
     else:
-        c.execute("INSERT INTO users(username,display_name,password_hash,role,department,active,permissions) VALUES (?,?,?,?,?,?,?)",
-                  (name, body.display_name, auth.hash_password(body.password), body.role, body.department.strip(), int(body.active), perm_text))
+        c.execute("INSERT INTO users(username,display_name,password_hash,role,department,active,permissions,email) VALUES (?,?,?,?,?,?,?,?)",
+                  (name, body.display_name, auth.hash_password(body.password), body.role, body.department.strip(), int(body.active), perm_text, email))
     c.commit()
     return {"ok": True}
 
@@ -455,9 +461,14 @@ def update_device(dev_id: str, body: DeviceIn):
 
 
 @app.get("/api/dashboard", dependencies=[Depends(access.need("manager"))])
-def dashboard(day: str | None = None):
+def dashboard(day: str | None = None, department: str = ""):
     day = day or now_local().date().isoformat()
+    _valid_date(day)
     rows = reports.daily(day)
+    dept_options = sorted({r["department"] for r in rows if r["department"]})
+    if department:
+        rows = [r for r in rows if r["department"] == department]
+    watch = [x for x in lates.counts(date.fromisoformat(day)) if not department or x["department"] == department]
     depts: dict[str, int] = {}
     for r in rows:
         if r["status"] in reports.WORKED:
@@ -490,6 +501,12 @@ def dashboard(day: str | None = None):
             "present": sum(r["status"] in reports.WORKED for r in rows),
             "absent": sum(r["status"] == "Absent" for r in rows),
             "late": sum(r["status"] == "Late" for r in rows),
+            "informed_leave": reports.leave_days(rows, "Informed"), "adhoc_leave": reports.leave_days(rows, "Adhoc"),
+            "early_in": sum(r["early_in_min"] > 0 for r in rows), "early_out": sum(r["early_min"] > 0 for r in rows),
+            "total_hours": round(sum(r["hours"] for r in rows), 2), "department": department, "dept_options": dept_options,
+            "late_policy": lates.policy(), "late_total": sum(x["count"] for x in watch),
+            "late_watch": [{k: x[k] for k in ("device_user_id", "name", "department", "count", "limit", "state")}
+                           for x in watch if x["state"] != "ok"],
             "departments": [{"name": k, "present": v} for k, v in sorted(depts.items())],
             "devices": devices, "gps_punches": gps}
 
@@ -602,7 +619,7 @@ def save_holiday(h: HolidayIn):
     _valid_date(h.date)
     c = db.conn()
     c.execute("INSERT INTO holidays(date,name,optional) VALUES (?,?,?) ON CONFLICT(date) DO UPDATE SET name=excluded.name, "
-              "optional=excluded.optional", (h.date, h.name, int(h.optional)))
+              "optional=excluded.optional", (h.date, h.name, 0))
     c.commit()
     return {"ok": True}
 
@@ -633,7 +650,7 @@ def add_leave(l: LeaveIn):
     _valid_date(l.end_date)
     if l.end_date < l.start_date:
         raise HTTPException(400, "End date is before start date")
-    l.type = leavepolicy.ALIASES.get(l.type, l.type) if l.type == "Normal" else l.type
+    l.type = leavepolicy.ALIASES.get(l.type, l.type)
     if l.type not in reports.LEAVE_TYPES:
         raise HTTPException(400, "Leave type must be one of " + ", ".join(reports.LEAVE_TYPES))
     c = db.conn()
@@ -743,7 +760,7 @@ def _decide_leave(leave_id: int, status: str, u: dict) -> dict:
     access.assert_in_scope(row["device_user_id"])
     if row["status"] != "pending":
         raise HTTPException(400, f"This leave is already {row['status']}")
-    # an application split into Normal / Adhoc / Unpaid parts is decided as a whole
+    # an application split into Informed / Adhoc parts is decided as a whole
     c.execute("UPDATE leaves SET status=?, decided_by=?, decided_at=? WHERE status='pending' AND (id=? OR group_id=?)",
               (status, u["username"], now_local().strftime("%Y-%m-%d %H:%M:%S"), leave_id, row["group_id"] or "-"))
     c.commit()
@@ -948,25 +965,64 @@ def _csv(rows: list[dict], filename: str) -> PlainTextResponse:
                              headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
+XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
 def _xlsx(rows: list[dict], filename: str, title: str = "Report") -> Response:
     from openpyxl import Workbook
-    from openpyxl.styles import Font
     wb = Workbook()
-    ws = wb.active
-    ws.title = title[:31]
-    if rows:
-        ws.append(list(rows[0].keys()))
-        for cell in ws[1]:
-            cell.font = Font(bold=True)
-        for r in rows:
-            ws.append([_safe(v) for v in r.values()])
-        for col in ws.columns:  # readable column widths
-            ws.column_dimensions[col[0].column_letter].width = min(40, max(len(str(c.value or "")) for c in col) + 2)
-        ws.freeze_panes = "A2"
+    xlsx_sheet(wb.active, title, rows)
     out = io.BytesIO()
     wb.save(out)
-    return Response(out.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    headers={"Content-Disposition": f"attachment; filename={filename}"})
+    return Response(out.getvalue(), media_type=XLSX_TYPE, headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+def xlsx_sheet(ws, title: str, rows: list[dict], header_rows: list[list] | None = None):
+    """One table on a worksheet, with the leave colours: a leave day's row (leave_type) and IL / AL codes are filled
+    yellow (Informed) or red (Adhoc), as are non-zero Informed / Adhoc leave counts; a legend goes under the table."""
+    from openpyxl.styles import Font, PatternFill
+    fills = {k: PatternFill("solid", fgColor=c) for k, c in reports.XLSX_FILLS.items()}
+    ws.title = title[:31]
+    for h in header_rows or []:      # e.g. the employee's name and ID above their own table
+        ws.append(h)
+        ws.cell(ws.max_row, 1).font = Font(bold=True)
+    if header_rows:
+        ws.append([])
+    top = ws.max_row + 1 if header_rows else 1
+    if not rows:
+        return
+    keys = list(rows[0].keys())
+    ws.append(keys)
+    for cell in ws[top]:
+        cell.font = Font(bold=True)
+    kind_cols = {i + 1: k for i, h in enumerate(keys) for k, names in reports.LEAVE_COLUMNS.items() if h in names}
+    lt = next((h for h in keys if h in ("leave_type", "Leave Type")), None)
+    for r in rows:
+        ws.append([_safe(v) for v in r.values()])
+        row = ws.max_row
+        for cell in ws[row]:
+            if isinstance(cell.value, date):
+                cell.number_format = "DD-MM-YYYY"
+        kind = r.get(lt) if lt else None
+        if kind in fills:
+            for cell in ws[row]:
+                cell.fill = fills[kind]
+        elif r.get("Week-off duty") or r.get("week_off_duty"):
+            for cell in ws[row]:
+                cell.fill = fills["WeekOff"]
+        for cell in ws[row]:
+            v = cell.value
+            if v in ("IL", "AL"):
+                cell.fill = fills["Informed" if v == "IL" else "Adhoc"]
+            elif cell.column in kind_cols and isinstance(v, (int, float)) and v > 0:
+                cell.fill = fills[kind_cols[cell.column]]
+    for col in ws.columns:  # readable column widths
+        ws.column_dimensions[col[0].column_letter].width = min(40, max(len(str(c.value or "")) for c in col[top - 1:]) + 2)
+    ws.freeze_panes = ws.cell(top + 1, 1)
+    ws.append([])
+    for key, label in reports.XLSX_LEGEND:
+        ws.append([label])
+        ws.cell(ws.max_row, 1).fill = fills[key]
 
 
 def _grid_rows(g: dict) -> list[dict]:
@@ -1046,6 +1102,112 @@ def report_muster_xlsx(month: str | None = None, device: str | None = None):
 @app.get("/api/reports/timecard", dependencies=[Depends(access.need("manager"))])
 def report_timecard(employee: str, month: str | None = None):
     return reports.timecard(_month(month), db.canon_id(employee))
+
+
+def _range(start: str, end: str) -> tuple[str, str]:
+    for d in (start, end):
+        _valid_date(d)
+    if end < start:
+        raise HTTPException(400, "The end date is before the start date")
+    if (date.fromisoformat(end) - date.fromisoformat(start)).days >= reports.MAX_TIMECARD_DAYS:
+        raise HTTPException(400, "Choose at most one year")
+    return start, end
+
+
+def _timecards(start: str, end: str, employee: str, department: str, status: str) -> list[dict]:
+    if status and status not in reports.TIMECARD_STATUSES:
+        raise HTTPException(400, "Unknown status filter")
+    uid = db.canon_id(employee) if employee else None
+    if uid:
+        access.assert_in_scope(uid)
+    return reports.timecards(*_range(start, end), uid, department or None, status or None)
+
+
+class LatePolicyIn(BaseModel):
+    period: str = "month"
+    limit: int = 3
+
+
+@app.get("/api/late-policy", dependencies=[Depends(access.need("manager"))])
+def get_late_policy():
+    return {**lates.policy(), "periods": lates.PERIODS, "emails": config.LATE_EMAILS and bool(config.SMTP_HOST),
+            "hr_email": config.HR_EMAIL}
+
+
+@app.post("/api/late-policy", dependencies=[Depends(access.need("hr", "shifts"))])
+def set_late_policy(body: LatePolicyIn):
+    try:
+        return lates.save_policy(body.period, body.limit)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/lates", dependencies=[Depends(access.need("manager"))])
+def late_counts(as_of: str = ""):
+    """Qualifying late arrivals per employee in the current tracking period (or the one containing as_of)."""
+    if as_of:
+        _valid_date(as_of)
+    return lates.counts(date.fromisoformat(as_of) if as_of else None)
+
+
+@app.get("/api/late-notices", dependencies=[Depends(access.need("hr"))])
+def late_notices(month: str = ""):
+    month = _month(month)
+    return [dict(r) for r in db.conn().execute(
+        "SELECT n.*, COALESCE(e.name, n.device_user_id) name FROM late_notices n LEFT JOIN employees e "
+        "ON e.device_user_id=n.device_user_id WHERE n.date LIKE ? ORDER BY n.date DESC, name", (month + "%",))]
+
+
+@app.get("/api/reports/timecards", dependencies=[Depends(access.need("manager"))])
+def report_timecards(start: str, end: str, employee: str = "", department: str = "", status: str = ""):
+    """Time card for everyone (employee empty) or one person over a date range, optionally by department / status."""
+    return _timecards(start, end, employee, department, status)
+
+
+TIMECARD_COLUMNS = [("name", "Employee Name"), ("device_user_id", "Employee ID"), ("department", "Department"),
+                    ("date", "Date"), ("weekday", "Day"), ("day_type", "Day Type"),
+                    ("scheduled_in", "Scheduled Login"), ("in", "Actual Login"),
+                    ("scheduled_out", "Scheduled Logout"), ("out", "Actual Logout"),
+                    ("late_min", "Late Arrival (min)"), ("early_in_min", "Early Login (min)"),
+                    ("early_min", "Early Logout (min)"), ("hours", "Total Working Hours"), ("status", "Attendance Status"),
+                    ("leave_type", "Leave Type"), ("week_off_duty", "Week-off duty"), ("note", "Note")]
+
+
+def _sheet_names(people: list[tuple[str, str]]) -> list[str]:
+    """Excel sheet names: at most 31 characters, none of []:*?/\\, unique even for people with the same name."""
+    used, out = {"all employees"}, []
+    for name, uid in people:
+        clean = lambda t: re.sub(r"[\[\]:*?/\\]", "", t).strip("' ")
+        tag, nm = f" ({clean(uid)})", clean(name) or "Employee"
+        cand, n = nm[:31 - len(tag)].rstrip() + tag, 2
+        while cand.lower() in used:   # same name and ID (should not happen) still gets its own sheet
+            tail = f"{tag} ~{n}"
+            cand, n = nm[:31 - len(tail)].rstrip() + tail, n + 1
+        used.add(cand.lower())
+        out.append(cand)
+    return out
+
+
+@app.get("/api/reports/timecards.xlsx", dependencies=[Depends(access.need("manager"))])
+def report_timecards_xlsx(start: str, end: str, employee: str = "", department: str = "", status: str = ""):
+    """One workbook: 'All Employees' (every row, by date then name) and one sheet per employee with only their rows."""
+    from openpyxl import Workbook
+    rows = _timecards(start, end, employee, department, status)
+    human = lambda r: {label: (date.fromisoformat(r[k]) if k == "date" else ("Yes (rostered)" if r[k] else "") if k == "week_off_duty"
+                               else r[k]) for k, label in TIMECARD_COLUMNS}
+    wb = Workbook()
+    xlsx_sheet(wb.active, "All Employees", [human(r) for r in rows] or [{label: "" for _, label in TIMECARD_COLUMNS}])
+    people = sorted({(r["name"], r["device_user_id"]) for r in rows}, key=lambda p: (p[0].lower(), p[1]))
+    for (name, uid), title in zip(people, _sheet_names(people)):
+        mine = [human(r) for r in rows if r["device_user_id"] == uid]
+        dept = mine[0]["Department"] if mine else ""
+        xlsx_sheet(wb.create_sheet(), title, mine,
+                   header_rows=[["Employee", name], ["Employee ID", uid], ["Department", dept], ["Period", f"{start} to {end}"]])
+    out = io.BytesIO()
+    wb.save(out)
+    who = f"-{db.canon_id(employee)}" if employee else "-all"
+    return Response(out.getvalue(), media_type=XLSX_TYPE,
+                    headers={"Content-Disposition": f"attachment; filename=time-card{who}-{start}-to-{end}.xlsx"})
 
 
 @app.get("/api/reports/timecard.xlsx", dependencies=[Depends(access.need("manager"))])

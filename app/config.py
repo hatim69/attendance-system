@@ -54,6 +54,9 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))                   # 587 = STARTTL
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "")
+# Late arrivals: an e-mail to the employee, their team lead(s) and HR when someone checks in late (same day only)
+LATE_EMAILS = os.getenv("LATE_EMAILS", "1") not in ("", "0", "false")
+HR_EMAIL = os.getenv("HR_EMAIL", "hr@madarwala.com")
 # Shown on the privacy policy page (required by the Play Store)
 PRIVACY_CONTACT = os.getenv("PRIVACY_CONTACT", "")
 # Optional safety net: append every scan received from a fingerprint device to this CSV file (the columns match the

@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS leaves (
     device_user_id TEXT NOT NULL,
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,
-    type TEXT NOT NULL DEFAULT 'Casual',        -- 'Unpaid' is unpaid, anything else paid
+    type TEXT NOT NULL DEFAULT 'Informed',      -- Informed | Adhoc (older records may carry other names)
     note TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS users (
@@ -134,6 +134,17 @@ CREATE TABLE IF NOT EXISTS roster (             -- day-by-day shift plan; overri
     shift_id INTEGER,                           -- NULL with off=1 means a day off
     off INTEGER NOT NULL DEFAULT 0,
     created_by TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(device_user_id, date)
+);
+CREATE TABLE IF NOT EXISTS late_notices (       -- one late-arrival e-mail per person per day, never repeated
+    device_user_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    late_min INTEGER NOT NULL DEFAULT 0,
+    count INTEGER NOT NULL DEFAULT 0,             -- qualifying lates in the tracking period, this one included
+    recipients TEXT NOT NULL DEFAULT '',
+    sent_at TEXT,
+    error TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(device_user_id, date)
 );
 CREATE TABLE IF NOT EXISTS leave_consents (     -- the employee's signed acknowledgement when a leave goes beyond their balance
@@ -258,14 +269,15 @@ def init():
     for col, decl in {"status": "TEXT NOT NULL DEFAULT 'approved'",   # approved | pending | rejected
                       "applied_on": "TEXT", "requested_by": "TEXT NOT NULL DEFAULT ''",
                       "decided_by": "TEXT NOT NULL DEFAULT ''", "decided_at": "TEXT",
-                      "group_id": "TEXT",   # one application split into several parts (Casual / Adhoc / ...) shares a group
+                      "group_id": "TEXT",   # one application split into several parts (Informed / Adhoc) shares a group
                       "lop": "REAL NOT NULL DEFAULT 0",
                       "half": "INTEGER NOT NULL DEFAULT 0"}.items():   # half-day leave (one date, counts 0.5)   # pay cut in days' salary per leave day (1.5 / 2 beyond balance)
         if col not in leave_cols:
             c.execute(f"ALTER TABLE leaves ADD COLUMN {col} {decl}")
-    c.execute("UPDATE leaves SET type='Casual' WHERE type='Normal'")   # the policy calls it Casual
+    c.execute("UPDATE leaves SET type='Informed' WHERE type IN ('Normal','Casual')")   # the policy calls it Informed
+    c.execute("UPDATE leaves SET type='Adhoc' WHERE type='Sick'")
     for table, cols in {"payroll_adjustments": {"date": "TEXT"},                   # when the bonus / fine / ... was given
-                        "holidays": {"optional": "INTEGER NOT NULL DEFAULT 0"},   # festival list: taken as Festive leave
+                        "holidays": {"optional": "INTEGER NOT NULL DEFAULT 0"},   # was the festival list; no longer used
                         "roster": {"extra_shifts": "TEXT NOT NULL DEFAULT ''"},   # more shifts that day (comma ids)
                         "shifts": {"break_start": "TEXT NOT NULL DEFAULT ''", "break_end": "TEXT NOT NULL DEFAULT ''"},
                         "sites": {"kind": "TEXT NOT NULL DEFAULT 'office'",      # office | home
@@ -274,8 +286,11 @@ def init():
         for col, decl in cols.items():
             if col not in have_cols:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    c.execute("DELETE FROM holidays WHERE optional=1")   # the festival list (Festive leave) is no longer used
     if "permissions" not in {r["name"] for r in c.execute("PRAGMA table_info(users)")}:
         c.execute("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '*'")
+    if "email" not in {r["name"] for r in c.execute("PRAGMA table_info(users)")}:   # team leads get late-arrival e-mails
+        c.execute("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
     _canonicalize(c)
     c.commit()
 

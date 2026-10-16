@@ -1,36 +1,40 @@
-"""MTT leave policy (financial year April - March).
+"""MTT leave policy (financial year April - March). Two kinds of leave:
 
-  * 24 paid leaves a year: 12 Casual, 4 Adhoc / Sick, 8 Festive.
-  * Leave starts after 3 months of working (before that, days off are unpaid).
-  * CASUAL: applied at least 7 days in advance; at most 2 a month and 12 a year. When it runs out, the Adhoc / Sick
-    balance can be used instead (sick leave converts to casual). Beyond both, each day costs 1.5 x a day's salary.
-  * ADHOC / SICK (emergency, uninformed, or less than 7 days' notice): 1 per quarter (Apr-Jun, Jul-Sep, Oct-Dec,
-    Jan-Mar). Beyond the limit each day costs 2 x a day's salary and also uses 1 day of the Casual balance.
-  * FESTIVE: only on a date from the office's festival list (holidays marked as festival / optional); 8 a year.
-  * HALF DAY: half a day from the Casual (then Adhoc / Sick) balance, so the day is paid in full; with no balance,
+  * INFORMED leave (applied at least 7 days in advance) - shown in yellow.
+  * ADHOC leave (emergency, uninformed, or less than 7 days' notice) - shown in red.
+
+Leave is credited month by month: the first month of every quarter (April, July, October, January) gives
+1 Informed + 1 Adhoc, the other two months give 2 Informed each, so a full year is 20 Informed + 4 Adhoc = 24.
+Unused credits carry forward until 31 March, when what is left is encashed; everyone starts again at 0 in April.
+There is no monthly limit: any credit already earned can be used.
+
+  * Leave starts after 3 months of working: credits are earned from the month in which the person becomes eligible.
+    Before that there is no balance, so every leave day is beyond the balance (see below).
+  * Informed applied with less than 7 days' notice counts as Adhoc. When Informed credits run out, an Adhoc credit is
+    used instead if there is one.
+  * Beyond the balance the day is still leave, but salary is cut: 1.5 x a day's salary for Informed, 2 x for Adhoc.
+    An Adhoc day beyond the Adhoc balance also uses up 1 Informed credit.
+  * HALF DAY: half a day from the Informed (then Adhoc) balance, so the day is paid in full; with no balance,
     0.5 x 1.5 = 0.75 of a day's salary is cut. No notice needed.
   * A day's salary = monthly salary / calendar days in that month.
 
 Only working days count (weekly offs and holidays inside a leave are free). Pending applications reserve balance;
 rejected ones do not. Leave beyond the balance is recorded with a pay-cut multiplier (`lop`) that payroll applies."""
 import calendar
-from collections import Counter
 from datetime import date, timedelta
 
 from . import db, reports
 
 WAIT_MONTHS = 3
-CASUAL_PER_MONTH, CASUAL_PER_YEAR = 2, 12
-ADHOC_PER_QUARTER = 1
-FESTIVE_PER_YEAR = 8
-ANNUAL_TOTAL = 24
+INFORMED_PER_YEAR, ADHOC_PER_YEAR = 20, 4
+ANNUAL_TOTAL = INFORMED_PER_YEAR + ADHOC_PER_YEAR
 NOTICE_DAYS = 7
-CASUAL_EXCESS_CUT = 1.5    # x a day's salary for each Casual day beyond the balance
+INFORMED_EXCESS_CUT = 1.5  # x a day's salary for each Informed day beyond the balance
 ADHOC_EXCESS_CUT = 2.0     # x a day's salary for each Adhoc day beyond the balance
 BACKDATE_DAYS = 7          # employees applying in the app may start a leave at most this many days in the past
 MAX_RANGE_DAYS = 31
-POLICY_TYPES = ("Casual", "Adhoc", "Festive")
-ALIASES = {"Normal": "Casual", "Sick": "Adhoc"}
+POLICY_TYPES = ("Informed", "Adhoc")
+ALIASES = {"Casual": "Informed", "Normal": "Informed", "CL": "Informed", "Sick": "Adhoc"}
 
 
 def add_months(d: date, n: int) -> date:
@@ -39,7 +43,7 @@ def add_months(d: date, n: int) -> date:
 
 
 def eligible_from(joined: str | None) -> date | None:
-    """First day on which paid leave can be taken, or None when the joining date is not recorded."""
+    """First day on which leave credits apply, or None when the joining date is not recorded."""
     return add_months(date.fromisoformat(joined), WAIT_MONTHS) if joined else None
 
 
@@ -52,7 +56,7 @@ def quarter(d: date) -> tuple[int, int, date, date]:
     """(fy, quarter 1-4, first day, last day) of the financial-year quarter containing d."""
     y = fy(d)
     q = ((d.month - 4) % 12) // 3 + 1
-    first = date(y, 4, 1) if q == 1 else add_months(date(y, 4, 1), 3 * (q - 1))
+    first = add_months(date(y, 4, 1), 3 * (q - 1))
     return y, q, first, add_months(first, 3) - timedelta(days=1)
 
 
@@ -60,8 +64,29 @@ def per_day_pay(salary: float, d: date) -> float:
     return round((salary or 0) / calendar.monthrange(d.year, d.month)[1], 2)
 
 
-def festival_dates() -> dict[str, str]:
-    return {r["date"]: r["name"] for r in db.conn().execute("SELECT date, name FROM holidays WHERE optional=1")}
+def credited(emp: dict, d: date) -> tuple[float, float]:
+    """(Informed, Adhoc) credited from 1 April of d's financial year up to and including d's month."""
+    elig = eligible_from(emp.get("joined"))
+    first = date(elig.year, elig.month, 1) if elig else date.min
+    inf = adh = 0
+    m = date(fy(d), 4, 1)
+    while m <= d:
+        if m >= first:
+            k = (m.month - 4) % 3          # 0 = first month of the quarter
+            inf += 1 if k == 0 else 2
+            adh += 1 if k == 0 else 0
+        m = add_months(m, 1)
+    return inf, adh
+
+
+def _month_ends(d: date) -> list[date]:
+    """d's month end and every later month end up to 31 March of d's financial year."""
+    out, m = [], date(d.year, d.month, 1)
+    end = date(fy(d) + 1, 3, 31)
+    while m <= end:
+        out.append(add_months(m, 1) - timedelta(days=1))
+        m = add_months(m, 1)
+    return out
 
 
 def _context(uid: str):
@@ -86,50 +111,44 @@ def working_days(emp: dict, start: date, end: date, ctx) -> list[date]:
     return out
 
 
-def _keys(t: str, lop: float, d: date) -> list[tuple]:
-    """Balance buckets one leave day of this type uses."""
+def _bucket(t: str, lop: float) -> str | None:
+    """Which credit one leave day of this kind uses: 'I'nformed, 'A'dhoc, or none (beyond the balance)."""
     t = ALIASES.get(t, t)
-    y, q, _, _ = quarter(d)
-    casual = [("C-M", d.strftime("%Y-%m")), ("C-Y", fy(d))]
-    if t == "Casual":
-        return casual
+    if t == "Informed":
+        return None if lop else "I"
     if t == "Adhoc":
-        return casual if lop >= ADHOC_EXCESS_CUT else [("A-Q", (y, q)), ("A-Y", y)]   # beyond the limit: uses Casual
-    if t == "Festive":
-        return [("F-Y", fy(d))]
-    return []
+        return "I" if lop >= ADHOC_EXCESS_CUT else "A"   # Adhoc beyond the balance also uses 1 Informed credit
+    return None
 
 
-def usage(emp: dict, ctx) -> Counter:
-    """Leave days taken or reserved (approved + pending), per balance bucket."""
-    u: Counter = Counter()
+def usage(emp: dict, ctx) -> list[tuple[date, str, float]]:
+    """Credits used or reserved (approved + pending leave): (day, bucket, amount). Days before the person is eligible
+    use no credits (they had none)."""
+    elig = eligible_from(emp.get("joined"))
+    out = []
     for r in db.conn().execute("SELECT * FROM leaves WHERE device_user_id=? AND status IN ('approved','pending')",
                                (emp["device_user_id"],)):
-        t = ALIASES.get(r["type"], r["type"])
-        if t not in POLICY_TYPES:
+        unit = 0.5 if r["half"] else 1
+        b = _bucket(r["type"], (r["lop"] or 0) / unit)   # lop is stored per leave day, so per full day here
+        if not b:
             continue
         s, e = date.fromisoformat(r["start_date"]), date.fromisoformat(r["end_date"])
-        days = [s] if t == "Festive" else working_days(emp, s, e, ctx)
-        unit = 0.5 if r["half"] else 1
-        lop = (r["lop"] or 0) / unit                 # per full day, so a half-day Adhoc beyond balance is still 2x
-        for d in days:
-            for k in _keys(t, lop, d):
-                u[k] += unit
-    return u
+        out += [(d, b, unit) for d in working_days(emp, s, e, ctx) if not (elig and d < elig)]
+    return out
 
 
-def left(u: Counter, kind: str, d: date) -> float:
-    if kind == "Casual":
-        return min(CASUAL_PER_MONTH - u[("C-M", d.strftime("%Y-%m"))], CASUAL_PER_YEAR - u[("C-Y", fy(d))])
-    if kind == "Adhoc":
-        y, q, _, _ = quarter(d)
-        return ADHOC_PER_QUARTER - u[("A-Q", (y, q))]
-    return FESTIVE_PER_YEAR - u[("F-Y", fy(d))]
+def left(emp: dict, used: list, bucket: str, d: date) -> float:
+    """Credit of this kind free to use on day d: what was earned by d's month, minus what is used up to then, and
+    without taking credit that a later booking in the same year already relies on."""
+    i = 0 if bucket == "I" else 1
+    y = fy(d)
+    return min(credited(emp, m)[i] - sum(a for x, b, a in used if b == bucket and fy(x) == y and x <= m)
+               for m in _month_ends(d))
 
 
 def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict: bool = True, half: bool = False) -> dict:
-    """Work out how an application would be taken. Each working day becomes Casual, Adhoc or Festive (paid), Casual /
-    Adhoc beyond the balance (paid, then a pay cut of 1.5x / 2x a day's salary), or Unpaid (before leave starts).
+    """Work out how an application would be taken. Each working day becomes Informed or Adhoc within the balance,
+    or Informed / Adhoc beyond it (still leave, with a pay cut of 1.5x / 2x a day's salary).
     Returns the split, the pay cut, warnings to show, and whether the employee must sign a consent, or {"error": ...}.
     strict=True is for employees applying themselves (limits back-dating)."""
     kind = ALIASES.get(kind, kind)
@@ -137,7 +156,7 @@ def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict
     if not emp:
         return {"error": "Employee not found"}
     if kind not in POLICY_TYPES:
-        return {"error": "Leave type must be Casual, Adhoc or Festive"}
+        return {"error": "Leave type must be Informed or Adhoc"}
     try:
         start, end = date.fromisoformat(start_s), date.fromisoformat(end_s)
     except ValueError:
@@ -151,100 +170,93 @@ def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict
     if half:
         if end != start:
             return {"error": "A half day is a single date"}
-        if kind == "Festive":
-            return {"error": "Festive leave is for a whole day"}
-        kind = "Casual"   # half days use Casual, then Adhoc / Sick, with no notice needed
-    if kind == "Festive":
-        fest = festival_dates()
-        days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
-        bad = [d for d in days if d.isoformat() not in fest]
-        if bad:
-            return {"error": f"{bad[0]:%d %b %Y} is not on the festival holiday list. Festive leave can only be taken "
-                             "on those dates."}
-    else:
-        days = working_days(emp, start, end, ctx)
+        kind = "Informed"   # half days use Informed, then Adhoc, with no notice needed
+    days = working_days(emp, start, end, ctx)
     if not days:
         return {"error": "There are no working days in that range (weekly offs and holidays are not counted)"}
     elig = eligible_from(emp.get("joined"))
     notice_ok = half or (start - applied_on).days >= NOTICE_DAYS
     unit = 0.5 if half else 1
-    u = usage(emp, ctx)
+    used = usage(emp, ctx)
     alloc = []   # (day, type, lop per full day)
     for d in days:
-        if elig and d < elig:
-            t, lop = "Unpaid", 0.0
-        elif kind == "Festive":
-            if left(u, "Festive", d) < 1:
-                return {"error": f"All {FESTIVE_PER_YEAR} festive leaves of this year are used. Apply for Casual leave instead."}
-            t, lop = "Festive", 0.0
-        elif kind == "Casual" and notice_ok and left(u, "Casual", d) >= unit:
-            t, lop = "Casual", 0.0
-        elif left(u, "Adhoc", d) >= unit:
+        early = bool(elig and d < elig)
+        if not early and kind == "Informed" and notice_ok and left(emp, used, "I", d) >= unit:
+            t, lop = "Informed", 0.0
+        elif not early and left(emp, used, "A", d) >= unit:
             t, lop = "Adhoc", 0.0
-        elif kind == "Casual" and notice_ok:
-            t, lop = "Casual", CASUAL_EXCESS_CUT
+        elif kind == "Informed" and notice_ok:
+            t, lop = "Informed", INFORMED_EXCESS_CUT
         else:
             t, lop = "Adhoc", ADHOC_EXCESS_CUT
-        for k in _keys(t, lop, d):
-            u[k] += unit
+        b = None if early else _bucket(t, lop)
+        if b:
+            used.append((d, b, unit))
         alloc.append((d, t, lop))
 
     salary = emp.get("salary") or 0
     cnt = lambda t, ex=False: sum(1 for _, x, lop in alloc if x == t and (lop > 0) == ex)
-    unpaid = [d for d, t, _ in alloc if t == "Unpaid"]
     excess = [(d, lop) for d, t, lop in alloc if lop > 0]
-    cut_unpaid = round(sum(per_day_pay(salary, d) * unit for d in unpaid), 2)
-    cut_excess = round(sum(per_day_pay(salary, d) * lop * unit for d, lop in excess), 2)
-    deduction = round(cut_unpaid + cut_excess, 2)
-    adhoc_left = max(left(u, "Adhoc", days[0]), 0)
+    before = [d for d in days if elig and d < elig]
+    deduction = round(sum(per_day_pay(salary, d) * lop * unit for d, lop in excess), 2)
     rs = lambda v: f"Rs {v:,.2f}"
 
     warnings = []
-    if unpaid:
-        warnings.append(f"Paid leave starts on {elig:%d %b %Y} (after 3 months of working), so {len(unpaid)} day(s) "
-                        f"before that are unpaid" + (f": {rs(cut_unpaid)} less salary." if salary else "."))
+    if before:
+        warnings.append(f"Leave credits start on {elig:%d %b %Y} (after 3 months of working), so {len(before)} day(s) "
+                        "before that have no balance.")
     converted = cnt("Adhoc")
-    if kind == "Casual" and not notice_ok and (converted or cnt("Adhoc", True)):
-        warnings.append(f"Casual leave needs {NOTICE_DAYS} days' notice, so this counts as Adhoc (emergency) leave. "
-                        f"Adhoc left this quarter after this: {adhoc_left:g}.")
-    elif kind == "Casual" and converted:
-        warnings.append(f"Your Casual balance is not enough, so {converted} day(s) will use your Adhoc / Sick leave. "
-                        f"Adhoc left this quarter after this: {adhoc_left:g}.")
+    if kind == "Informed" and not notice_ok and (converted or cnt("Adhoc", True)):
+        warnings.append(f"Informed leave needs {NOTICE_DAYS} days' notice, so this counts as Adhoc (emergency) leave.")
+    elif kind == "Informed" and converted:
+        warnings.append(f"Your Informed balance is not enough, so {converted} day(s) will use your Adhoc leave.")
     if half:
         warnings.insert(0, "Half day: half of the day comes from your leave balance, so the day is paid in full"
-                        + (" (not this time: see below)." if excess or unpaid else "."))
+                        + (" (not this time: see below)." if excess else "."))
     if excess and half:
         warnings.append("You don't have enough leave balance for the half day: 0.5 x 1.5 = 0.75 of a day's salary"
-                        + (f" ({rs(cut_excess)})" if salary else "") + " will be cut.")
+                        + (f" ({rs(deduction)})" if salary else "") + " will be cut.")
     elif excess:
-        n15, n2 = cnt("Casual", True), cnt("Adhoc", True)
-        bits = ([f"{n15} Casual day(s) x 1.5 day's salary"] if n15 else []) + \
-               ([f"{n2} Adhoc day(s) x 2 days' salary (each also uses 1 Casual day)"] if n2 else [])
+        n15, n2 = cnt("Informed", True), cnt("Adhoc", True)
+        bits = ([f"{n15} Informed day(s) x 1.5 day's salary"] if n15 else []) + \
+               ([f"{n2} Adhoc day(s) x 2 days' salary (each also uses 1 Informed credit)"] if n2 else [])
         warnings.append("You don't have enough leave balance. Beyond it: " + " and ".join(bits) +
-                        (f" = {rs(cut_excess)} will be cut from your salary." if salary else " will be cut from your salary."))
+                        (f" = {rs(deduction)} will be cut from your salary." if salary else " will be cut from your salary."))
     consent = ""
-    if unpaid or excess:
+    if excess:
         per = per_day_pay(salary, days[0])
         consent = (f"I, {emp['name']} (employee ID {emp['device_user_id']}), am applying for leave from {start:%d %b %Y} to "
                    f"{end:%d %b %Y} ({len(days)} working day(s)). I understand that my leave balance is not enough"
                    + (f" and that {rs(deduction)} will be cut from my salary (a day's salary is about {rs(per)})" if salary
                       else " and that salary will be cut for these days")
-                   + ", as per the MTT leave policy: unpaid days before 3 months of service, 1.5x a day's salary for each "
-                     "Casual day and 2x for each Adhoc day beyond the balance. I agree to this deduction.")
+                   + ", as per the MTT leave policy: 1.5x a day's salary for each Informed day and 2x for each Adhoc day "
+                     "beyond the balance. I agree to this deduction.")
     # consecutive calendar days of the same kind become one leave record (weekends / holidays split records)
     parts: list[dict] = []
     for d, t, lop in alloc:
-        if parts and (parts[-1]["type"], parts[-1]["lop"]) == (t, lop) and \
+        if parts and (parts[-1]["type"], parts[-1]["lop"]) == (t, round(lop * unit, 2)) and \
                 date.fromisoformat(parts[-1]["end_date"]) + timedelta(days=1) == d:
             parts[-1]["end_date"] = d.isoformat()
         else:
             parts.append({"type": t, "lop": round(lop * unit, 2), "half": int(half),
                           "start_date": d.isoformat(), "end_date": d.isoformat()})
     return {"days": [d.isoformat() for d in days], "working_days": len(days) * unit, "half": half,
-            "casual_days": cnt("Casual"), "adhoc_days": cnt("Adhoc"), "festive_days": cnt("Festive"),
-            "excess_days": len(excess), "unpaid_days": len(unpaid), "deduction": deduction,
+            "informed_days": cnt("Informed"), "adhoc_days": cnt("Adhoc"),
+            "excess_days": len(excess), "deduction": deduction,
             "per_day": per_day_pay(salary, days[0]), "salary_known": bool(salary), "warnings": warnings,
-            "needs_consent": bool(unpaid or excess), "consent_text": consent, "parts": parts}
+            "needs_consent": bool(excess), "consent_text": consent, "parts": parts}
+
+
+def _next_credit(emp: dict, on: date) -> dict | None:
+    """When the next credit arrives and what it brings (None after March: a new year starts at 0)."""
+    m = add_months(date(on.year, on.month, 1), 1)
+    elig = eligible_from(emp.get("joined"))
+    while m <= date(fy(on) + 1, 3, 1):
+        if not elig or m >= date(elig.year, elig.month, 1):
+            k = (m.month - 4) % 3
+            return {"date": m.isoformat(), "informed": 1 if k == 0 else 2, "adhoc": 1 if k == 0 else 0}
+        m = add_months(m, 1)
+    return None
 
 
 def balance(uid: str, on: date) -> dict | None:
@@ -252,34 +264,34 @@ def balance(uid: str, on: date) -> dict | None:
     if not emp:
         return None
     elig = eligible_from(emp.get("joined"))
-    u = usage(emp, ctx)
-    y, q, q1, q2 = quarter(on)
-    ok = elig is None or on >= elig
-    used_year = u[("C-Y", y)] + u[("A-Y", y)] + u[("F-Y", y)]
-    fest = festival_dates()
-    return {"eligible_from": elig.isoformat() if elig else None, "eligible": ok, "joined_known": elig is not None,
-            "notice_days": NOTICE_DAYS, "fy": f"{y}-{str(y + 1)[2:]}",
-            "casual": {"month_left": max(left(u, "Casual", on), 0) if ok else 0, "month_quota": CASUAL_PER_MONTH,
-                       "year_used": u[("C-Y", y)], "year_quota": CASUAL_PER_YEAR},
-            "adhoc": {"left": max(left(u, "Adhoc", on), 0) if ok else 0, "quota": ADHOC_PER_QUARTER,
-                      "period_start": q1.isoformat(), "period_end": q2.isoformat(), "year_used": u[("A-Y", y)]},
-            "festive": {"left": max(FESTIVE_PER_YEAR - u[("F-Y", y)], 0) if ok else 0, "quota": FESTIVE_PER_YEAR,
-                        "dates": [{"date": d, "name": n} for d, n in sorted(fest.items()) if d >= on.isoformat()][:20]},
-            "year": {"entitlement": ANNUAL_TOTAL, "used": used_year, "left": max(ANNUAL_TOTAL - used_year, 0)}}
+    used = usage(emp, ctx)
+    y = fy(on)
+    ci, ca = credited(emp, on)
+    ui = sum(a for d, b, a in used if b == "I" and fy(d) == y)
+    ua = sum(a for d, b, a in used if b == "A" and fy(d) == y)
+    return {"eligible_from": elig.isoformat() if elig else None, "eligible": elig is None or on >= elig,
+            "joined_known": elig is not None, "notice_days": NOTICE_DAYS, "fy": f"{y}-{str(y + 1)[2:]}",
+            "informed": {"credited": ci, "used": ui, "left": max(left(emp, used, "I", on), 0)},
+            "adhoc": {"credited": ca, "used": ua, "left": max(left(emp, used, "A", on), 0)},
+            "next_credit": _next_credit(emp, on),
+            "year": {"entitlement": ANNUAL_TOTAL, "credited": ci + ca, "used": ui + ua}}
 
 
 def year_summary(fy_start: int) -> list[dict]:
-    """Leave used and the balance left for encashment at the end of the financial year (31 March)."""
+    """Leave used and the credit left for encashment at the end of the financial year (31 March)."""
     shifts, emps, holidays, _, changes = reports._load()
     out = []
+    end = date(fy_start + 1, 3, 31)
     for e in emps:
         if not e["active"] and (e.get("left_on") or "") < f"{fy_start}-04-01":   # left before this year
             continue
-        u = usage(e, (e, shifts, holidays, changes))
-        c, a, f = u[("C-Y", fy_start)], u[("A-Y", fy_start)], u[("F-Y", fy_start)]
-        bal = max(ANNUAL_TOTAL - c - a - f, 0)
+        used = [u for u in usage(e, (e, shifts, holidays, changes)) if fy(u[0]) == fy_start]
+        ci, ca = credited(e, end)
+        ui = sum(a for _, b, a in used if b == "I")
+        ua = sum(a for _, b, a in used if b == "A")
+        bal = max(ci - ui, 0) + max(ca - ua, 0)
         rate = round((e.get("salary") or 0) / 31, 2)   # a day's salary in March
         out.append({"device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
-                    "casual": c, "adhoc": a, "festive": f, "used": c + a + f, "balance": bal,
-                    "day_rate": rate, "encashment": round(bal * rate, 2)})
+                    "informed": ui, "informed_credit": ci, "adhoc": ua, "adhoc_credit": ca, "used": ui + ua,
+                    "balance": bal, "day_rate": rate, "encashment": round(bal * rate, 2)})
     return out

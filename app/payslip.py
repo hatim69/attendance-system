@@ -40,7 +40,7 @@ def build_pdf(d: dict) -> bytes:
 
     att = [("Days in month", f"{a['days_in_month']:g}"), ("Paid days", f"{a['paid_days']:g}"), ("Days present", f"{a['present']:g}"),
            ("Late days", f"{a['late_days']:g}"), ("Half days", f"{a['half_days']:g}"), ("Absent", f"{a['absent']:g}"),
-           ("Leave", f"{a['leave']:g}"), ("Holidays + weekly offs", f"{a['holidays'] + a['weekly_offs']:g}"), ("Overtime hours", f"{a['overtime_hours']:g}")]
+           ("Informed leave", f"{a.get('informed_leave', 0):g}"), ("Adhoc leave", f"{a.get('adhoc_leave', 0):g}"), ("Holidays + weekly offs", f"{a['holidays'] + a['weekly_offs']:g}"), ("Overtime hours", f"{a['overtime_hours']:g}")]
     rows = [[att[i][0], att[i][1], att[i + 1][0], att[i + 1][1], att[i + 2][0], att[i + 2][1]] for i in range(0, 9, 3)]
     t = Table(rows, colWidths=[34 * mm, 14 * mm, 34 * mm, 14 * mm, 34 * mm, 14 * mm])
     t.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 8.5), ("TEXTCOLOR", (0, 0), (0, -1), colors.grey), ("TEXTCOLOR", (2, 0), (2, -1), colors.grey),
@@ -74,7 +74,7 @@ def build_pdf(d: dict) -> bytes:
 
 
 def consent_pdf(k: dict, parts: list[dict], company: str) -> bytes:
-    """Printable record of an employee's signed agreement to unpaid leave (kept as proof)."""
+    """Printable record of an employee's signed agreement to the pay cut for leave beyond the balance (kept as proof)."""
     ss = getSampleStyleSheet()
     body = ParagraphStyle("b", parent=ss["Normal"], fontSize=10.5, leading=15)
     small = ParagraphStyle("s", parent=ss["Normal"], fontSize=8.5, textColor=colors.grey)
@@ -83,7 +83,7 @@ def consent_pdf(k: dict, parts: list[dict], company: str) -> bytes:
                             title=f"Leave consent {k['name']}", pageCompression=0)
     esc = lambda v: str(v or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     story = [Paragraph(esc(company) or "Leave consent", ParagraphStyle("h", parent=ss["Title"], fontSize=16)),
-             Paragraph("<b>Consent to unpaid leave</b>", ParagraphStyle("t", parent=ss["Normal"], fontSize=12, alignment=1)),
+             Paragraph("<b>Consent to the pay cut for leave beyond the balance</b>", ParagraphStyle("t", parent=ss["Normal"], fontSize=12, alignment=1)),
              Spacer(1, 12), Paragraph(esc(k["text"]), body), Spacer(1, 12)]
     rows = [["From", "To", "Counted as", "Status"]] + [[p["start_date"], p["end_date"], p["type"], p["status"]] for p in parts]
     t = Table(rows, colWidths=[38 * mm, 38 * mm, 40 * mm, 40 * mm])

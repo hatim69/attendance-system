@@ -67,7 +67,7 @@ Free. Accept the declarations.
   >
   > • Check in and check out from your phone with GPS and a selfie, at the office or on an approved work-from-home day
   > • See today's check-ins at a glance
-  > • Apply for Casual, Adhoc / Sick, Festive and half-day leave, with your balance and the exact effect on your salary shown before you apply
+  > • Apply for Informed, Adhoc and half-day leave, with your balance and the exact effect on your salary shown before you apply
   > • Request work from home and see when your team lead approves it
   > • Download your monthly payslips as PDF
   >

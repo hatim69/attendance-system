@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
-from . import auth, config, db, geo, hub, leavepolicy, payslip, push, reports
+from . import auth, config, db, geo, hub, lates, leavepolicy, payslip, push, reports
 from .timeutil import now_local
 
 router = APIRouter(prefix="/api/app")
@@ -58,6 +58,14 @@ def me(emp: dict = Depends(current_employee)):
             "wfh_today": wfh_approved(emp["device_user_id"], today),
             "sites": active_sites(emp["device_user_id"]), "remote_ok": bool(emp.get("remote_ok")),
             "geofence_mode": config.GEOFENCE_MODE, "server_time": now_local().isoformat(" ")}
+
+
+@router.get("/lates")
+def my_lates(emp: dict = Depends(current_employee)):
+    """My late arrivals in the current tracking period (the same count HR sees)."""
+    mine = lates.counts(None, emp["device_user_id"])
+    p = lates.policy()
+    return mine[0] if mine else {"count": 0, "limit": p["limit"], "state": "ok", "period_label": p["period_label"], "lates": []}
 
 
 def wfh_approved(uid: str, day: str) -> bool:
@@ -146,7 +154,7 @@ def my_payslip_pdf(month: str, emp: dict = Depends(current_employee)):
 class LeaveRequest(BaseModel):
     start_date: str
     end_date: str = ""         # empty = one day
-    type: str          # Casual | Adhoc | Festive
+    type: str          # Informed | Adhoc
     reason: str = ""
     consent_name: str = ""     # typed full name = signature, required when part of the leave is unpaid
     half: bool = False         # half-day leave (one date)
@@ -167,7 +175,7 @@ def my_leaves(emp: dict = Depends(current_employee)):
 
 @router.get("/leave/preview")
 def preview_leave(type: str, start_date: str, end_date: str = "", half: bool = False, emp: dict = Depends(current_employee)):
-    """What applying would mean: Casual / Adhoc / Festive split, pay cut, warnings, consent text."""
+    """What applying would mean: Informed / Adhoc split, pay cut, warnings, consent text."""
     p = leavepolicy.plan(emp["device_user_id"], type, start_date, end_date or start_date, now_local().date(), strict=True, half=half)
     if "error" in p:
         raise HTTPException(400, p["error"])
@@ -180,15 +188,15 @@ def _norm(s: str) -> str:
 
 @router.post("/leave")
 def apply_leave(body: LeaveRequest, request: Request, emp: dict = Depends(current_employee)):
-    """Apply for Normal or Adhoc leave. It stays pending (and reserves the balance) until HR approves it.
-    Beyond the balance it falls back to Adhoc, then unpaid days, which need the employee's signed consent."""
+    """Apply for Informed or Adhoc leave. It stays pending (and reserves the balance) until HR approves it.
+    Beyond the balance the days carry a pay cut, which needs the employee's signed consent."""
     today = now_local().date()
     p = leavepolicy.plan(emp["device_user_id"], body.type, body.start_date, body.end_date or body.start_date, today, strict=True,
                          half=body.half)
     if "error" in p:
         raise HTTPException(400, p["error"])
     if p["needs_consent"] and _norm(body.consent_name) != _norm(emp["name"]):
-        raise HTTPException(400, f"Part of this leave is unpaid. To agree, type your full name exactly as {emp['name']!r}.")
+        raise HTTPException(400, f"Part of this leave is beyond your balance. To agree to the pay cut, type your full name exactly as {emp['name']!r}.")
     group, now = uuid.uuid4().hex[:12], now_local().strftime("%Y-%m-%d %H:%M:%S")
     c = db.conn()
     for part in p["parts"]:
@@ -202,7 +210,7 @@ def apply_leave(body: LeaveRequest, request: Request, emp: dict = Depends(curren
                    request.headers.get("x-forwarded-for", request.client.host if request.client else "")[:100],
                    request.headers.get("user-agent", "")[:300], now))
     c.commit()
-    return {"ok": True, "group_id": group, "days": p["working_days"], "unpaid_days": p["unpaid_days"],
+    return {"ok": True, "group_id": group, "days": p["working_days"], "informed_days": p["informed_days"],
             "adhoc_days": p["adhoc_days"], "excess_days": p["excess_days"], "deduction": p["deduction"], "status": "pending"}
 
 

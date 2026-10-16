@@ -54,7 +54,10 @@
  .nudge{background:linear-gradient(135deg,#eef2ff,#f5f3ff);border:1px solid #c7d2fe}.nudge b{display:block;margin-bottom:4px}.nudge span{font-size:14px;color:#475569}
  .warn{background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-radius:12px;padding:12px 14px;font-size:14px;margin:0 0 14px}
  .warn.bad{background:#fef2f2;border-color:#fecaca;color:#7f1d1d} .warn b{display:block;margin-bottom:4px}
- .split{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}.split span{font-size:13px;font-weight:600;padding:4px 10px;border-radius:20px;background:#eef2ff;color:#3730a3}.split span.u{background:#fee2e2;color:#991b1b}.split span.a{background:#fef3c7;color:#92400e}
+ .lv{font-size:12.5px;font-weight:650;padding:1px 8px;border-radius:20px}.lv.i,.split span.i,.bal div.i{background:#fef3c7;color:#854d0e;box-shadow:inset 0 0 0 1px #fcd34d}.lv.a,.split span.a,.bal div.a{background:#fee2e2;color:#991b1b;box-shadow:inset 0 0 0 1px #fca5a5}
+ .lvleg{display:flex;gap:8px;margin:-6px 0 12px}
+ .latebox{margin-top:12px;padding:10px 12px;border-radius:12px;background:#f8fafc;font-size:14px}.latebox small{display:block;color:#64748b;margin-top:4px}.latebox.warn{background:#fef3c7;color:#854d0e}.latebox.err{background:#fee2e2;color:#991b1b}
+ .split{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}.split span{font-size:13px;font-weight:600;padding:4px 10px;border-radius:20px;background:#eef2ff;color:#3730a3}.split span.u{background:#fee2e2;color:#991b1b}
  .consent{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;font-size:13.5px;line-height:1.55;margin:0 0 12px;color:#334155}
 </style></head><body><div class="wrap">
 
@@ -80,7 +83,7 @@
     <div class="punch"><button id="punchBtn" class="big" disabled><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg><span id="punchLbl">Check in</span></button></div>
     <div id="status" class="msg info">Getting your location…</div>
   </div>
-  <div class="card"><h3><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Today</h3><ul id="today"></ul></div>
+  <div class="card"><h3><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Today</h3><ul id="today"></ul><div id="mylate"></div></div>
   <div class="card nudge hide" id="pushNudge"><b>Never forget to check in</b><span>Turn on reminders: we'll notify you if you haven't checked in an hour into your shift, and 15 minutes before it ends.</span><button class="sm" onclick="go('me')">Turn on reminders</button></div>
  </section>
  <section class="tab hide" id="t-leave">
@@ -88,8 +91,8 @@
   <div class="card lift" id="leaveCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>Leave</h3>
     <div id="lbal" class="muted" style="margin-bottom:12px"></div>
     <div id="lform" class="hide">
-      <label for="lty">Type</label><select id="lty"><option value="Casual">Casual (apply 7+ days ahead)</option><option value="Adhoc">Adhoc / Sick (emergency)</option><option value="Festive">Festive (festival list only)</option></select>
-      <div id="lfest" class="muted hide" style="margin:-6px 0 12px;font-size:13.5px"></div>
+      <label for="lty">Type</label><select id="lty"><option value="Informed">Informed (apply 7+ days ahead)</option><option value="Adhoc">Adhoc (emergency)</option></select>
+      <div class="lvleg"><span class="lv i">Informed = yellow</span><span class="lv a">Adhoc = red</span></div>
       <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px;font-weight:500"><input type="checkbox" id="lhalf" style="width:20px;height:20px;margin:0"> Half day (work the other half; no notice needed)</label>
       <div class="row2"><div><label for="lfr" id="lfrl">From</label><input id="lfr" type="date"></div><div id="ltoBox"><label for="lto">To</label><input id="lto" type="date"></div></div>
       <label for="lre">Reason</label><input id="lre" placeholder="Optional" maxlength="200">
@@ -160,18 +163,20 @@ async function start(){
   $('#siteInfo').textContent=me.sites.length?'Allowed at: '+me.sites.map(s=>s.name).join(', '):'';
   $('#today').innerHTML=me.today.length?me.today.map(p=>`<li><span class="tl"><i class="${p.status?'o':''}"></i>${p.status?'Check out':'Check in'}${p.flag=='outside_geofence'?' <span class="tag pending">outside area</span>':''}</span><b>${p.ts.slice(11,16)}</b></li>`).join(''):'<li class="muted">No punches yet today</li>';
   const out=me.today.length%2==1; $('#punchLbl').textContent=out?'Check out':'Check in'; $('#punchBtn').classList.toggle('out',out);
-  loadSlips(); loadLeave(); loadWfh();
+  loadSlips(); loadLeave(); loadWfh(); loadLates();
   $('#wtoday').innerHTML=me.wfh_today?'<div class="msg ok" style="margin:0 0 12px">Work from home is approved for today: you can check in from anywhere.</div>':''; await Promise.all([startCam(),locate()]); ready();
 }
 const fmtD=d=>new Date(d+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'});
+async function loadLates(){try{const x=await api('/lates');const cls=x.state=='over'?'err':x.state=='limit'?'warn':'';
+  $('#mylate').innerHTML=`<div class="latebox ${cls}"><b>${x.count} / ${x.limit}</b> late arrival${x.count==1?'':'s'} · ${esc(x.period_label.toLowerCase())}${x.state=='limit'?'<br>You have reached the limit.':x.state=='over'?'<br>Over the limit: HR will review.':''}${x.lates.length?`<small>${x.lates.map(l=>`${fmtD(l.date)} (${l.late_min} min)`).join(' · ')}</small>`:''}</div>`}catch(e){}}
 async function loadLeave(){
   try{const [b,l]=await Promise.all([api('/leave-balance'),api('/leaves')]);
-   const tile=(n,q,l)=>`<div><b>${n}<small style="font-size:14px;color:#94a3b8"> / ${q}</small></b><span>${l}</span></div>`;
-   if(!b.eligible)$('#lbal').textContent=`Paid leave starts on ${fmtD(b.eligible_from)} (3 months after joining). Leave before that is unpaid.`;
-   else $('#lbal').innerHTML=`<div class="bal">${tile(b.casual.month_left,b.casual.month_quota,'Casual this month')}${tile(b.adhoc.left,b.adhoc.quota,'Adhoc / Sick this quarter')}${tile(b.festive.left,b.festive.quota,'Festive this year')}${tile(b.year.left,b.year.entitlement,'All leave left this year')}</div>`;
-   FEST=b.festive.dates||[];
-   $('#lform').classList.remove('hide');   // before eligibility the days are unpaid; the preview explains it
-   $('#llist').innerHTML=l.slice(0,8).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''} · ${x.type=='Adhoc'?'Adhoc / Sick':x.type}${x.half?' (½ day)':''}${x.lop?` <span class="tag rejected">${x.lop}× cut</span>`:''}</span><span><span class="tag ${x.status}">${x.status}</span>${x.status=='pending'?` <button class="link" data-c="${x.id}" style="padding:0 0 0 6px">cancel</button>`:''}</span></li>`).join('')||'<li class="muted">No leave yet</li>';
+   const tile=(n,q,l,c='')=>`<div class="${c}"><b>${n}<small style="font-size:14px;opacity:.6"> / ${q}</small></b><span>${l}</span></div>`;
+   const nx=b.next_credit?`<div class="muted" style="font-size:13px;margin:-4px 0 12px">Next credit ${fmtD(b.next_credit.date)}: ${b.next_credit.informed} Informed${b.next_credit.adhoc?' + '+b.next_credit.adhoc+' Adhoc':''}. Unused leave carries to 31 March.</div>`:'';
+   if(!b.eligible)$('#lbal').innerHTML=`Leave credits start on ${fmtD(b.eligible_from)} (3 months after joining). Leave before that is beyond the balance: 1.5× a day's salary cut for Informed, 2× for Adhoc.`;
+   else $('#lbal').innerHTML=`<div class="bal">${tile(b.informed.left,b.informed.credited,'Informed leave left (yellow)','i')}${tile(b.adhoc.left,b.adhoc.credited,'Adhoc leave left (red)','a')}</div>${nx}`;
+   $('#lform').classList.remove('hide');   // before eligibility the preview explains the pay cut
+   $('#llist').innerHTML=l.slice(0,8).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''} · <span class="lv ${x.type=='Adhoc'?'a':'i'}">${esc(x.type)}${x.half?' ½ day':''}</span>${x.lop?` <span class="tag rejected">${x.lop}× cut</span>`:''}</span><span><span class="tag ${x.status}">${x.status}</span>${x.status=='pending'?` <button class="link" data-c="${x.id}" style="padding:0 0 0 6px">cancel</button>`:''}</span></li>`).join('')||'<li class="muted">No leave yet</li>';
    document.querySelectorAll('#llist button').forEach(bt=>bt.onclick=async()=>{if(!confirm('Cancel this application?'))return;try{await api('/leave/'+bt.dataset.c,{method:'DELETE'});loadLeave()}catch(e){msg($('#lmsg'),e.message,'err')}});
   }catch(e){}
 }
@@ -184,18 +189,14 @@ async function previewLeave(){const box=$('#lprev'); PLAN=null; $('#lcons').clas
    const p=PLAN=await api('/leave/preview?'+q);
    const rs=v=>'₹ '+v.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
    const n=v=>p.half?'½':v;
-   box.innerHTML=`<div class="split">${p.casual_days?`<span>${n(p.casual_days)} Casual</span>`:''}${p.adhoc_days?`<span class="a">${n(p.adhoc_days)} Adhoc / Sick</span>`:''}${p.festive_days?`<span>${p.festive_days} Festive</span>`:''}${p.excess_days?`<span class="u">${n(p.excess_days)} beyond balance</span>`:''}${p.unpaid_days?`<span class="u">${n(p.unpaid_days)} unpaid</span>`:''}</div>`+
+   box.innerHTML=`<div class="split">${p.informed_days?`<span class="i">${n(p.informed_days)} Informed</span>`:''}${p.adhoc_days?`<span class="a">${n(p.adhoc_days)} Adhoc</span>`:''}${p.excess_days?`<span class="u">${n(p.excess_days)} beyond balance</span>`:''}</div>`+
     p.warnings.map(w=>`<div class="warn ${/unpaid|cut/.test(w)?'bad':''}">${esc(w)}</div>`).join('')+
     (p.deduction&&p.salary_known?`<div class="warn bad"><b>Total salary cut: ${rs(p.deduction)}</b>A day's salary is about ${rs(p.per_day)}.</div>`:'');
    if(p.needs_consent){$('#lctext').textContent=p.consent_text;$('#lcons').classList.remove('hide');$('#lap').textContent='I agree, apply for leave'}
-   else if(p.adhoc_days&&$('#lty').value=='Casual')$('#lap').textContent='Apply (uses Adhoc / Sick)';
+   else if(p.adhoc_days&&$('#lty').value=='Informed')$('#lap').textContent='Apply (uses Adhoc)';
   }catch(e){box.innerHTML=`<div class="warn bad">${esc(e.message)}</div>`}}
-let FEST=[];
-$('#lty').addEventListener('change',()=>{const f=$('#lty').value=='Festive';$('#lfest').classList.toggle('hide',!f);
-  $('#lfest').innerHTML=f?(FEST.length?'Festival dates: '+FEST.map(x=>`<a href="#" data-d="${esc(x.date)}">${esc(fmtD(x.date))} ${esc(x.name)}</a>`).join(', '):'No upcoming festival dates have been set by the office.'):'';
-  document.querySelectorAll('#lfest a').forEach(a=>a.onclick=e=>{e.preventDefault();$('#lfr').value=$('#lto').value=a.dataset.d;previewLeave()})});
 ['#lty','#lfr','#lto'].forEach(k=>$(k).addEventListener('change',previewLeave));
-$('#lhalf').addEventListener('change',()=>{const h=$('#lhalf').checked;$('#ltoBox').classList.toggle('hide',h);$('#lfrl').textContent=h?'Date':'From';if(h&&$('#lty').value=='Festive')$('#lty').value='Casual';previewLeave()});
+$('#lhalf').addEventListener('change',()=>{const h=$('#lhalf').checked;$('#ltoBox').classList.toggle('hide',h);$('#lfrl').textContent=h?'Date':'From';previewLeave()});
 $('#lap').onclick=async()=>{const m=$('#lmsg'); try{
   if(!PLAN)await previewLeave(); if(!PLAN)throw new Error('Check the dates first');
   if(PLAN.needs_consent&&!$('#lcname').value.trim())throw new Error('Part of this leave is unpaid. Type your full name to agree before applying.');

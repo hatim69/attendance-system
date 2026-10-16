@@ -1,6 +1,6 @@
 """Attendance engine + reports. Every employee has their own shift (or none = flexible: never late)."""
 import calendar
-from datetime import date as Date
+from datetime import date as Date, timedelta
 from datetime import datetime
 
 from . import access, config, db, loans
@@ -9,7 +9,19 @@ from .timeutil import now_local
 WEEKDAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 WORKED = {"Present", "Late", "Half Day"}
 CODES = {"Present": "P", "Late": "L", "Half Day": "HD", "Absent": "A", "Leave": "LV", "Holiday": "H", "Weekly Off": "WO", "": ""}
-LEAVE_TYPES = ["Casual", "Adhoc", "Festive", "Sick", "Paid", "Unpaid", "Other"]   # Casual/Adhoc/Festive follow the leave policy
+LEAVE_CODES = {"Informed": "IL", "Adhoc": "AL"}   # a leave day on the attendance sheet: Informed (yellow) / Adhoc (red)
+
+
+# Excel colours (also used on screen): Informed yellow, Adhoc red, approved work on a weekly off blue
+XLSX_FILLS = {"Informed": "FFEB9C", "Adhoc": "FFC7CE", "WeekOff": "DDEBF7"}
+XLSX_LEGEND = [("Informed", "Yellow = Informed leave (IL)"), ("Adhoc", "Red = Adhoc leave (AL)"),
+               ("WeekOff", "Blue = approved work on a weekly off (rostered)")]
+LEAVE_COLUMNS = {"Informed": ("informed_leave", "Informed Leave"), "Adhoc": ("adhoc_leave", "Adhoc Leave")}
+
+
+def day_code(r: dict) -> str:
+    return LEAVE_CODES.get(r.get("leave_type"), CODES["Leave"]) if r["status"] == "Leave" else CODES[r["status"]]
+LEAVE_TYPES = ["Informed", "Adhoc"]   # Informed (yellow) and Adhoc (red) follow the leave policy
 WFH_PAY = 0.8   # a work-from-home day is paid at 0.8 of a day (leave policy)
 
 
@@ -28,7 +40,6 @@ def _load(scoped: bool = True):
                         "SELECT MIN(start_date) FROM leaves WHERE status='approved')").fetchone()[0] or ""
     for e in emps:   # nothing is counted before the first day this system has any attendance for
         e["count_from"] = max(e.get("joined") or "", started)
-    # festival (optional) holidays are working days unless the person takes Festive leave on them
     holidays = {r["date"]: r["name"] for r in c.execute("SELECT * FROM holidays WHERE optional=0")}
     leaves = [dict(r) for r in c.execute("SELECT * FROM leaves WHERE status='approved'")]
     changes: dict = {}
@@ -72,10 +83,17 @@ def shift_on(e: dict, d: str, shifts: dict, changes: dict) -> dict | None:
             base = shifts.get(e["shift_id"])
             return {**base, "weekly_off": ALL_DAYS} if base else OFF_SHIFT
         parts = [shifts[i] for i in [r["shift_id"]] + [int(x) for x in (r.get("extra_shifts") or "").split(",") if x] if i in shifts]
-        if len(parts) > 1:
-            return combine(parts)
         if parts:
-            return {**parts[0], "weekly_off": ""}
+            # rostered on what is normally their weekly off: approved work on a week off (shown in blue)
+            base = _planned_shift(e, d, shifts, changes)
+            offs = [o.strip().upper() for o in (base["weekly_off"] if base else config.WEEKLY_OFF).split(",") if o.strip()]
+            duty = WEEKDAYS[Date.fromisoformat(d).weekday()] in offs
+            return {**(combine(parts) if len(parts) > 1 else {**parts[0], "weekly_off": ""}), "week_off_duty": duty}
+    return _planned_shift(e, d, shifts, changes)
+
+
+def _planned_shift(e: dict, d: str, shifts: dict, changes: dict) -> dict | None:
+    """The shift without the roster: the latest date-range shift change covering d, else the normal shift."""
     for ch in reversed(changes.get(e["device_user_id"], [])):
         if ch["start_date"] <= d <= ch["end_date"]:
             return shifts.get(ch["shift_id"])
@@ -96,12 +114,13 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
     offs = [o.strip().upper() for o in (shift["weekly_off"] if shift else config.WEEKLY_OFF).split(",") if o.strip()]
     off = wd in offs
     out = {"date": d, "status": "", "first_in": "", "last_out": "", "hours": 0.0, "punches": 0,
-           "late_min": 0, "early_min": 0, "ot_min": 0, "note": ""}
+           "late_min": 0, "early_min": 0, "early_in_min": 0, "ot_min": 0, "note": ""}
     leave = next((l for l in leaves if l["device_user_id"] == emp["device_user_id"] and l["start_date"] <= d <= l["end_date"]), None)
     half = leave if leave and leave.get("half") and not off and d not in holidays else None
 
     def half_leave():   # half-day leave: the other half is paid from the leave balance (or cut if beyond it)
         out["half_leave"] = 0 if half["type"] == "Unpaid" else 0.5
+        out["leave_type"] = half["type"]
         if half.get("lop"):
             out["lop"] = half["lop"]
         out["note"] = (out["note"] + "; " if out["note"] else "") + f"half-day {half['type']} leave" + \
@@ -127,6 +146,8 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
             start, end = _hm(shift["start"]), _hm(shift["end"])
             if not single_out and fm > start + shift["grace_min"]:
                 out["late_min"], status = fm - start, "Late"
+            elif not single_out and fm < start:
+                out["early_in_min"] = start - fm      # came in before the shift started
             if n > 1 or single_out:
                 if lm < end:
                     out["early_min"] = end - lm
@@ -138,6 +159,9 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
             out["ot_min"] = int(out["hours"] * 60)
             kind = "holiday" if d in holidays else "weekly off"
             out["note"] = (out["note"] + "; " if out["note"] else "") + f"worked on {kind}"
+        if shift and shift.get("week_off_duty"):
+            out["week_off_duty"] = True
+            out["note"] = (out["note"] + "; " if out["note"] else "") + "rostered on weekly off"
         if dict(p).get("w"):
             out["wfh"] = True
             out["note"] = "WFH" + ("; " + out["note"] if out["note"] else "")
@@ -162,7 +186,7 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
         out["status"] = "Absent"
         half_leave()
     elif leave:
-        out["status"], out["note"] = "Leave", leave["type"]
+        out["status"], out["note"], out["leave_type"] = "Leave", leave["type"], leave["type"]
         if leave.get("lop"):     # beyond the balance: still a leave day, but salary is cut lop x a day
             out["lop"], out["note"] = leave["lop"], f"{leave['type']} beyond balance ({leave['lop']:g}x pay cut)"
     else:
@@ -209,6 +233,11 @@ def _month_results(month: str, device: str | None):
             evaluate(e, shift_on(e, d, shifts, changes), d, pm.get((e["device_user_id"], d)), holidays, leaves, today) for d in days]
 
 
+def leave_days(res: list[dict], kind: str) -> float:
+    """Leave days of one kind (Informed / Adhoc) in a list of evaluated days; half-day leave counts 0.5."""
+    return sum(0.5 if "half_leave" in r else 1 for r in res if r.get("leave_type") == kind)
+
+
 def _summary(e: dict, sh: dict | None, res: list[dict]) -> dict:
     cnt = lambda st: sum(r["status"] == st for r in res)
     paid_leave = sum(r["status"] == "Leave" and r["note"] != "Unpaid" for r in res)
@@ -219,6 +248,7 @@ def _summary(e: dict, sh: dict | None, res: list[dict]) -> dict:
         "designation": e["designation"], "branch": e["branch"], "shift": sh["name"] if sh else "",
         "days_present": full + cnt("Half Day"), "late_days": cnt("Late"), "half_days": cnt("Half Day"),
         "absent": cnt("Absent"), "leave": cnt("Leave") + 0.5 * sum(1 for r in res if "half_leave" in r), "holidays": cnt("Holiday"), "weekly_offs": cnt("Weekly Off"),
+        "informed_leave": leave_days(res, "Informed"), "adhoc_leave": leave_days(res, "Adhoc"),
         "total_hours": round(sum(r["hours"] for r in res), 2),
         "late_minutes": sum(r["late_min"] for r in res), "early_minutes": sum(r["early_min"] for r in res),
         "overtime_hours": round(sum(r["ot_min"] for r in res) / 60, 2),
@@ -242,8 +272,9 @@ def grid(month: str, device: str | None = None) -> dict:
         t = _summary(e, sh, res)
         rows.append({"device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
                      "designation": e["designation"], "father_name": e["father_name"],
-                     "codes": [CODES[r["status"]] for r in res],
+                     "codes": [day_code(r) for r in res],
                      "totals": {"worked": t["days_present"], "weekly_offs": t["weekly_offs"], "holidays": t["holidays"],
+                                "informed_leave": t["informed_leave"], "adhoc_leave": t["adhoc_leave"],
                                 "leave": t["leave"], "absent": t["absent"], "paid_days": t["paid_days"]}})
     return {"days": [int(d[8:]) for d in days], "rows": rows}
 
@@ -258,7 +289,8 @@ def muster(month: str, device: str | None = None) -> list[dict]:
         row.update({f"{d:02d}": c for d, c in zip(g["days"], r["codes"])})
         t = r["totals"]
         row.update({"Worked Days": t["worked"], "W.Days Off": t["weekly_offs"], "Holidays": t["holidays"],
-                    "Leave": t["leave"], "Absent": t["absent"], "Total Salary Days": t["paid_days"]})
+                    "Informed Leave": t["informed_leave"], "Adhoc Leave": t["adhoc_leave"],
+                    "Absent": t["absent"], "Total Salary Days": t["paid_days"]})
         out.append(row)
     return out
 
@@ -285,6 +317,51 @@ def timecard(month: str, employee_id: str, device: str | None = None) -> list[di
     return rows
 
 
+MAX_TIMECARD_DAYS = 366
+TIMECARD_STATUSES = ("Present", "Late", "Half Day", "Absent", "Leave", "Informed", "Adhoc", "Holiday", "Weekly Off",
+                     "Week-off duty", "Missing punch")
+
+
+def timecards(d1: str, d2: str, employee_id: str | None = None, department: str | None = None,
+              status: str | None = None) -> list[dict]:
+    """Time card rows for everyone (or one person) from d1 to d2, sorted by date and then name. Days before someone
+    joined, after they left, and in the future are left out; a missing punch stays blank (never invented)."""
+    shifts, emps, holidays, leaves, changes = _load()
+    pm, today = _punch_map(d1, d2, None), now_local().date().isoformat()
+    days, x = [], Date.fromisoformat(d1)
+    while x.isoformat() <= d2:
+        days.append(x.isoformat())
+        x += timedelta(days=1)
+    rows = []
+    for e in emps:
+        if (employee_id and e["device_user_id"] != employee_id) or (department and e["department"] != department) \
+                or not in_period(e, d1, d2):
+            continue
+        for d in days:
+            if d > today or d < (e.get("joined") or "") or (e.get("left_on") and d > e["left_on"]):
+                continue
+            sh = shift_on(e, d, shifts, changes)
+            r = evaluate(e, sh, d, pm.get((e["device_user_id"], d)), holidays, leaves, today)
+            wd = WEEKDAYS[Date.fromisoformat(d).weekday()]
+            offs = [o.strip().upper() for o in (sh["weekly_off"] if sh else config.WEEKLY_OFF).split(",") if o.strip()]
+            wins = sh.get("windows", [(sh["start"], sh["end"])]) if sh else []
+            rows.append({"name": e["name"], "device_user_id": e["device_user_id"], "department": e["department"],
+                         "date": d, "weekday": wd.title(),
+                         "day_type": "HOLIDAY" if d in holidays else "WEEKLY OFF" if wd in offs else "WORKDAY",
+                         "scheduled_in": wins[0][0] if wins else "", "scheduled_out": wins[-1][1] if wins else "",
+                         "schedule": ", ".join(f"{a}-{b}" for a, b in wins) if wins else "flexible",
+                         "in": r["first_in"][:5], "out": r["last_out"][:5], "late_min": r["late_min"],
+                         "early_in_min": r["early_in_min"], "early_min": r["early_min"], "hours": r["hours"],
+                         "overtime_min": r["ot_min"], "status": r["status"], "leave_type": r.get("leave_type", ""),
+                         "week_off_duty": bool(r.get("week_off_duty")), "note": r["note"]})
+    if status:
+        keep = {"Informed": lambda r: r["leave_type"] == "Informed", "Adhoc": lambda r: r["leave_type"] == "Adhoc",
+                "Week-off duty": lambda r: r["week_off_duty"],
+                "Missing punch": lambda r: "missing" in r["note"]}.get(status, lambda r: r["status"] == status)
+        rows = [r for r in rows if keep(r)]
+    return sorted(rows, key=lambda r: (r["date"], r["name"].lower(), r["device_user_id"]))
+
+
 def _adjustments(month: str) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {}
     for r in db.conn().execute("SELECT * FROM payroll_adjustments WHERE month=? ORDER BY id", (month,)):
@@ -306,7 +383,8 @@ def payroll(month: str, device: str | None = None) -> list[dict]:
         loan_cut = round(sum(x["amount"] for x in emi.get(r["device_user_id"], [])), 2)
         leave_cut = round(base / len(days) * r["leave_cut_days"], 2)
         out.append({"device_user_id": r["device_user_id"], "name": r["name"], "department": r["department"],
-                    "monthly_salary": base, "days_in_month": len(days), "paid_days": r["paid_days"],
+                    "monthly_salary": base, "days_in_month": len(days),
+                    "informed_leave": r["informed_leave"], "adhoc_leave": r["adhoc_leave"], "paid_days": r["paid_days"],
                     "unpaid_days": round(len(days) - r["paid_days"], 2) if complete else "",
                     "adjustments": extra, "loan_deduction": loan_cut, "leave_cut": leave_cut,
                     "net_pay": round(base / len(days) * r["paid_days"] + extra - loan_cut - leave_cut, 2),
@@ -344,6 +422,7 @@ def payslip(month: str, uid: str) -> dict | None:
                      "branch": emp["branch"], "joined": emp["joined"] or ""},
         "attendance": {"days_in_month": n, "paid_days": row["paid_days"], "present": summ["days_present"], "late_days": summ["late_days"],
                        "half_days": summ["half_days"], "absent": summ["absent"], "leave": summ["leave"],
+                       "informed_leave": summ["informed_leave"], "adhoc_leave": summ["adhoc_leave"],
                        "holidays": summ["holidays"], "weekly_offs": summ["weekly_offs"], "overtime_hours": summ["overtime_hours"]},
         "earnings": earnings, "deductions": deductions,
         "gross": round(sum(a for _, a in earnings), 2), "total_deductions": round(sum(a for _, a in deductions), 2),

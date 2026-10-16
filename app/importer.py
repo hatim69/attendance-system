@@ -7,7 +7,7 @@ import io
 import re
 from datetime import date, datetime, time as dtime
 
-from . import db, profile
+from . import db, leavepolicy, profile
 from .reports import LEAVE_TYPES, WEEKDAYS
 
 MAX_ROWS = 100_000
@@ -78,7 +78,7 @@ TEMPLATE_EXAMPLES = {
     "employees": [["217315", "Asha Khan", "Sales", "Executive", "Mumbai", "9876543210", "Morning 9-6", "30000", "2025-04-01"]],
     "shifts": [["Morning 9-6", "09:00", "18:00", "10", "4", "30", "SUN"]],
     "holidays": [["2026-10-20", "Dussehra"]],
-    "leaves": [["217315", "2026-10-12", "2026-10-13", "Casual", "family function"]],
+    "leaves": [["217315", "2026-10-12", "2026-10-13", "Informed", "family function"]],
     "punches": [["217315", "2026-10-05 09:12:00", "Mumbai Office"]],
     "profiles": [["217315", "1995-06-21", "Female", "B+", "12 MG Road, Secunderabad", "9876543210", "asha@example.com",
                   "123412341234", "ABCDE1234F", "State Bank of India", "12345678901", "SBIN0001234", "Asha Khan", "Savings"]],
@@ -287,8 +287,10 @@ def run(kind: str, filename: str, data: bytes, dry: bool, inactive: bool = False
                     raise ValueError("needs an id and a from date")
                 if d2 < d1:
                     raise ValueError("to date is before from date")
-                ltype = str(pick(row, "type") or "Casual").strip().title()
-                ltype = ltype if ltype in LEAVE_TYPES else ("Casual" if ltype.upper() == "CL" else "Other")
+                raw = str(pick(row, "type") or "Informed").strip()
+                ltype = leavepolicy.ALIASES.get(raw.upper() if raw.upper() == "CL" else raw.title(), raw.title())
+                if ltype not in LEAVE_TYPES:
+                    raise ValueError(f"leave type {raw!r} must be Informed or Adhoc (CL / Casual = Informed, Sick = Adhoc)")
                 if uid not in known_ids:
                     raise ValueError(f"no employee with id {uid} (import employees first)")
                 dup = c.execute("SELECT 1 FROM leaves WHERE device_user_id=? AND start_date=? AND end_date=?", (uid, d1, d2)).fetchone()

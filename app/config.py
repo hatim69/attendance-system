@@ -57,6 +57,9 @@ SMTP_FROM = os.getenv("SMTP_FROM", "")
 # Late arrivals: an e-mail to the employee, their team lead(s) and HR when someone checks in late (same day only)
 LATE_EMAILS = os.getenv("LATE_EMAILS", "1") not in ("", "0", "false")
 HR_EMAIL = os.getenv("HR_EMAIL", "hr@madarwala.com")
+# Weekly attendance report (Excel) e-mailed to HR_EMAIL every Monday from this hour
+WEEKLY_REPORT = os.getenv("WEEKLY_REPORT", "1") not in ("", "0", "false")
+WEEKLY_REPORT_HOUR = int(os.getenv("WEEKLY_REPORT_HOUR", "8"))
 # Shown on the privacy policy page (required by the Play Store)
 PRIVACY_CONTACT = os.getenv("PRIVACY_CONTACT", "")
 # Optional safety net: append every scan received from a fingerprint device to this CSV file (the columns match the

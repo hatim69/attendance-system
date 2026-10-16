@@ -532,7 +532,7 @@ async function render(){
   $('#s').onclick=safe(async()=>{const perms=$$('.pm:checked').map(c=>c.value).join(',');await post('/api/users',{username:$('#un').value,display_name:$('#ud').value,password:$('#up').value,role:$('#ur').value,department:$('#ut').value,email:$('#uem').value,active:$('#ua').checked,permissions:$('#ur').value=='hr'&&perms==HRD.join(',')?'*':perms});$('#userDlg').close();toast('User saved');render()});
 
  } else if(tab=='backups'){
-  const b=await j('/api/backups'), L=b.last||{}, mb=n=>(n/1024/1024).toFixed(n>1048576?1:2)+' MB';
+  const [b,ML]=await Promise.all([j('/api/backups'),j('/api/mail')]), L=b.last||{}, mb=n=>(n/1024/1024).toFixed(n>1048576?1:2)+' MB';
   const setup=[!b.encrypted&&'<b>BACKUP_PASSWORD</b> is not set, so the backup files are not password protected',!b.email_configured&&'email is not set up yet (<b>SMTP_HOST</b>, <b>SMTP_USER</b>, <b>SMTP_PASSWORD</b>, <b>BACKUP_EMAIL_TO</b> in the server\'s .env)'].filter(Boolean);
   m.innerHTML=`<div class="kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">
     <div class="kpi" style="--c:${L.error?'#dc2626':'#16a34a'};--l:${L.error?'#fee2e2':'#dcfce7'};cursor:default"><div class="ic">${I(L.error?'x':'check')}</div><div style="min-width:0"><span>Last backup</span><b style="font-size:20px">${L.at?esc(fmtDay(L.date)):'Not yet'}</b><small>${L.at?esc(L.at.slice(11,16))+' · '+(L.error?'failed':'OK'):'runs tonight'}</small></div></div>
@@ -542,7 +542,12 @@ async function render(){
    ${setup.length?`<div class="banner" style="cursor:default">${I('alert')}<div>${setup.join('; and ')}. See DEPLOY.md.</div></div>`:''}`+
    card('Backup files',`<div class="cb" style="padding-bottom:0"><p class="hint">Each file holds the whole database and the employee documents (selfie photos stay on the server). ${b.encrypted?'Files are password protected: open them with 7-Zip or WinRAR using the backup password.':''}</p></div>`+
     tbl([['file','File',x=>`<b>${esc(x.file)}</b>`],['size','Size',x=>mb(x.size),'num'],['x','',x=>`<div class="acts"><a class="btn sm" href="/api/backups/${encodeURIComponent(x.file)}">${I('down')}Download</a></div>`]],b.files,{empty:'No backups yet: the first one runs tonight, or press Back up now'}),
-    `<button class="pri" id="bknow">${I('down')}Back up now</button>`);
+    `<button class="pri" id="bknow">${I('down')}Back up now</button>`)+
+   card('E-mail and weekly report',`<div class="cb"><div class="note ${ML.configured?'ok':''}">${ML.configured?`E-mail is set up: sending as <b>${esc(ML.sender)}</b> through ${esc(ML.host)}:${ML.port}.`:'E-mail is not set up yet: fill in SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASSWORD in the server\'s .env and restart.'} Late-arrival alerts and the weekly report go to <b>${esc(ML.hr_email)}</b>.</div>
+     <p class="hint" style="margin:12px 0">Every Monday from ${String(ML.weekly.hour).padStart(2,'0')}:00 HR gets an Excel report of the month so far (summary, late arrivals, leave and the full time card). On the first Monday of a month it covers the whole previous month instead. Next report covers <b>${esc(fmtDay(ML.weekly.next_from))} to ${esc(fmtDay(ML.weekly.next_to))}</b>.${ML.weekly.last.at?` Last sent ${esc(ML.weekly.last.at.slice(0,16))}${ML.weekly.last.error?`: <span style="color:var(--bad)">${esc(ML.weekly.last.error)}</span>`:' to '+esc(ML.weekly.last.sent_to)}.`:''}</p>
+     <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="mtest">${I('check')}Send test e-mail</button><button id="wnow">${I('down')}Send weekly report now</button><a class="btn" href="/api/weekly-report.xlsx">${I('down')}Download the report</a></div></div>`);
+  $('#mtest').onclick=safe(async()=>{$('#mtest').disabled=true;try{const r=await post('/api/mail/test',{});toast('Test e-mail sent to '+r.sent_to+': check the inbox')}finally{$('#mtest').disabled=false}});
+  $('#wnow').onclick=safe(async()=>{$('#wnow').disabled=true;try{const r=await post('/api/weekly-report/run',{});if(r.error)toast('Report not sent: '+r.error,'bad');else toast('Weekly report e-mailed to '+r.sent_to)}finally{render()}});
   $('#bknow').onclick=safe(async()=>{$('#bknow').disabled=true;try{const r=await post('/api/backups/run',{});if(r.error)toast('Backup saved, but: '+r.error,'bad');else toast(r.emailed_to?'Backup made and emailed to '+r.emailed_to:'Backup made')}finally{render()}});
 
  } else if(tab=='audit'){

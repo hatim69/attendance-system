@@ -17,7 +17,8 @@ from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from . import access, adms, app_api, auth, backup, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, lates, payslip, profile, push, reports, zk_poller
+from .xlsx import TIMECARD_COLUMNS, XLSX_TYPE, safe as _safe, timecard_human, xlsx_sheet
+from . import access, adms, app_api, auth, backup, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, lates, mailer, payslip, profile, push, reports, weekly, zk_poller
 
 logging.basicConfig(level=logging.INFO)
 
@@ -36,8 +37,9 @@ async def lifespan(app: FastAPI):
     reminders = asyncio.create_task(push.loop()) if config.PUSH_REMINDERS else None
     nightly = asyncio.create_task(backup.loop()) if config.BACKUP_HOUR >= 0 else None
     late_mail = asyncio.create_task(lates.loop()) if config.LATE_EMAILS else None
+    weekly_mail = asyncio.create_task(weekly.loop()) if config.WEEKLY_REPORT else None
     yield
-    for t in (reminders, nightly, late_mail):
+    for t in (reminders, nightly, late_mail, weekly_mail):
         if t:
             t.cancel()
     if fk_server:
@@ -950,11 +952,6 @@ def manual_punch(p: PunchIn):
     return {"stored": rec is not None}
 
 
-def _safe(v):
-    """Stop spreadsheet formula injection: a text cell starting with = + - @ would be executed by Excel."""
-    return "'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v
-
-
 def _csv(rows: list[dict], filename: str) -> PlainTextResponse:
     buf = io.StringIO()
     if rows:
@@ -965,9 +962,6 @@ def _csv(rows: list[dict], filename: str) -> PlainTextResponse:
                              headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
-XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-
 def _xlsx(rows: list[dict], filename: str, title: str = "Report") -> Response:
     from openpyxl import Workbook
     wb = Workbook()
@@ -975,54 +969,6 @@ def _xlsx(rows: list[dict], filename: str, title: str = "Report") -> Response:
     out = io.BytesIO()
     wb.save(out)
     return Response(out.getvalue(), media_type=XLSX_TYPE, headers={"Content-Disposition": f"attachment; filename={filename}"})
-
-
-def xlsx_sheet(ws, title: str, rows: list[dict], header_rows: list[list] | None = None):
-    """One table on a worksheet, with the leave colours: a leave day's row (leave_type) and IL / AL codes are filled
-    yellow (Informed) or red (Adhoc), as are non-zero Informed / Adhoc leave counts; a legend goes under the table."""
-    from openpyxl.styles import Font, PatternFill
-    fills = {k: PatternFill("solid", fgColor=c) for k, c in reports.XLSX_FILLS.items()}
-    ws.title = title[:31]
-    for h in header_rows or []:      # e.g. the employee's name and ID above their own table
-        ws.append(h)
-        ws.cell(ws.max_row, 1).font = Font(bold=True)
-    if header_rows:
-        ws.append([])
-    top = ws.max_row + 1 if header_rows else 1
-    if not rows:
-        return
-    keys = list(rows[0].keys())
-    ws.append(keys)
-    for cell in ws[top]:
-        cell.font = Font(bold=True)
-    kind_cols = {i + 1: k for i, h in enumerate(keys) for k, names in reports.LEAVE_COLUMNS.items() if h in names}
-    lt = next((h for h in keys if h in ("leave_type", "Leave Type")), None)
-    for r in rows:
-        ws.append([_safe(v) for v in r.values()])
-        row = ws.max_row
-        for cell in ws[row]:
-            if isinstance(cell.value, date):
-                cell.number_format = "DD-MM-YYYY"
-        kind = r.get(lt) if lt else None
-        if kind in fills:
-            for cell in ws[row]:
-                cell.fill = fills[kind]
-        elif r.get("Week-off duty") or r.get("week_off_duty"):
-            for cell in ws[row]:
-                cell.fill = fills["WeekOff"]
-        for cell in ws[row]:
-            v = cell.value
-            if v in ("IL", "AL"):
-                cell.fill = fills["Informed" if v == "IL" else "Adhoc"]
-            elif cell.column in kind_cols and isinstance(v, (int, float)) and v > 0:
-                cell.fill = fills[kind_cols[cell.column]]
-    for col in ws.columns:  # readable column widths
-        ws.column_dimensions[col[0].column_letter].width = min(40, max(len(str(c.value or "")) for c in col[top - 1:]) + 2)
-    ws.freeze_panes = ws.cell(top + 1, 1)
-    ws.append([])
-    for key, label in reports.XLSX_LEGEND:
-        ws.append([label])
-        ws.cell(ws.max_row, 1).fill = fills[key]
 
 
 def _grid_rows(g: dict) -> list[dict]:
@@ -1164,15 +1110,6 @@ def report_timecards(start: str, end: str, employee: str = "", department: str =
     return _timecards(start, end, employee, department, status)
 
 
-TIMECARD_COLUMNS = [("name", "Employee Name"), ("device_user_id", "Employee ID"), ("department", "Department"),
-                    ("date", "Date"), ("weekday", "Day"), ("day_type", "Day Type"),
-                    ("scheduled_in", "Scheduled Login"), ("in", "Actual Login"),
-                    ("scheduled_out", "Scheduled Logout"), ("out", "Actual Logout"),
-                    ("late_min", "Late Arrival (min)"), ("early_in_min", "Early Login (min)"),
-                    ("early_min", "Early Logout (min)"), ("hours", "Total Working Hours"), ("status", "Attendance Status"),
-                    ("leave_type", "Leave Type"), ("week_off_duty", "Week-off duty"), ("note", "Note")]
-
-
 def _sheet_names(people: list[tuple[str, str]]) -> list[str]:
     """Excel sheet names: at most 31 characters, none of []:*?/\\, unique even for people with the same name."""
     used, out = {"all employees"}, []
@@ -1193,8 +1130,7 @@ def report_timecards_xlsx(start: str, end: str, employee: str = "", department: 
     """One workbook: 'All Employees' (every row, by date then name) and one sheet per employee with only their rows."""
     from openpyxl import Workbook
     rows = _timecards(start, end, employee, department, status)
-    human = lambda r: {label: (date.fromisoformat(r[k]) if k == "date" else ("Yes (rostered)" if r[k] else "") if k == "week_off_duty"
-                               else r[k]) for k, label in TIMECARD_COLUMNS}
+    human = timecard_human
     wb = Workbook()
     xlsx_sheet(wb.active, "All Employees", [human(r) for r in rows] or [{label: "" for _, label in TIMECARD_COLUMNS}])
     people = sorted({(r["name"], r["device_user_id"]) for r in rows}, key=lambda p: (p[0].lower(), p[1]))
@@ -1370,6 +1306,44 @@ def mobile_redirect():
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+@app.get("/api/mail", dependencies=[Depends(access.need("admin"))])
+def mail_status():
+    """E-mail set-up and the weekly report's last run, for the Backups page."""
+    a, b = weekly.period(now_local().date())
+    return {"configured": mailer.configured(), "host": config.SMTP_HOST, "port": config.SMTP_PORT,
+            "sender": config.SMTP_FROM or config.SMTP_USER, "hr_email": config.HR_EMAIL,
+            "weekly": {"enabled": config.WEEKLY_REPORT, "hour": config.WEEKLY_REPORT_HOUR, "last": weekly.status(),
+                       "next_from": a.isoformat(), "next_to": b.isoformat()}}
+
+
+@app.post("/api/mail/test", dependencies=[Depends(access.need("admin"))])
+def mail_test():
+    """Send a short test e-mail to HR; the error (never the password) comes back if it fails."""
+    if not mailer.configured():
+        raise HTTPException(400, "E-mail is not set up: fill in SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASSWORD in .env and restart")
+    try:
+        mailer.send([config.HR_EMAIL], "Attendance system: test e-mail",
+                    f"This is a test from the attendance system at {now_local():%d %b %Y %H:%M}.\n\n"
+                    "If you can read this, e-mail is working: late-arrival alerts, the nightly backup and the weekly "
+                    "report will reach you.")
+    except Exception as e:
+        raise HTTPException(400, f"Sending failed: {type(e).__name__}: {e}"[:400])
+    return {"ok": True, "sent_to": config.HR_EMAIL}
+
+
+@app.post("/api/weekly-report/run", dependencies=[Depends(access.need("admin"))])
+def weekly_run():
+    return weekly.run()
+
+
+@app.get("/api/weekly-report.xlsx", dependencies=[Depends(access.need("admin"))])
+def weekly_xlsx():
+    a, b = weekly.period(now_local().date())
+    data, _ = weekly.build(a, b)
+    return Response(data, media_type=XLSX_TYPE,
+                    headers={"Content-Disposition": f"attachment; filename=attendance-report-{a}-to-{b}.xlsx"})
 
 
 @app.get("/api/backups", dependencies=[Depends(access.need("admin"))])

@@ -15,8 +15,9 @@ def send(to: list[str], subject: str, body: str, attachment: tuple[str, bytes] |
     msg["To"] = ", ".join(to)
     msg["Subject"] = subject
     msg.set_content(body)
-    if attachment:
-        msg.add_attachment(attachment[1], maintype="application", subtype="zip", filename=attachment[0])
+    if attachment:   # (filename, bytes): a .zip backup or an .xlsx report
+        sub = "vnd.openxmlformats-officedocument.spreadsheetml.sheet" if attachment[0].endswith(".xlsx") else "zip"
+        msg.add_attachment(attachment[1], maintype="application", subtype=sub, filename=attachment[0])
     if config.SMTP_PORT == 465:
         s = smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT, timeout=60)
     else:

@@ -5,6 +5,7 @@ os.environ["FKWEB_PORT"] = "0"
 os.environ["BACKUP_HOUR"] = "-1"          # no nightly backup or reminder loops during tests
 os.environ["PUSH_REMINDERS"] = "0"
 os.environ["LATE_EMAILS"] = "0"           # no late-arrival e-mail loop either
+os.environ["WEEKLY_REPORT"] = "0"         # nor the weekly report
 os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(), "t.db")
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -1400,3 +1401,51 @@ def test_late_arrival_counter_policy_and_emails(tmp_path, monkeypatch):
         # nothing here changes pay
         pay = {r["device_user_id"]: r for r in c.get("/api/reports/payroll?month=2026-10").json()}
         assert pay == {} or all(r["leave_cut"] == 0 for r in pay.values())
+
+
+def test_weekly_report_and_test_email(tmp_path, monkeypatch):
+    import io as _io
+    from datetime import date as _d, datetime as _dt
+    from openpyxl import load_workbook
+    from app import mailer, weekly
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "wk.db"))
+    _freeze_today(monkeypatch)                                   # Saturday 10 Oct 2026
+    monkeypatch.setattr("app.lates.now_local", lambda: _dt(2026, 10, 12, 9, 0))
+    sent = []
+    monkeypatch.setattr(mailer, "send", lambda to, subject, body, attachment=None: sent.append((to, subject, body, attachment)))
+    # the period: month so far up to last Sunday; the first Monday of a month closes the previous month
+    assert weekly.period(_d(2026, 10, 12)) == (_d(2026, 10, 1), _d(2026, 10, 11))
+    assert weekly.period(_d(2026, 10, 5)) == (_d(2026, 9, 1), _d(2026, 9, 30))
+    assert weekly.period(_d(2026, 11, 2)) == (_d(2026, 10, 1), _d(2026, 10, 31))
+    assert weekly.period(_d(2026, 11, 9)) == (_d(2026, 11, 1), _d(2026, 11, 8))
+    assert weekly.period(_d(2026, 10, 14)) == (_d(2026, 10, 1), _d(2026, 10, 11))   # a manual run mid-week
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "WK 10-7", "start": "10:00", "end": "19:00"})
+        sid = c.get("/api/shifts").json()[0]["id"]
+        c.post("/api/employees", json={"device_user_id": "W1", "name": "Wasim", "shift_id": sid, "joined": "2026-01-01"})
+        c.post("/api/punches", json={"device_user_id": "W1", "ts": "2026-10-05 10:30:00"})
+        c.post("/api/punches", json={"device_user_id": "W1", "ts": "2026-10-05 19:00:00"})
+        c.post("/api/leaves", json={"device_user_id": "W1", "start_date": "2026-10-06", "end_date": "2026-10-06", "type": "Adhoc", "override": True})
+        # not set up: clear message, nothing sent
+        monkeypatch.setattr(config, "SMTP_HOST", "")
+        assert "not set up" in c.post("/api/mail/test").json()["detail"]
+        assert "not set up" in weekly.run(_dt(2026, 10, 12, 9, 0))["error"] and not sent
+        monkeypatch.setattr(config, "SMTP_HOST", "smtp.gmail.com")
+        r = c.post("/api/mail/test").json()
+        assert r["ok"] and sent[-1][0] == [config.HR_EMAIL] and "test" in sent[-1][1]
+        st = weekly.run(_dt(2026, 10, 12, 9, 0))
+        assert st["error"] == "" and (st["from"], st["to"]) == ("2026-10-01", "2026-10-11")
+        to, subject, body, (name, data) = sent[-1]
+        assert to == [config.HR_EMAIL] and name.endswith(".xlsx") and "Adhoc leave (red): 1 days" in body and "Late arrivals: 1" in body
+        wb = load_workbook(_io.BytesIO(data))
+        assert wb.sheetnames == ["Summary", "Late arrivals", "Leave", "Time Card"]
+        summ = [r for r in wb["Summary"].iter_rows(values_only=True) if r[1] == "W1"][0]
+        assert summ[0] == "Wasim"
+        leave = [r for r in wb["Leave"].iter_rows(min_row=2) if r[1].value == "W1"][0]
+        assert leave[4].value == "Adhoc" and leave[0].fill.fgColor.rgb.endswith("FFC7CE")
+        assert weekly.status()["sent_to"] == config.HR_EMAIL
+        assert not weekly.due(_dt(2026, 10, 12, 10, 0))          # already sent this Monday
+        assert not weekly.due(_dt(2026, 10, 13, 10, 0))          # not Monday
+        assert weekly.due(_dt(2026, 10, 19, 9, 0)) and not weekly.due(_dt(2026, 10, 19, 7, 0))
+        assert c.get("/api/mail").json()["configured"] is True
+        assert c.get("/api/weekly-report.xlsx").content[:2] == b"PK"

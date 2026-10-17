@@ -136,6 +136,16 @@ CREATE TABLE IF NOT EXISTS roster (             -- day-by-day shift plan; overri
     created_by TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(device_user_id, date)
 );
+CREATE TABLE IF NOT EXISTS leave_adjustments (  -- extra (or fewer) leave days HR gives someone for a financial year
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_user_id TEXT NOT NULL,
+    fy INTEGER NOT NULL,                          -- financial year by its starting year (2026 = Apr 2026 - Mar 2027)
+    informed REAL NOT NULL DEFAULT 0,             -- days added (negative = taken away)
+    adhoc REAL NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS late_notices (       -- one late-arrival e-mail per person per day, never repeated
     device_user_id TEXT NOT NULL,
     date TEXT NOT NULL,

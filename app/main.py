@@ -679,6 +679,59 @@ def add_leave(l: LeaveIn):
     return {"ok": True, "parts": parts}
 
 
+class LeaveAdjustIn(BaseModel):
+    device_user_id: str
+    fy: int
+    informed: float = 0
+    adhoc: float = 0
+    reason: str
+
+
+@app.get("/api/leave-adjustments", dependencies=[Depends(access.need("hr", "leave"))])
+def list_leave_adjustments(fy: int):
+    frag, args = access.scope_sql("e.department")
+    return [dict(r) for r in db.conn().execute(
+        "SELECT a.*, COALESCE(e.name, a.device_user_id) name, COALESCE(e.department,'') department FROM leave_adjustments a "
+        "LEFT JOIN employees e ON e.device_user_id=a.device_user_id WHERE a.fy=?" + frag + " ORDER BY a.id DESC", [fy] + args)]
+
+
+@app.post("/api/leave-adjustments")
+async def add_leave_adjustment(body: LeaveAdjustIn, u: dict = Depends(access.need("hr", "leave"))):
+    """Give someone extra leave days for a financial year (or take some away), e.g. a balance carried over from the old
+    system. They count in the balance and in the year-end encashment."""
+    uid = db.canon_id(body.device_user_id)
+    access.assert_in_scope(uid)
+    c = db.conn()
+    if not c.execute("SELECT 1 FROM employees WHERE device_user_id=?", (uid,)).fetchone():
+        raise HTTPException(404, "No such employee")
+    if not 2000 <= body.fy <= 2100:
+        raise HTTPException(400, "Choose the financial year")
+    for v in (body.informed, body.adhoc):
+        if abs(v) > 60 or (v * 2) != int(v * 2):
+            raise HTTPException(400, "Days must be whole or half days, at most 60")
+    if not (body.informed or body.adhoc):
+        raise HTTPException(400, "Enter the Informed and / or Adhoc days to add (a minus number takes days away)")
+    if not body.reason.strip():
+        raise HTTPException(400, "Give a reason (it is kept with the adjustment)")
+    cur = c.execute("INSERT INTO leave_adjustments(device_user_id,fy,informed,adhoc,reason,created_by,created_at) VALUES (?,?,?,?,?,?,?)",
+                    (uid, body.fy, body.informed, body.adhoc, body.reason.strip()[:200], u["username"],
+                     now_local().strftime("%Y-%m-%d %H:%M:%S")))
+    c.commit()
+    return {"ok": True, "id": cur.lastrowid}
+
+
+@app.delete("/api/leave-adjustments/{adj_id}", dependencies=[Depends(access.need("hr", "leave"))])
+def delete_leave_adjustment(adj_id: int):
+    c = db.conn()
+    row = c.execute("SELECT device_user_id FROM leave_adjustments WHERE id=?", (adj_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such adjustment")
+    access.assert_in_scope(row["device_user_id"])
+    c.execute("DELETE FROM leave_adjustments WHERE id=?", (adj_id,))
+    c.commit()
+    return {"ok": True}
+
+
 @app.get("/api/leave-preview", dependencies=[Depends(access.need("hr", "leave"))])
 def leave_preview(employee: str, type: str, start_date: str, end_date: str = "", applied_on: str = "", half: bool = False):
     uid = db.canon_id(employee)

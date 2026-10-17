@@ -64,11 +64,23 @@ def per_day_pay(salary: float, d: date) -> float:
     return round((salary or 0) / calendar.monthrange(d.year, d.month)[1], 2)
 
 
+def adjustments(uid: str) -> dict[int, tuple[float, float]]:
+    """Days HR added (or took away) per financial year: {fy: (informed, adhoc)}."""
+    out: dict[int, tuple[float, float]] = {}
+    for r in db.conn().execute("SELECT fy, SUM(informed) i, SUM(adhoc) a FROM leave_adjustments WHERE device_user_id=? "
+                               "GROUP BY fy", (uid,)):
+        out[r["fy"]] = (r["i"] or 0, r["a"] or 0)
+    return out
+
+
 def credited(emp: dict, d: date) -> tuple[float, float]:
-    """(Informed, Adhoc) credited from 1 April of d's financial year up to and including d's month."""
+    """(Informed, Adhoc) credited from 1 April of d's financial year up to and including d's month, plus any
+    balance adjustment HR made for that year (usable from the start of the year, once the person is eligible)."""
+    if "_adj" not in emp:
+        emp["_adj"] = adjustments(emp["device_user_id"])
     elig = eligible_from(emp.get("joined"))
     first = date(elig.year, elig.month, 1) if elig else date.min
-    inf = adh = 0
+    inf, adh = emp["_adj"].get(fy(d), (0, 0))
     m = date(fy(d), 4, 1)
     while m <= d:
         if m >= first:
@@ -269,8 +281,10 @@ def balance(uid: str, on: date) -> dict | None:
     ci, ca = credited(emp, on)
     ui = sum(a for d, b, a in used if b == "I" and fy(d) == y)
     ua = sum(a for d, b, a in used if b == "A" and fy(d) == y)
+    adj = emp["_adj"].get(y, (0, 0))
     return {"eligible_from": elig.isoformat() if elig else None, "eligible": elig is None or on >= elig,
             "joined_known": elig is not None, "notice_days": NOTICE_DAYS, "fy": f"{y}-{str(y + 1)[2:]}",
+            "adjusted": {"informed": adj[0], "adhoc": adj[1]},
             "informed": {"credited": ci, "used": ui, "left": max(left(emp, used, "I", on), 0)},
             "adhoc": {"credited": ca, "used": ua, "left": max(left(emp, used, "A", on), 0)},
             "next_credit": _next_credit(emp, on),
@@ -291,7 +305,9 @@ def year_summary(fy_start: int) -> list[dict]:
         ua = sum(a for _, b, a in used if b == "A")
         bal = max(ci - ui, 0) + max(ca - ua, 0)
         rate = round((e.get("salary") or 0) / 31, 2)   # a day's salary in March
+        adj = e["_adj"].get(fy_start, (0, 0))
         out.append({"device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
                     "informed": ui, "informed_credit": ci, "adhoc": ua, "adhoc_credit": ca, "used": ui + ua,
+                    "adjusted_informed": adj[0], "adjusted_adhoc": adj[1],
                     "balance": bal, "day_rate": rate, "encashment": round(bal * rate, 2)})
     return out

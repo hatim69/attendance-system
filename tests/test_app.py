@@ -1465,3 +1465,37 @@ def test_weekly_report_and_test_email(tmp_path, monkeypatch):
         assert weekly.due(_dt(2026, 10, 19, 9, 0)) and not weekly.due(_dt(2026, 10, 19, 7, 0))
         assert c.get("/api/mail").json()["configured"] is True
         assert c.get("/api/weekly-report.xlsx").content[:2] == b"PK"
+
+
+def test_leave_balance_adjustments(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "adj.db"))
+    _freeze_today(monkeypatch)                                   # Saturday 10 Oct 2026
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "AJ 9-6", "start": "09:00", "end": "18:00"})
+        sid = c.get("/api/shifts").json()[0]["id"]
+        c.post("/api/employees", json={"device_user_id": "AJ", "name": "Arif", "shift_id": sid, "joined": "2026-06-15", "salary": 31000})
+        bal = lambda: c.get("/api/leave-balance?employee=AJ").json()
+        assert (bal()["informed"]["left"], bal()["adhoc"]["left"]) == (3, 1)          # Sep 2 + Oct 1 Informed, Oct 1 Adhoc
+        add = lambda **k: c.post("/api/leave-adjustments", json={"device_user_id": "AJ", "fy": 2026, **k})
+        assert add(informed=4, adhoc=1, reason="carried over from Realtime").status_code == 200
+        b = bal()
+        assert (b["informed"]["left"], b["adhoc"]["left"], b["adjusted"]) == (7, 2, {"informed": 4, "adhoc": 1})
+        assert add(informed=-1.5, reason="correction").status_code == 200
+        assert bal()["informed"]["left"] == 5.5
+        # the extra days are really usable: 5 Informed days next month need no pay cut
+        p = c.get("/api/leave-preview", params={"employee": "AJ", "type": "Informed", "start_date": "2026-11-02", "end_date": "2026-11-06"}).json()
+        assert (p["informed_days"], p["excess_days"]) == (5, 0)
+        # refused input
+        assert add(informed=2, reason="  ").status_code == 400
+        assert add(reason="nothing").status_code == 400
+        assert add(informed=0.3, reason="x").status_code == 400
+        assert c.post("/api/leave-adjustments", json={"device_user_id": "NOPE", "fy": 2026, "informed": 1, "reason": "x"}).status_code == 404
+        # listed with who did it, counted in the year-end encashment, removable
+        rows = c.get("/api/leave-adjustments?fy=2026").json()
+        assert [(r["informed"], r["adhoc"], r["name"]) for r in rows] == [(-1.5, 0, "Arif"), (4, 1, "Arif")]
+        y = {r["device_user_id"]: r for r in c.get("/api/leave-summary?fy=2026").json()}["AJ"]
+        assert (y["informed_credit"], y["adhoc_credit"], y["adjusted_informed"], y["balance"]) == (12 + 2.5, 2 + 1, 2.5, 14.5 + 3)
+        assert c.get("/api/leave-adjustments?fy=2025").json() == []
+        assert c.delete(f"/api/leave-adjustments/{rows[0]['id']}").status_code == 200
+        assert bal()["informed"]["left"] == 7
+        assert c.delete("/api/leave-adjustments/99999").status_code == 404

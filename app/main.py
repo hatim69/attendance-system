@@ -679,6 +679,26 @@ def add_leave(l: LeaveIn):
     return {"ok": True, "parts": parts}
 
 
+class AbsenceRuleIn(BaseModel):
+    start: str
+
+
+@app.get("/api/absence-rule", dependencies=[Depends(access.need("manager"))])
+def get_absence_rule():
+    return {"start": leavepolicy.absence_rule_from().isoformat()}
+
+
+@app.post("/api/absence-rule", dependencies=[Depends(access.need("hr", "leave"))])
+def set_absence_rule(body: AbsenceRuleIn):
+    """From which day an absence without approved leave counts as Adhoc (e.g. backdate it to the 1st of the month)."""
+    _valid_date(body.start)
+    c = db.conn()
+    c.execute("INSERT INTO settings(key,value) VALUES ('absent_as_adhoc_from',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+              (body.start,))
+    c.commit()
+    return {"start": body.start}
+
+
 class LeaveAdjustIn(BaseModel):
     device_user_id: str
     fy: int

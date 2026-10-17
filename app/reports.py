@@ -194,6 +194,29 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
     return out
 
 
+def mark_absences(e: dict, res: list[dict], shifts: dict, holidays: dict, changes: dict, cache: dict | None = None):
+    """Leave policy: a past working day absent without approved leave (none applied, pending or rejected) stays
+    'Absent' but counts as Adhoc leave: paid from an Adhoc credit, or beyond the balance a 2 x day's salary cut."""
+    from . import leavepolicy
+    cache = {} if cache is None else cache
+    today = now_local().date().isoformat()
+    for r in res:
+        if r["status"] != "Absent" or r["date"] >= today or "half_leave" in r:
+            continue
+        y = leavepolicy.fy(Date.fromisoformat(r["date"]))
+        key = (e["device_user_id"], y)
+        if key not in cache:
+            cache[key] = leavepolicy.absences(e, (e, shifts, holidays, changes), y)
+        lop = cache[key].get(r["date"])
+        if lop is None:
+            continue
+        r["absent_adhoc"] = True
+        if lop:
+            r["lop"] = lop
+        r["note"] = "no approved leave: counted as Adhoc" + (f" beyond balance ({lop:g}x pay cut)" if lop else " (paid from the Adhoc balance)")
+    return res
+
+
 def in_period(e: dict, d1: str, d2: str) -> bool:
     """Active people always; a resigned person only for periods that start on or before their last working day."""
     return bool(e["active"]) or (bool(e.get("left_on")) and d1 <= e["left_on"])
@@ -216,6 +239,7 @@ def daily(date: str, device: str | None = None) -> list[dict]:
             continue
         sh = shift_on(e, date, shifts, changes)
         r = evaluate(e, sh, date, pm.get((e["device_user_id"], date)), holidays, leaves, today)
+        mark_absences(e, [r], shifts, holidays, changes)
         r.update(device_user_id=e["device_user_id"], name=e["name"], department=e["department"],
                  designation=e["designation"], branch=e["branch"], shift=sh["name"] if sh else "")
         rows.append(r)
@@ -229,8 +253,9 @@ def _month_results(month: str, device: str | None):
     for e in emps:
         if not in_period(e, d1, d2):
             continue
-        yield e, shifts.get(e["shift_id"]), [
-            evaluate(e, shift_on(e, d, shifts, changes), d, pm.get((e["device_user_id"], d)), holidays, leaves, today) for d in days]
+        yield e, shifts.get(e["shift_id"]), mark_absences(e, [
+            evaluate(e, shift_on(e, d, shifts, changes), d, pm.get((e["device_user_id"], d)), holidays, leaves, today) for d in days],
+            shifts, holidays, changes)
 
 
 def leave_days(res: list[dict], kind: str) -> float:
@@ -249,12 +274,14 @@ def _summary(e: dict, sh: dict | None, res: list[dict]) -> dict:
         "days_present": full + cnt("Half Day"), "late_days": cnt("Late"), "half_days": cnt("Half Day"),
         "absent": cnt("Absent"), "leave": cnt("Leave") + 0.5 * sum(1 for r in res if "half_leave" in r), "holidays": cnt("Holiday"), "weekly_offs": cnt("Weekly Off"),
         "informed_leave": leave_days(res, "Informed"), "adhoc_leave": leave_days(res, "Adhoc"),
+        "absent_as_adhoc": sum(1 for r in res if r.get("absent_adhoc")),
         "total_hours": round(sum(r["hours"] for r in res), 2),
         "late_minutes": sum(r["late_min"] for r in res), "early_minutes": sum(r["early_min"] for r in res),
         "overtime_hours": round(sum(r["ot_min"] for r in res) / 60, 2),
         "wfh_days": sum(1 for r in res if r.get("wfh")),
         "leave_cut_days": sum(r.get("lop", 0) for r in res),   # days' salary cut for leave beyond the balance
         "paid_days": round(full + 0.5 * cnt("Half Day") + paid_leave + cnt("Holiday") + cnt("Weekly Off") - wfh_cut
+                           + sum(1 for r in res if r.get("absent_adhoc"))   # absences counted as Adhoc are paid (then cut beyond balance)
                            + sum(r.get("half_leave", 0) for r in res), 2),
     }
 
@@ -303,11 +330,12 @@ def timecard(month: str, employee_id: str, device: str | None = None) -> list[di
         return []
     days, d1, d2 = _month_days(month)
     pm, today = _punch_map(d1, d2, device), now_local().date().isoformat()
-    rows = []
+    rows, cache = [], {}
     for d in days:
         sh = shift_on(e, d, shifts, changes)
         offs = [o.strip().upper() for o in (sh["weekly_off"] if sh else config.WEEKLY_OFF).split(",") if o.strip()]
         r = evaluate(e, sh, d, pm.get((employee_id, d)), holidays, leaves, today)
+        mark_absences(e, [r], shifts, holidays, changes, cache)
         wd = WEEKDAYS[Date.fromisoformat(d).weekday()]
         rows.append({"date": d, "weekday": wd.title(),
                      "day_type": "HOLIDAY" if d in holidays else "WEEKLY OFF" if wd in offs else "WORKDAY",
@@ -328,6 +356,7 @@ def timecards(d1: str, d2: str, employee_id: str | None = None, department: str 
     joined, after they left, and in the future are left out; a missing punch stays blank (never invented)."""
     shifts, emps, holidays, leaves, changes = _load()
     pm, today = _punch_map(d1, d2, None), now_local().date().isoformat()
+    cache: dict = {}
     days, x = [], Date.fromisoformat(d1)
     while x.isoformat() <= d2:
         days.append(x.isoformat())
@@ -342,6 +371,7 @@ def timecards(d1: str, d2: str, employee_id: str | None = None, department: str 
                 continue
             sh = shift_on(e, d, shifts, changes)
             r = evaluate(e, sh, d, pm.get((e["device_user_id"], d)), holidays, leaves, today)
+            mark_absences(e, [r], shifts, holidays, changes, cache)
             wd = WEEKDAYS[Date.fromisoformat(d).weekday()]
             offs = [o.strip().upper() for o in (sh["weekly_off"] if sh else config.WEEKLY_OFF).split(",") if o.strip()]
             wins = sh.get("windows", [(sh["start"], sh["end"])]) if sh else []
@@ -353,7 +383,8 @@ def timecards(d1: str, d2: str, employee_id: str | None = None, department: str 
                          "in": r["first_in"][:5], "out": r["last_out"][:5], "late_min": r["late_min"],
                          "early_in_min": r["early_in_min"], "early_min": r["early_min"], "hours": r["hours"],
                          "overtime_min": r["ot_min"], "status": r["status"], "leave_type": r.get("leave_type", ""),
-                         "week_off_duty": bool(r.get("week_off_duty")), "note": r["note"]})
+                         "week_off_duty": bool(r.get("week_off_duty")), "absent_adhoc": bool(r.get("absent_adhoc")),
+                         "note": r["note"]})
     if status:
         keep = {"Informed": lambda r: r["leave_type"] == "Informed", "Adhoc": lambda r: r["leave_type"] == "Adhoc",
                 "Week-off duty": lambda r: r["week_off_duty"],
@@ -381,13 +412,15 @@ def payroll(month: str, device: str | None = None) -> list[dict]:
         base = sal.get(r["device_user_id"], 0) or 0
         extra = round(sum(a["amount"] for a in adj.get(r["device_user_id"], [])), 2)
         loan_cut = round(sum(x["amount"] for x in emi.get(r["device_user_id"], [])), 2)
-        leave_cut = round(base / len(days) * r["leave_cut_days"], 2)
+        earned = round(base / len(days) * r["paid_days"] + extra - loan_cut, 2)
+        # the leave-policy cut never takes pay below zero
+        leave_cut = min(round(base / len(days) * r["leave_cut_days"], 2), max(earned, 0))
         out.append({"device_user_id": r["device_user_id"], "name": r["name"], "department": r["department"],
                     "monthly_salary": base, "days_in_month": len(days),
                     "informed_leave": r["informed_leave"], "adhoc_leave": r["adhoc_leave"], "paid_days": r["paid_days"],
                     "unpaid_days": round(len(days) - r["paid_days"], 2) if complete else "",
                     "adjustments": extra, "loan_deduction": loan_cut, "leave_cut": leave_cut,
-                    "net_pay": round(base / len(days) * r["paid_days"] + extra - loan_cut - leave_cut, 2),
+                    "net_pay": round(earned - leave_cut, 2),
                     "month_complete": complete, "payslip_ready": payslip_ready(month, r["device_user_id"])})
     return out
 

@@ -297,6 +297,9 @@ def init():
             if col not in have_cols:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
     c.execute("DELETE FROM holidays WHERE optional=1")   # the festival list (Festive leave) is no longer used
+    # absences without approved leave count as Adhoc from the day this rule was installed, not retroactively
+    from .timeutil import now_local
+    c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES ('absent_as_adhoc_from',?)", (now_local().date().isoformat(),))
     if "permissions" not in {r["name"] for r in c.execute("PRAGMA table_info(users)")}:
         c.execute("ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '*'")
     if "email" not in {r["name"] for r in c.execute("PRAGMA table_info(users)")}:   # team leads get late-arrival e-mails

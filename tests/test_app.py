@@ -1499,3 +1499,57 @@ def test_leave_balance_adjustments(tmp_path, monkeypatch):
         assert c.delete(f"/api/leave-adjustments/{rows[0]['id']}").status_code == 200
         assert bal()["informed"]["left"] == 7
         assert c.delete("/api/leave-adjustments/99999").status_code == 404
+
+
+def test_absence_without_approved_leave_counts_as_adhoc(tmp_path, monkeypatch):
+    from app import db as appdb
+    monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "abs.db"))
+    _freeze_today(monkeypatch)                                   # Saturday 10 Oct 2026
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "AB 9-6", "start": "09:00", "end": "18:00"})            # Sunday off
+        sid = c.get("/api/shifts").json()[0]["id"]
+        # eligible since 15 Sep: Sep 2 + Oct 1 Informed, Oct 1 Adhoc; 31000 / 31 = 1000 a day
+        c.post("/api/employees", json={"device_user_id": "AB", "name": "Abid", "shift_id": sid, "joined": "2026-06-15", "salary": 31000})
+        P = lambda d: [c.post("/api/punches", json={"device_user_id": "AB", "ts": f"{d} {t}"}) for t in ("09:00:00", "18:00:00")]
+        for d in ("2026-09-29", "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-09"):
+            P(d)
+        assert c.get("/api/absence-rule").json()["start"] >= "2026-10-17"          # set on install: not retroactive
+        assert c.post("/api/absence-rule", json={"start": "2026-10-01"}).json()["start"] == "2026-10-01"
+        assert c.post("/api/absence-rule", json={"start": "nope"}).status_code == 400
+        # 6 Oct: pending leave for a day that has passed; 7 Oct: rejected; 8 Oct: approved Informed
+        c.post("/api/employees/AB/pin", json={"pin": "1234"})
+        h = {"Authorization": "Bearer " + c.post("/api/app/login", json={"employee_id": "AB", "pin": "1234"}).json()["token"]}
+        assert c.post("/api/app/leave", json={"start_date": "2026-10-06", "end_date": "2026-10-06", "type": "Adhoc", "consent_name": "Abid"}, headers=h).status_code == 200
+        assert c.post("/api/app/leave", json={"start_date": "2026-10-07", "end_date": "2026-10-07", "type": "Adhoc", "consent_name": "Abid"}, headers=h).status_code == 200
+        lv = {x["start_date"]: x["id"] for x in c.get("/api/leaves?month=2026-10").json()}
+        c.post(f"/api/leaves/{lv['2026-10-07']}/reject")
+        c.post("/api/leaves", json={"device_user_id": "AB", "start_date": "2026-10-08", "end_date": "2026-10-08", "type": "Informed", "override": True})
+        day = lambda d: {r["device_user_id"]: r for r in c.get(f"/api/reports/daily?day={d}").json()}["AB"]
+        # 5 Oct (no leave): the Adhoc credit pays for it
+        r = day("2026-10-05")
+        assert (r["status"], r.get("absent_adhoc"), r.get("lop")) == ("Absent", True, None) and "paid from the Adhoc balance" in r["note"]
+        # 6 Oct (pending) and 7 Oct (rejected): no Adhoc left, 2x cut
+        for d in ("2026-10-06", "2026-10-07"):
+            r = day(d)
+            assert (r["status"], r.get("absent_adhoc"), r.get("lop")) == ("Absent", True, 2.0) and "beyond balance" in r["note"]
+        assert day("2026-10-08")["status"] == "Leave"                              # approved leave is leave
+        r = day("2026-10-10")
+        assert r["status"] == "Absent" and not r.get("absent_adhoc")               # today is not counted yet
+        r = day("2026-09-30")
+        assert r["status"] == "Absent" and not r.get("absent_adhoc")               # before the rule's start date
+        # balance: Adhoc used by the 5th; the two beyond-balance days each used 1 Informed, plus the 8th's leave
+        b = c.get("/api/leave-balance?employee=AB").json()
+        assert (b["adhoc"]["used"], b["adhoc"]["left"], b["informed"]["used"], b["informed"]["left"]) == (1, 0, 3, 0)
+        m = {x["device_user_id"]: x for x in c.get("/api/reports/monthly?month=2026-10").json()}["AB"]
+        assert (m["absent"], m["absent_as_adhoc"], m["leave_cut_days"]) == (4, 3, 4.0)
+        pay = {x["device_user_id"]: x for x in c.get("/api/reports/payroll?month=2026-10").json()}["AB"]
+        assert pay["leave_cut"] == 4000.0
+        # approving the pending leave later turns the 6th into leave and frees the count
+        c.post(f"/api/leaves/{lv['2026-10-06']}/approve")
+        assert day("2026-10-06")["status"] == "Leave"
+        # in the time card grid the counted absences are flagged
+        rows = {r["date"]: r for r in c.get("/api/reports/timecards", params={"start": "2026-10-05", "end": "2026-10-07", "employee": "AB"}).json()}
+        assert rows["2026-10-05"]["absent_adhoc"] and rows["2026-10-07"]["absent_adhoc"] and not rows["2026-10-06"]["absent_adhoc"]
+        # pay never goes below zero however many days are cut
+        appdb.conn().execute("UPDATE settings SET value='2026-04-01' WHERE key='absent_as_adhoc_from'"); appdb.conn().commit()
+        assert all(x["net_pay"] >= 0 for x in c.get("/api/reports/payroll?month=2026-10").json())

@@ -121,6 +121,8 @@ def inout_sheet(ws, title: str, rows: list[dict], start: str, end: str):
                     cin.value, fill = ("IL" if kind == "Informed" else "AL" if kind == "Adhoc" else "LV"), fills.get(kind)
                 else:
                     cin.value, fill = codes[r["status"]]
+                if r.get("absent_adhoc"):          # absent without approved leave: counted as Adhoc
+                    fill = fills["Adhoc"]
                 if fill:
                     cin.fill = fill
                 if r["status"] == "Absent":
@@ -137,12 +139,12 @@ def inout_sheet(ws, title: str, rows: list[dict], start: str, end: str):
     ws.freeze_panes = "C3"
     r0 = ws.max_row + 2
     legend = [("IL", fills["Informed"], "Informed leave"), ("AL", fills["Adhoc"], "Adhoc leave"), ("WO", grey, "Weekly off"),
-              ("H", sky, "Holiday"), ("A", None, "Absent"), ("10:25", None, "Late check-in (red)"),
+              ("H", sky, "Holiday"), ("A", None, "Absent"), ("A ", fills["Adhoc"], "Absent without approved leave: counted as Adhoc"), ("10:25", None, "Late check-in (red)"),
               ("", fills["WeekOff"], "Rostered work on a weekly off")]
     for k, (code, fill, label) in enumerate(legend):
         x = ws.cell(r0 + k, 1, code or " ")
         if fill:
             x.fill = fill
-        if code in ("A", "10:25"):
+        if code.strip() in ("A", "10:25"):
             x.font = Font(bold=True, color="B91C1C")
         ws.cell(r0 + k, 2, label)

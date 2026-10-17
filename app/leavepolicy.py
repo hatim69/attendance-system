@@ -133,10 +133,12 @@ def _bucket(t: str, lop: float) -> str | None:
     return None
 
 
-def usage(emp: dict, ctx) -> list[tuple[date, str, float]]:
-    """Credits used or reserved (approved + pending leave): (day, bucket, amount). Days before the person is eligible
-    use no credits (they had none)."""
+def _leave_usage(emp: dict, ctx) -> list[tuple[date, str, float]]:
+    """Credits used or reserved by leave records: approved, and pending for days still to come (a pending application
+    for a day that has passed is an absence, counted by absences() instead). Days before the person is eligible use
+    no credits (they had none)."""
     elig = eligible_from(emp.get("joined"))
+    today = reports.now_local().date()
     out = []
     for r in db.conn().execute("SELECT * FROM leaves WHERE device_user_id=? AND status IN ('approved','pending')",
                                (emp["device_user_id"],)):
@@ -145,7 +147,63 @@ def usage(emp: dict, ctx) -> list[tuple[date, str, float]]:
         if not b:
             continue
         s, e = date.fromisoformat(r["start_date"]), date.fromisoformat(r["end_date"])
-        out += [(d, b, unit) for d in working_days(emp, s, e, ctx) if not (elig and d < elig)]
+        out += [(d, b, unit) for d in working_days(emp, s, e, ctx)
+                if not (elig and d < elig) and not (r["status"] == "pending" and d < today)]
+    return out
+
+
+def absences(emp: dict, ctx, fy_start: int) -> dict[str, float]:
+    """Working days of the year (up to yesterday) on which the person was absent without approved leave (none applied,
+    still pending, or rejected). Each counts as Adhoc leave: {day: 0.0} when an Adhoc credit paid for it, {day: 2.0}
+    when there was none left (2 x a day's salary cut and 1 Informed credit used, like any Adhoc beyond the balance)."""
+    _, shifts, holidays, changes = ctx
+    today = reports.now_local().date()
+    first = max(date(fy_start, 4, 1), date.fromisoformat(emp["count_from"]) if emp.get("count_from") else date.min,
+                date.fromisoformat(emp["joined"]) if emp.get("joined") else date.min, absence_rule_from())
+    last = min(date(fy_start + 1, 3, 31), today - timedelta(days=1))
+    if emp.get("left_on"):
+        last = min(last, date.fromisoformat(emp["left_on"]))
+    if last < first:
+        return {}
+    leaves = [dict(r) for r in db.conn().execute("SELECT * FROM leaves WHERE device_user_id=? AND status='approved'",
+                                                 (emp["device_user_id"],))]
+    pm = {k[1]: v for k, v in reports._punch_map(first.isoformat(), last.isoformat(), None).items()
+          if k[0] == emp["device_user_id"]}
+    elig = eligible_from(emp.get("joined"))
+    used = _leave_usage(emp, ctx)
+    out: dict[str, float] = {}
+    d = first
+    while d <= last:
+        iso = d.isoformat()
+        r = reports.evaluate(emp, reports.shift_on(emp, iso, shifts, changes), iso, pm.get(iso), holidays, leaves, today.isoformat())
+        if r["status"] == "Absent" and "half_leave" not in r:
+            if not (elig and d < elig) and left(emp, used, "A", d) >= 1:
+                used.append((d, "A", 1))
+                out[iso] = 0.0
+            else:
+                if not (elig and d < elig):
+                    used.append((d, "I", 1))       # Adhoc beyond the balance also uses 1 Informed credit
+                out[iso] = ADHOC_EXCESS_CUT
+        d += timedelta(days=1)
+    return out
+
+
+def absence_rule_from() -> date:
+    """First day on which an absence without approved leave counts as Adhoc (set when the rule was installed)."""
+    row = db.conn().execute("SELECT value FROM settings WHERE key='absent_as_adhoc_from'").fetchone()
+    return date.fromisoformat(row["value"]) if row else date.max
+
+
+def usage(emp: dict, ctx, years: set[int] | None = None) -> list[tuple[date, str, float]]:
+    """All credits used or reserved: leave records, plus absences without approved leave (which count as Adhoc) in
+    the given financial years (default: the current one)."""
+    out = _leave_usage(emp, ctx)
+    elig = eligible_from(emp.get("joined"))
+    for y in years or {fy(reports.now_local().date())}:
+        for iso, lop in absences(emp, ctx, y).items():
+            d = date.fromisoformat(iso)
+            if not (elig and d < elig):
+                out.append((d, "A" if not lop else "I", 1))
     return out
 
 
@@ -299,7 +357,7 @@ def year_summary(fy_start: int) -> list[dict]:
     for e in emps:
         if not e["active"] and (e.get("left_on") or "") < f"{fy_start}-04-01":   # left before this year
             continue
-        used = [u for u in usage(e, (e, shifts, holidays, changes)) if fy(u[0]) == fy_start]
+        used = [u for u in usage(e, (e, shifts, holidays, changes), {fy_start}) if fy(u[0]) == fy_start]
         ci, ca = credited(e, end)
         ui = sum(a for _, b, a in used if b == "I")
         ua = sum(a for _, b, a in used if b == "A")

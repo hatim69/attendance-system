@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#4f46e5">
+<link rel="manifest" href="/m/manifest.webmanifest"><link rel="apple-touch-icon" href="/m/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<title>Attendance</title>
+<style>
+ *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+ body{margin:0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Arial,sans-serif;background:#f4f6fb;color:#0f172a;-webkit-font-smoothing:antialiased;min-height:100vh}
+ .wrap{max-width:440px;margin:0 auto;padding:0 16px calc(24px + env(safe-area-inset-bottom))}
+ .hero{background:radial-gradient(500px 260px at 0 0,#818cf8 0,transparent 70%),linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;margin:0 -16px;padding:calc(22px + env(safe-area-inset-top)) 22px 64px;border-radius:0 0 28px 28px}
+ .hero .top{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;opacity:.95}
+ .logo{width:32px;height:32px;border-radius:10px;background:rgba(255,255,255,.18);display:grid;place-items:center}
+ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+ .hero h1{margin:18px 0 2px;font-size:25px;letter-spacing:-.01em}.hero .sub{opacity:.85;font-size:14px}
+ .clock{font-size:40px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin-top:10px}
+ .card{background:#fff;border-radius:18px;padding:18px;box-shadow:0 1px 2px rgba(15,23,42,.04),0 6px 20px rgba(15,23,42,.05);margin-bottom:14px}
+ .lift{margin-top:-46px}
+ .card h3{margin:0 0 12px;font-size:15px;display:flex;align-items:center;gap:8px}.card h3 svg{color:#6366f1}
+ label{display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:6px}
+ input,select{width:100%;height:50px;padding:0 14px;font:inherit;font-size:17px;border:1px solid #d6dbe6;border-radius:12px;margin:0 0 14px;background:#fff;color:inherit;outline:none}
+ input:focus,select:focus{border-color:#4f46e5;box-shadow:0 0 0 4px rgba(79,70,229,.14)}
+ button{width:100%;height:52px;font:inherit;font-size:17px;font-weight:650;border:0;border-radius:14px;background:#4f46e5;color:#fff;cursor:pointer}
+ button:disabled{opacity:.5} button.link{background:none;color:#64748b;font-size:14px;height:auto;padding:10px;font-weight:500;width:auto}
+ .camwrap{position:relative;border-radius:16px;overflow:hidden;background:#0f172a;aspect-ratio:4/3}
+ video{width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)}
+ .camwrap::after{content:"";position:absolute;left:50%;top:50%;width:56%;aspect-ratio:3/4;transform:translate(-50%,-50%);border:2px dashed rgba(255,255,255,.55);border-radius:50%;pointer-events:none}
+ #fileFallback{height:auto;padding:12px;font-size:15px}
+ .punch{display:flex;justify-content:center;margin:18px 0 4px}
+ button.big{width:170px;height:170px;border-radius:50%;font-size:21px;background:radial-gradient(circle at 30% 25%,#818cf8,#4f46e5 60%);box-shadow:0 0 0 10px #eef2ff,0 16px 34px rgba(79,70,229,.35);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;transition:transform .12s}
+ button.big:active{transform:scale(.97)} button.big svg{width:34px;height:34px}
+ button.big.out{background:radial-gradient(circle at 30% 25%,#fb923c,#ea580c 60%);box-shadow:0 0 0 10px #fff1e6,0 16px 34px rgba(234,88,12,.3)}
+ .msg{padding:12px 14px;border-radius:12px;margin:12px 0 0;font-size:14.5px}.err{background:#fef2f2;color:#991b1b}.ok{background:#f0fdf4;color:#166534}.info{background:#eef2ff;color:#3730a3}
+ .hide{display:none!important}
+ ul{list-style:none;padding:0;margin:0} li{padding:11px 0;border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between;align-items:center;gap:10px}li:last-child{border-bottom:0}
+ .tag{font-size:12px;font-weight:650;padding:3px 10px;border-radius:20px;background:#f1f5f9;color:#475569}.tag.approved{background:#dcfce7;color:#166534}.tag.pending{background:#fef3c7;color:#92400e}.tag.rejected{background:#fee2e2;color:#991b1b}
+ .tl{display:flex;align-items:center;gap:10px}.tl i{width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px #dcfce7}.tl i.o{background:#f97316;box-shadow:0 0 0 4px #ffedd5}
+ .muted{color:#64748b;font-size:14px}
+ .bal{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}.bal div{background:#f8fafc;border-radius:12px;padding:10px 12px}.bal b{font-size:22px;display:block}.bal span{font-size:12.5px;color:#64748b}
+ .row2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}.row2>div{min-width:0}
+ input{min-width:0;display:block}
+ .login-hero{text-align:center;padding-bottom:80px}.login-hero h1{margin-top:22px}
+ .center{text-align:center}
+ #home{padding-bottom:calc(84px + env(safe-area-inset-bottom))}
+ .phead{background:radial-gradient(400px 200px at 0 0,#818cf8 0,transparent 70%),linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;margin:0 -16px;padding:calc(26px + env(safe-area-inset-top)) 22px 60px;border-radius:0 0 28px 28px}
+ .phead h2{margin:0;font-size:24px;letter-spacing:-.01em}.phead .sub{opacity:.85;font-size:14px;margin-top:2px}
+ .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;justify-content:space-around;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);border-top:1px solid #e5e8f0;padding:6px 6px calc(6px + env(safe-area-inset-bottom));max-width:440px;margin:0 auto;box-shadow:0 -6px 20px rgba(15,23,42,.05)}
+ .tabbar button{background:none;color:#64748b;height:auto;width:auto;flex:1;padding:6px 0;font-size:11.5px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:12px}
+ .tabbar button svg{width:22px;height:22px}.tabbar button.on{color:#4f46e5}.tabbar button.on svg{background:#eef2ff;border-radius:10px;padding:3px 10px;width:42px;height:28px}
+ button.ghost{background:#fff;color:#dc2626;border:1px solid #fecaca} button.sm{height:42px;font-size:15px;margin-top:12px}
+ .selfie{display:flex;align-items:center;justify-content:center;gap:10px;height:96px;border:2px dashed #c7d2fe;border-radius:16px;background:#f8faff;color:#4f46e5;font-weight:650;font-size:16px;margin:0;cursor:pointer}
+ .selfie svg{width:26px;height:26px}.selfie.done{border-style:solid;background:#f0fdf4;border-color:#bbf7d0;color:#166534}
+ .nudge{background:linear-gradient(135deg,#eef2ff,#f5f3ff);border:1px solid #c7d2fe}.nudge b{display:block;margin-bottom:4px}.nudge span{font-size:14px;color:#475569}
+ .warn{background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-radius:12px;padding:12px 14px;font-size:14px;margin:0 0 14px}
+ .warn.bad{background:#fef2f2;border-color:#fecaca;color:#7f1d1d} .warn b{display:block;margin-bottom:4px}
+ .lv{font-size:12.5px;font-weight:650;padding:1px 8px;border-radius:20px}.lv.i,.split span.i,.bal div.i{background:#fef3c7;color:#854d0e;box-shadow:inset 0 0 0 1px #fcd34d}.lv.a,.split span.a,.bal div.a{background:#fee2e2;color:#991b1b;box-shadow:inset 0 0 0 1px #fca5a5}
+ .lvleg{display:flex;gap:8px;margin:-6px 0 12px}
+ .latebox{margin-top:12px;padding:10px 12px;border-radius:12px;background:#f8fafc;font-size:14px}.latebox small{display:block;color:#64748b;margin-top:4px}.latebox.warn{background:#fef3c7;color:#854d0e}.latebox.err{background:#fee2e2;color:#991b1b}
+ .split{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}.split span{font-size:13px;font-weight:600;padding:4px 10px;border-radius:20px;background:#eef2ff;color:#3730a3}.split span.u{background:#fee2e2;color:#991b1b}
+ .consent{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;font-size:13.5px;line-height:1.55;margin:0 0 12px;color:#334155}
+</style></head><body><div class="wrap">
+
+<div id="login" class="hide">
+  <div class="hero login-hero"><div class="top" style="justify-content:center"><div class="logo"><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg></div>Attendance</div><h1>Check in from your phone</h1><div class="sub">Sign in with your employee ID and PIN</div></div>
+  <div class="card lift">
+    <label for="eid">Employee ID</label><input id="eid" autocomplete="username" autocapitalize="none" inputmode="text">
+    <label for="pin">PIN</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password">
+    <button id="loginBtn">Sign in</button>
+    <div id="loginMsg"></div>
+    <p class="muted center" style="margin:14px 0 0">Don't have a PIN? Ask HR to set one for you.</p>
+  </div>
+</div>
+
+<div id="home" class="hide">
+ <section class="tab" id="t-home">
+  <div class="hero"><div class="top"><div class="logo"><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg></div>Attendance</div>
+    <h1 id="greet">Hello</h1><div class="sub"><span id="who"></span> · <span id="dateNow"></span></div><div class="clock" id="clock"></div><div class="sub" id="siteInfo"></div></div>
+  <div class="card lift" id="camCard">
+    <div class="camwrap"><video id="vid" autoplay playsinline muted></video></div>
+    <input id="fileFallback" type="file" accept="image/*" capture="user" style="display:none">
+    <label for="fileFallback" id="selfieBtn" class="selfie hide"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg><span id="selfieLbl">Take a selfie</span></label>
+    <div class="punch"><button id="punchBtn" class="big" disabled><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg><span id="punchLbl">Check in</span></button></div>
+    <div id="status" class="msg info">Getting your location…</div>
+  </div>
+  <div class="card"><h3><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Today</h3><ul id="today"></ul><div id="mylate"></div></div>
+  <div class="card nudge hide" id="pushNudge"><b>Never forget to check in</b><span>Turn on reminders: we'll notify you if you haven't checked in an hour into your shift, and 15 minutes before it ends.</span><button class="sm" onclick="go('me')">Turn on reminders</button></div>
+ </section>
+ <section class="tab hide" id="t-leave">
+  <div class="phead"><h2>Leave</h2><div class="sub">Balance, applications and their status</div></div>
+  <div class="card lift" id="leaveCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>Leave</h3>
+    <div id="lbal" class="muted" style="margin-bottom:12px"></div>
+    <div id="lform" class="hide">
+      <label for="lty">Type</label><select id="lty"><option value="Informed">Informed (apply 7+ days ahead)</option><option value="Adhoc">Adhoc (emergency)</option></select>
+      <div class="lvleg"><span class="lv i">Informed = yellow</span><span class="lv a">Adhoc = red</span></div>
+      <label style="display:flex;align-items:center;gap:8px;margin:0 0 12px;font-weight:500"><input type="checkbox" id="lhalf" style="width:20px;height:20px;margin:0"> Half day (work the other half; no notice needed)</label>
+      <div class="row2"><div><label for="lfr" id="lfrl">From</label><input id="lfr" type="date"></div><div id="ltoBox"><label for="lto">To</label><input id="lto" type="date"></div></div>
+      <label for="lre">Reason</label><input id="lre" placeholder="Optional" maxlength="200">
+      <div id="lprev"></div>
+      <div id="lcons" class="hide"><div class="consent" id="lctext"></div>
+        <label for="lcname">Type your full name to sign</label><input id="lcname" autocomplete="name" placeholder="Your full name"></div>
+      <button id="lap">Apply for leave</button>
+    </div>
+    <div id="lmsg"></div><ul id="llist" style="margin-top:8px"></ul></div>
+ </section>
+ <section class="tab hide" id="t-wfh">
+  <div class="phead"><h2>Work from home</h2><div class="sub">Request it and see when it's approved</div></div>
+  <div class="card lift" id="wfhCard"><h3><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>Work from home</h3>
+    <div id="wtoday"></div>
+    <p class="muted" style="margin:0 0 12px;font-size:14px">Ask your team lead or HR. On approved days you can check in from anywhere; the day is paid at 0.8.</p>
+    <div class="row2"><div><label for="wfr">From</label><input id="wfr" type="date"></div><div><label for="wto">To</label><input id="wto" type="date"></div></div>
+    <label for="wre">Reason</label><input id="wre" placeholder="e.g. plumber visit" maxlength="200">
+    <button id="wap">Request work from home</button>
+    <div id="wmsg"></div><ul id="wlist" style="margin-top:8px"></ul></div>
+ </section>
+ <section class="tab hide" id="t-pay">
+  <div class="phead"><h2>Payslips</h2><div class="sub">Available once HR publishes a finished month</div></div>
+  <div class="card lift" id="slipCard"><h3><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18"/><path d="M6 6V5a2 2 0 0 1 2-2h9"/></svg>My payslips</h3><ul id="slips"></ul></div>
+ </section>
+ <section class="tab hide" id="t-me">
+  <div class="phead"><h2 id="meName">Me</h2><div class="sub" id="meId"></div></div>
+  <div class="card lift"><h3><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>Reminders</h3>
+    <p class="muted" style="margin:0 0 12px;font-size:14px">A notification if you haven't checked in an hour after your shift starts, and 15 minutes before your shift ends if you haven't checked out.</p>
+    <div id="pushState"></div><button id="pushBtn">Turn on reminders</button></div>
+  <div class="card"><h3><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg>About</h3>
+    <ul><li><span>Your data and privacy</span><a href="/privacy" target="_blank" style="color:#4f46e5;font-weight:600;text-decoration:none">Read</a></li><li><span>Forgot your PIN?</span><span class="muted">Ask HR</span></li></ul></div>
+  <button id="logout" class="ghost">Sign out</button>
+ </section>
+ <nav class="tabbar">
+  <button data-go="home" class="on"><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg>Check in</button>
+  <button data-go="leave"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>Leave</button>
+  <button data-go="wfh"><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>WFH</button>
+  <button data-go="pay"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18"/><path d="M6 6V5a2 2 0 0 1 2-2h9"/></svg>Payslips</button>
+  <button data-go="me"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4.5-6 8-6s7 2 8 6"/></svg>Me</button>
+ </nav>
+</div>
+<canvas id="cv" class="hide"></canvas>
+</div>
+<script>
+const $=s=>document.querySelector(s); let token=null, pos=null, stream=null, me=null;
+try{token=localStorage.getItem('att_token')}catch(e){}
+const show=id=>{['login','home'].forEach(x=>$('#'+x).classList.toggle('hide',x!=id))};
+const msg=(el,t,c)=>{el.className='msg '+c;el.textContent=t};
+async function api(path,opts={}){
+  opts.headers=Object.assign({},opts.headers,token?{Authorization:'Bearer '+token}:{});
+  const r=await fetch('/api/app'+path,opts); const j=await r.json().catch(()=>({}));
+  if(r.status==401&&token&&path!='/login'){logout();throw new Error('Please log in again')}
+  if(!r.ok) throw new Error(typeof j.detail=='string'?j.detail:'Something went wrong ('+r.status+')');
+  return j;
+}
+$('#loginBtn').onclick=async()=>{
+  try{const j=await api('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({employee_id:$('#eid').value.trim(),pin:$('#pin').value})});
+    token=j.token; try{localStorage.setItem('att_token',token)}catch(e){} $('#pin').value=''; start();
+  }catch(e){const m=$('#loginMsg'); msg(m,e.message,'err')}
+};
+let LEAVING=false;
+async function logout(){if(LEAVING)return;LEAVING=true;await pushOff().catch(()=>{});LEAVING=false;token=null;try{localStorage.removeItem('att_token')}catch(e){} stopCam(); go('home'); show('login')}
+$('#logout').onclick=logout;
+function stopCam(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
+async function start(){
+  try{me=await api('/me')}catch(e){return show('login')}
+  show('home'); $('#who').textContent='ID '+me.employee_id; $('#meName').textContent=me.name; $('#meId').textContent='Employee ID '+me.employee_id; pushUI(); const h=new Date().getHours(); $('#greet').textContent=(h<12?'Good morning':h<17?'Good afternoon':'Good evening')+', '+me.name.split(' ')[0];
+  $('#siteInfo').textContent=me.sites.length?'Allowed at: '+me.sites.map(s=>s.name).join(', '):'';
+  $('#today').innerHTML=me.today.length?me.today.map(p=>`<li><span class="tl"><i class="${p.status?'o':''}"></i>${p.status?'Check out':'Check in'}${p.flag=='outside_geofence'?' <span class="tag pending">outside area</span>':''}</span><b>${p.ts.slice(11,16)}</b></li>`).join(''):'<li class="muted">No punches yet today</li>';
+  const out=me.today.length%2==1; $('#punchLbl').textContent=out?'Check out':'Check in'; $('#punchBtn').classList.toggle('out',out);
+  loadSlips(); loadLeave(); loadWfh(); loadLates();
+  $('#wtoday').innerHTML=me.wfh_today?'<div class="msg ok" style="margin:0 0 12px">Work from home is approved for today: you can check in from anywhere.</div>':''; await Promise.all([startCam(),locate()]); ready();
+}
+const fmtD=d=>new Date(d+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'});
+async function loadLates(){try{const x=await api('/lates');const cls=x.state=='over'?'err':x.state=='limit'?'warn':'';
+  $('#mylate').innerHTML=`<div class="latebox ${cls}"><b>${x.count} / ${x.limit}</b> late arrival${x.count==1?'':'s'} · ${esc(x.period_label.toLowerCase())}${x.state=='limit'?'<br>You have reached the limit.':x.state=='over'?'<br>Over the limit: HR will review.':''}${x.lates.length?`<small>${x.lates.map(l=>`${fmtD(l.date)} (${l.late_min} min)`).join(' · ')}</small>`:''}</div>`}catch(e){}}
+async function loadLeave(){
+  try{const [b,l]=await Promise.all([api('/leave-balance'),api('/leaves')]);
+   const tile=(n,q,l,c='')=>`<div class="${c}"><b>${n}<small style="font-size:14px;opacity:.6"> / ${q}</small></b><span>${l}</span></div>`;
+   const nx=b.next_credit?`<div class="muted" style="font-size:13px;margin:-4px 0 12px">Next credit ${fmtD(b.next_credit.date)}: ${b.next_credit.informed} Informed${b.next_credit.adhoc?' + '+b.next_credit.adhoc+' Adhoc':''}. Unused leave carries to 31 March.</div>`:'';
+   if(!b.eligible)$('#lbal').innerHTML=`Leave credits start on ${fmtD(b.eligible_from)} (3 months after joining). Leave before that is beyond the balance: 1.5× a day's salary cut for Informed, 2× for Adhoc.`;
+   else $('#lbal').innerHTML=`<div class="bal">${tile(b.informed.left,b.informed.credited,'Informed leave left (yellow)','i')}${tile(b.adhoc.left,b.adhoc.credited,'Adhoc leave left (red)','a')}</div>${nx}`;
+   $('#lform').classList.remove('hide');   // before eligibility the preview explains the pay cut
+   $('#llist').innerHTML=l.slice(0,8).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''} · <span class="lv ${x.type=='Adhoc'?'a':'i'}">${esc(x.type)}${x.half?' ½ day':''}</span>${x.lop?` <span class="tag rejected">${x.lop}× cut</span>`:''}</span><span><span class="tag ${x.status}">${x.status}</span>${x.status=='pending'?` <button class="link" data-c="${x.id}" style="padding:0 0 0 6px">cancel</button>`:''}</span></li>`).join('')||'<li class="muted">No leave yet</li>';
+   document.querySelectorAll('#llist button').forEach(bt=>bt.onclick=async()=>{if(!confirm('Cancel this application?'))return;try{await api('/leave/'+bt.dataset.c,{method:'DELETE'});loadLeave()}catch(e){msg($('#lmsg'),e.message,'err')}});
+  }catch(e){}
+}
+let PLAN=null;
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function previewLeave(){const box=$('#lprev'); PLAN=null; $('#lcons').classList.add('hide'); $('#lap').textContent='Apply for leave';
+  if(!$('#lfr').value){box.innerHTML='';return}
+  const half=$('#lhalf').checked;
+  try{const q=new URLSearchParams({type:$('#lty').value,start_date:$('#lfr').value,end_date:half?$('#lfr').value:($('#lto').value||$('#lfr').value),half});
+   const p=PLAN=await api('/leave/preview?'+q);
+   const rs=v=>'₹ '+v.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+   const n=v=>p.half?'½':v;
+   box.innerHTML=`<div class="split">${p.informed_days?`<span class="i">${n(p.informed_days)} Informed</span>`:''}${p.adhoc_days?`<span class="a">${n(p.adhoc_days)} Adhoc</span>`:''}${p.excess_days?`<span class="u">${n(p.excess_days)} beyond balance</span>`:''}</div>`+
+    p.warnings.map(w=>`<div class="warn ${/unpaid|cut/.test(w)?'bad':''}">${esc(w)}</div>`).join('')+
+    (p.deduction&&p.salary_known?`<div class="warn bad"><b>Total salary cut: ${rs(p.deduction)}</b>A day's salary is about ${rs(p.per_day)}.</div>`:'');
+   if(p.needs_consent){$('#lctext').textContent=p.consent_text;$('#lcons').classList.remove('hide');$('#lap').textContent='I agree, apply for leave'}
+   else if(p.adhoc_days&&$('#lty').value=='Informed')$('#lap').textContent='Apply (uses Adhoc)';
+  }catch(e){box.innerHTML=`<div class="warn bad">${esc(e.message)}</div>`}}
+['#lty','#lfr','#lto'].forEach(k=>$(k).addEventListener('change',previewLeave));
+$('#lhalf').addEventListener('change',()=>{const h=$('#lhalf').checked;$('#ltoBox').classList.toggle('hide',h);$('#lfrl').textContent=h?'Date':'From';previewLeave()});
+$('#lap').onclick=async()=>{const m=$('#lmsg'); try{
+  if(!PLAN)await previewLeave(); if(!PLAN)throw new Error('Check the dates first');
+  if(PLAN.needs_consent&&!$('#lcname').value.trim())throw new Error('Part of this leave is unpaid. Type your full name to agree before applying.');
+  const r=await api('/leave',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:$('#lty').value,start_date:$('#lfr').value,end_date:$('#lhalf').checked?$('#lfr').value:($('#lto').value||$('#lfr').value),half:$('#lhalf').checked,reason:$('#lre').value,consent_name:$('#lcname').value})});
+  msg(m,`Applied for ${r.days} day(s)${r.excess_days?`, ${r.excess_days} beyond balance`:''}${r.unpaid_days?`, ${r.unpaid_days} unpaid`:''}. HR will approve it.`,'ok'); $('#lre').value=''; $('#lcname').value=''; $('#lprev').innerHTML=''; $('#lcons').classList.add('hide'); PLAN=null; loadLeave();
+ }catch(e){msg(m,e.message,'err')}};
+async function loadWfh(){
+  try{const l=await api('/wfh');
+   $('#wlist').innerHTML=l.slice(0,6).map(x=>`<li><span>${fmtD(x.start_date)}${x.end_date!=x.start_date?' – '+fmtD(x.end_date):''}</span><span><span class="tag ${x.status}">${x.status}</span>${x.status=='pending'?` <button class="link" data-w="${x.id}" style="padding:0 0 0 6px">cancel</button>`:''}</span></li>`).join('');
+   document.querySelectorAll('#wlist button').forEach(bt=>bt.onclick=async()=>{if(!confirm('Cancel this request?'))return;try{await api('/wfh/'+bt.dataset.w,{method:'DELETE'});loadWfh()}catch(e){msg($('#wmsg'),e.message,'err')}});
+  }catch(e){}
+}
+$('#wap').onclick=async()=>{const m=$('#wmsg');try{
+  if(!$('#wfr').value)throw new Error('Choose the date');
+  await api('/wfh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start_date:$('#wfr').value,end_date:$('#wto').value||$('#wfr').value,reason:$('#wre').value})});
+  msg(m,'Requested. Your team lead or HR will approve it.','ok');$('#wre').value='';loadWfh();
+ }catch(e){msg(m,e.message,'err')}};
+async function loadSlips(){
+  try{const l=await api('/payslips');
+   if(!l.length){$('#slips').innerHTML='<li class="muted">No payslips yet. They appear here once HR publishes a finished month.</li>';return}
+   $('#slips').innerHTML=l.map(x=>`<li><span>${new Date(x.month+"-01T00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"})}</span><span><button class="link" data-m="${x.month}" style="color:#4f46e5;font-weight:600">Download PDF</button></span></li>`).join('');
+   document.querySelectorAll('#slips button').forEach(b=>b.onclick=async()=>{b.textContent='Opening…';
+    try{const r=await fetch('/api/app/payslip/'+b.dataset.m+'.pdf',{headers:{Authorization:'Bearer '+token}}); if(!r.ok)throw new Error('Not available');
+     const url=URL.createObjectURL(await r.blob()); window.open(url,'_blank')||(location.href=url)}catch(e){alert(e.message)} b.textContent='Download PDF'})}catch(e){}
+}
+async function startCam(){
+  try{stopCam(); stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640}},audio:false}); $('#vid').srcObject=stream}
+  catch(e){$('#vid').closest('.camwrap').classList.add('hide'); $('#selfieBtn').classList.remove('hide')}
+}
+function locate(){return new Promise(res=>{
+  if(!navigator.geolocation){msg($('#status'),'This device has no location support.','err');return res()}
+  navigator.geolocation.getCurrentPosition(p=>{pos=p.coords;res()},e=>{pos=null;msg($('#status'),'Location is required. Allow location access in your browser settings, then reload.','err');res()},{enableHighAccuracy:true,timeout:20000,maximumAge:0});
+})}
+function ready(){ if(pos){msg($('#status'),'Location found (±'+Math.round(pos.accuracy)+' m). Look at the camera and tap the button.','ok');$('#punchBtn').disabled=false} }
+function selfieBlob(){return new Promise((res,rej)=>{
+  const cv=$('#cv'), v=$('#vid');
+  if(stream&&v.videoWidth){const s=Math.min(1,640/v.videoWidth);cv.width=v.videoWidth*s;cv.height=v.videoHeight*s;cv.getContext('2d').drawImage(v,0,0,cv.width,cv.height);cv.toBlob(b=>b?res(b):rej(new Error('Camera error')),'image/jpeg',.8)}
+  else{const f=$('#fileFallback').files[0]; f?res(f):rej(new Error('Take a selfie first using the camera button above.'))}
+})}
+$('#punchBtn').onclick=async()=>{
+  const b=$('#punchBtn'); b.disabled=true;
+  try{
+    await locate(); if(!pos) throw new Error('Location is required.');
+    const fd=new FormData(); fd.append('lat',pos.latitude); fd.append('lng',pos.longitude); fd.append('accuracy',pos.accuracy||0);
+    fd.append('selfie',await selfieBlob(),'selfie.jpg');
+    const j=await api('/punch',{method:'POST',body:fd});
+    await start();
+    msg($('#status'),`${j.type} recorded at ${j.time.slice(11,16)}${j.site?' · '+j.site:''}${j.flag?' (flagged: outside allowed area)':''}`,j.flag?'info':'ok');
+  }catch(e){msg($('#status'),e.message,'err'); b.disabled=false}
+};
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopCam(); else if(token&&TAB=='home'&&!$('#home').classList.contains('hide'))startCam()});
+if('serviceWorker' in navigator) navigator.serviceWorker.register('/m/sw.js').catch(()=>{});
+function tick(){const d=new Date();$('#clock').textContent=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});$('#dateNow').textContent=d.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'short'})}
+tick(); setInterval(tick,10000);
+// ---- sections ----
+let TAB='home';
+$('#fileFallback').addEventListener('change',()=>{const f=$('#fileFallback').files[0];$('#selfieBtn').classList.toggle('done',!!f);$('#selfieLbl').textContent=f?'Selfie ready · tap to retake':'Take a selfie'});
+function go(t){TAB=t;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('hide',x.id!='t-'+t));
+  document.querySelectorAll('.tabbar button').forEach(b=>b.classList.toggle('on',b.dataset.go==t));window.scrollTo(0,0);
+  if(t=='home'){if(token&&!stream)startCam()}else stopCam();
+  try{history.replaceState(null,'',t=='home'?'#':'#'+t)}catch(e){}}
+document.querySelectorAll('.tabbar button').forEach(b=>b.onclick=()=>go(b.dataset.go));
+// ---- reminders (web push) ----
+const pushOK=()=>'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
+const b64u=s=>{const p='='.repeat((4-s.length%4)%4),b=atob((s+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(b,c=>c.charCodeAt(0))};
+async function pushSub(){if(!pushOK())return null;const reg=await navigator.serviceWorker.ready;return reg.pushManager.getSubscription()}
+async function pushOff(){const s=await pushSub();if(!s)return;try{await api('/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s.toJSON())})}catch(e){}await s.unsubscribe()}
+async function pushOn(){
+  if(!pushOK())throw new Error('This phone or browser does not support notifications.');
+  const perm=await Notification.requestPermission();
+  if(perm!='granted')throw new Error('Notifications are blocked. Allow them for this app in your phone settings, then try again.');
+  const {key}=await api('/push/key'); const reg=await navigator.serviceWorker.ready;
+  const s=(await reg.pushManager.getSubscription())||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(key)});
+  await api('/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s.toJSON())});
+}
+async function pushUI(){const st=$('#pushState'),bt=$('#pushBtn');
+  if(!pushOK()){st.innerHTML='<div class="msg info" style="margin:0 0 12px">Reminders need the app from the Play Store (or Chrome on Android).</div>';bt.classList.add('hide');$('#pushNudge').classList.add('hide');return}
+  let on=false;try{on=!!(await pushSub())&&Notification.permission=='granted'}catch(e){}
+  if(on){try{await api('/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify((await pushSub()).toJSON())})}catch(e){}}  // keep the server in sync (e.g. after signing in as someone else)
+  st.innerHTML=on?'<div class="msg ok" style="margin:0 0 12px">Reminders are on for this phone.</div>':'';
+  bt.textContent=on?'Turn off reminders':'Turn on reminders';bt.className=on?'ghost':'';bt.classList.remove('hide');
+  $('#pushNudge').classList.toggle('hide',on);
+  st.className='';
+  bt.onclick=async()=>{bt.disabled=true;let err='';try{on?await pushOff():await pushOn()}catch(e){err=e.message}bt.disabled=false;
+   if(err)st.innerHTML=`<div class="msg err" style="margin:0 0 12px">${esc(err)}</div>`;else pushUI()}}
+if(token){start();const h=location.hash.slice(1);if(['leave','wfh','pay','me'].includes(h))go(h)} else show('login');
+</script></body></html>

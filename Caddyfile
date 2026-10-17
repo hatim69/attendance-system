@@ -1,0 +1,13 @@
+{
+	# Port 80 belongs to the device listener, so Caddy gets its certificate over 443 (TLS-ALPN).
+	http_port 8080
+	auto_https disable_redirects
+}
+
+{$DOMAIN} {
+	encode gzip
+	request_body {
+		max_size 8MB
+	}
+	reverse_proxy app:8000
+}

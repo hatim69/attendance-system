@@ -1304,7 +1304,23 @@ def test_all_employees_time_card_and_workbook(tmp_path, monkeypatch):
         assert c.get("/api/reports/timecards", params={"start": "2024-01-01", "end": "2026-01-01"}).status_code == 400
         # workbook: consolidated sheet + one sheet per employee (same names kept apart by ID), colours and dates
         wb = load_workbook(_io.BytesIO(c.get("/api/reports/timecards.xlsx", params=q).content))
-        assert wb.sheetnames == ["All Employees", "Aman (T2)", "Aman (T3)", "Bina (T4)", "Zara (T1)"]
+        assert wb.sheetnames == ["In-Out", "All Employees", "Aman (T2)", "Aman (T3)", "Bina (T4)", "Zara (T1)"]
+        # In-Out grid: one row per employee, In and Out under each date
+        g = wb["In-Out"]
+        assert (g["A1"].value, g["C1"].value, g["E1"].value, g["A2"].value, g["C2"].value, g["D2"].value) == \
+            ("Date →", "Sun 04/10", "Mon 05/10", "Employee", "In", "Out")
+        grid = {r[1]: r for r in g.iter_rows(min_row=3, values_only=True) if r[1] in ("T1", "T2", "T3", "T4")}
+        assert [grid[k][0] for k in ("T2", "T3", "T4", "T1")] == ["Aman", "Aman", "Bina", "Zara"]
+        assert grid["T1"][4:6] == ("09:45", "18:30") and grid["T2"][4:6] == ("10:25", "19:00")   # 5 Oct
+        assert grid["T2"][6:8] == ("10:00", None)                                                # missing out: left empty
+        assert grid["T4"][6] == "AL" and grid["T4"][10] == "IL"                                   # 6 and 8 Oct leave
+        assert grid["T3"][6] is None and grid["T3"][8] == "A"            # nothing before joining on 7 Oct, then absent
+        row_t2 = next(r for r in g.iter_rows(min_row=3) if r[1].value == "T2")
+        assert row_t2[4].font.color.rgb.endswith("B91C1C")                                         # late in red
+        row_t4 = next(r for r in g.iter_rows(min_row=3) if r[1].value == "T4")
+        assert row_t4[6].fill.fgColor.rgb.endswith("FFC7CE") and row_t4[10].fill.fgColor.rgb.endswith("FFEB9C")
+        row_t1 = next(r for r in g.iter_rows(min_row=3) if r[1].value == "T1")
+        assert row_t1[2].fill.fgColor.rgb.endswith("DDEBF7")                                       # rostered Sunday
         allws = wb["All Employees"]
         head = [x.value for x in allws[1]]
         assert head[:4] == ["Employee Name", "Employee ID", "Department", "Date"] and "Early Login (min)" in head and "Leave Type" in head
@@ -1322,7 +1338,7 @@ def test_all_employees_time_card_and_workbook(tmp_path, monkeypatch):
         assert len(own) == 7 and {r[1] for r in own} == {"T4"}
         assert any("Yellow = Informed" in str(r[0]) for r in ws.iter_rows(values_only=True))           # legend
         single = load_workbook(_io.BytesIO(c.get("/api/reports/timecards.xlsx", params={**q, "employee": "T1"}).content))
-        assert single.sheetnames == ["All Employees", "Zara (T1)"]
+        assert single.sheetnames == ["In-Out", "All Employees", "Zara (T1)"]
 
 
 def test_late_arrival_counter_policy_and_emails(tmp_path, monkeypatch):

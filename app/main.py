@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from .xlsx import TIMECARD_COLUMNS, XLSX_TYPE, safe as _safe, timecard_human, xlsx_sheet
+from .xlsx import TIMECARD_COLUMNS, XLSX_TYPE, inout_sheet, safe as _safe, timecard_human, xlsx_sheet
 from . import access, adms, app_api, auth, backup, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, lates, mailer, payslip, profile, push, reports, weekly, zk_poller
 
 logging.basicConfig(level=logging.INFO)
@@ -1112,7 +1112,7 @@ def report_timecards(start: str, end: str, employee: str = "", department: str =
 
 def _sheet_names(people: list[tuple[str, str]]) -> list[str]:
     """Excel sheet names: at most 31 characters, none of []:*?/\\, unique even for people with the same name."""
-    used, out = {"all employees"}, []
+    used, out = {"all employees", "in-out"}, []
     for name, uid in people:
         clean = lambda t: re.sub(r"[\[\]:*?/\\]", "", t).strip("' ")
         tag, nm = f" ({clean(uid)})", clean(name) or "Employee"
@@ -1127,12 +1127,14 @@ def _sheet_names(people: list[tuple[str, str]]) -> list[str]:
 
 @app.get("/api/reports/timecards.xlsx", dependencies=[Depends(access.need("manager"))])
 def report_timecards_xlsx(start: str, end: str, employee: str = "", department: str = "", status: str = ""):
-    """One workbook: 'All Employees' (every row, by date then name) and one sheet per employee with only their rows."""
+    """One workbook: 'In-Out' (one row per employee, In and Out for each date), 'All Employees' (every row with the
+    details, by date then name) and one sheet per employee with only their rows."""
     from openpyxl import Workbook
     rows = _timecards(start, end, employee, department, status)
     human = timecard_human
     wb = Workbook()
-    xlsx_sheet(wb.active, "All Employees", [human(r) for r in rows] or [{label: "" for _, label in TIMECARD_COLUMNS}])
+    inout_sheet(wb.active, "In-Out", rows, start, end)
+    xlsx_sheet(wb.create_sheet(), "All Employees", [human(r) for r in rows] or [{label: "" for _, label in TIMECARD_COLUMNS}])
     people = sorted({(r["name"], r["device_user_id"]) for r in rows}, key=lambda p: (p[0].lower(), p[1]))
     for (name, uid), title in zip(people, _sheet_names(people)):
         mine = [human(r) for r in rows if r["device_user_id"] == uid]

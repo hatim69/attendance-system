@@ -78,7 +78,7 @@ td{padding:10px 14px;border-bottom:1px solid var(--line2);white-space:nowrap;ver
 tbody tr:hover td{background:#fafbff}
 tbody tr:last-child td{border-bottom:0}
 tr.tot td{font-weight:700;background:#f8fafc}
-tr.rI td{background:#fffbeb}tr.rA td{background:#fef2f2}tr.rW td{background:#eff6ff}
+table.inout td{min-width:46px;font-size:12px}table.inout thead tr:last-child th:first-child{position:static;min-width:46px;text-align:center;padding-left:4px;background:#f8fafc}table.inout thead tr:first-child th{border-bottom:0}table.inout thead tr:last-child th{font-size:10.5px;color:var(--muted)}tr.rI td{background:#fffbeb}tr.rA td{background:#fef2f2}tr.rW td{background:#eff6ff}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 td .acts{display:flex;gap:6px;justify-content:flex-end}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650;padding:2px 9px;border-radius:20px;background:#f1f5f9;color:#475569;white-space:nowrap}
@@ -397,9 +397,10 @@ async function render(){
      ${fld('Period',`<select id="tcp"><option value="month">This month</option><option value="today">Today</option><option value="last">Last month</option><option value="year">This year</option><option value="fy">This financial year</option><option value="custom">Custom dates</option></select>`)}
      ${fld('From',`<input type="date" id="tcf" value="${mo0}">`)}${fld('To',`<input type="date" id="tct" value="${d0}">`)}
      ${fld('Department',`<select id="tcd"><option value="">All</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select>`)}
+     ${fld('View',`<select id="tcv"><option value="grid">In / Out by date</option><option value="list">Detailed list</option></select>`)}
      ${fld('Status',`<select id="tcs"><option value="">Any</option>${['Present','Late','Half Day','Absent','Leave','Informed','Adhoc','Holiday','Weekly Off','Week-off duty','Missing punch'].map(x=>`<option value="${x}">${x=='Informed'||x=='Adhoc'?x+' leave':x}</option>`).join('')}</select>`)}
      <div class="sp"></div>${dl('xlsx','Export to Excel')}</div>
-    <div class="cb" style="padding:8px 18px 0"><div class="lvleg">${lvPill('Informed',' leave')}${lvPill('Adhoc',' leave')}${pill('Week-off duty (rostered)','wod')}<span>The Excel file has an "All Employees" sheet and one sheet for each person.</span></div></div>
+    <div class="cb" style="padding:8px 18px 0"><div class="lvleg">${lvPill('Informed',' leave')}${lvPill('Adhoc',' leave')}${pill('Week-off duty (rostered)','wod')}<span>The Excel file has an "In-Out" sheet like the grid, an "All Employees" sheet with the details, and one sheet for each person.</span></div></div>
     <div class="chips" id="tcsum"></div><div id="t">${emps.length?'':emptyBox('Add employees first')}</div>`);
   const span=()=>{const p=$('#tcp').value,n=new Date(),iso=x=>x.toLocaleDateString('en-CA');
    if(p=='today')return [d0,d0]; if(p=='month')return [mo0,d0];
@@ -414,9 +415,23 @@ async function render(){
    const cols=[...(all?[['name','Employee',x=>person(x.name,'ID '+x.device_user_id+(x.department?' · '+x.department:''))]]:[]),['date','Date',x=>`<b>${esc(fmtDay(x.date))}</b>`],['day_type','Day type',x=>`<span class="muted small">${esc(x.day_type)}</span>`],
     ['scheduled_in','Sched. in',x=>esc(x.scheduled_in)],['in','In',x=>T(x.in)],['scheduled_out','Sched. out',x=>esc(x.scheduled_out)],['out','Out',x=>T(x.out)],
     ['late_min','Late',x=>mins(x.late_min)],['early_in_min','Early in',x=>mins(x.early_in_min)],['early_min','Early out',x=>mins(x.early_min)],['hours','Hours',0,'num'],stCol(),['note','Note',x=>`<span class="muted">${esc(x.note)}</span>`]];
+   if($('#tcv').value=='grid'){$('#t').innerHTML=inoutGrid(rows);return}
    $('#t').innerHTML=tbl(cols,rows.slice(0,MAXROWS),{empty:'No records for this selection',rowCls:x=>x.leave_type=='Informed'?'rI':x.leave_type=='Adhoc'?'rA':x.week_off_duty?'rW':''})+
     (rows.length>MAXROWS?`<div class="cb"><p class="hint">Showing the first ${MAXROWS} of ${rows.length} rows. Export to Excel to see them all.</p></div>`:'')};
-  for(const k of ['#tce','#tcd','#tcs'])$(k).onchange=safe(load);
+  const inoutGrid=rows=>{if(!rows.length)return emptyBox('No records for this selection');
+   const [a,b]=span(), days=[];for(let x=new Date(a+'T00:00');x.toLocaleDateString('en-CA')<=b;x.setDate(x.getDate()+1))days.push(x.toLocaleDateString('en-CA'));
+   const by={};rows.forEach(r=>by[r.device_user_id+'|'+r.date]=r);
+   const ppl=[...new Map(rows.map(r=>[r.device_user_id,r])).values()].sort((x,y)=>x.name.localeCompare(y.name));
+   const CODE={'Weekly Off':'WO','Holiday':'H','Absent':'A'};
+   const cell=r=>{if(!r||!r.status)return '<td></td><td></td>';
+    if(r.status=='Leave'){const c=r.leave_type=='Informed'?'IL':r.leave_type=='Adhoc'?'AL':'LV';return `<td colspan="2"><span class="cd c-${c}" title="${esc(r.leave_type||'')} leave">${c}</span></td>`}
+    if(CODE[r.status])return `<td colspan="2"><span class="cd c-${CODE[r.status]}">${CODE[r.status]}</span></td>`;
+    const bg=r.leave_type=='Informed'?'#fffbeb':r.leave_type=='Adhoc'?'#fef2f2':r.week_off_duty?'#eff6ff':'';
+    return `<td style="${bg?'background:'+bg:''}" title="${esc(r.status+(r.late_min?' · '+r.late_min+' min late':''))}">${r.late_min?`<b style="color:var(--bad)">${esc(r.in)}</b>`:esc(r.in)}</td><td style="${bg?'background:'+bg:''}">${esc(r.out)}</td>`};
+   return `<div class="tw"><table class="sheet inout"><thead><tr><th rowspan="2">Employee</th>${days.map(d=>`<th colspan="2">${esc(new Date(d+'T00:00').toLocaleDateString(undefined,{weekday:'short',day:'2-digit',month:'2-digit'}))}</th>`).join('')}</tr><tr>${days.map(()=>'<th>In</th><th>Out</th>').join('')}</tr></thead>
+    <tbody>${ppl.map(p=>`<tr><td><b>${esc(p.name)}</b><div class="small muted">${esc(p.device_user_id)}</div></td>${days.map(d=>cell(by[p.device_user_id+'|'+d])).join('')}</tr>`).join('')}</tbody></table></div>
+    <div class="cb"><div class="chips legend"><span><span class="cd c-IL">IL</span>Informed leave</span><span><span class="cd c-AL">AL</span>Adhoc leave</span><span><span class="cd c-WO">WO</span>Weekly off</span><span><span class="cd c-H">H</span>Holiday</span><span><span class="cd c-A">A</span>Absent</span><span><b style="color:var(--bad)">10:25</b>Late check-in</span><span><span class="cd" style="background:#eff6ff">&nbsp;&nbsp;&nbsp;</span>Rostered on a weekly off</span></div></div>`};
+  for(const k of ['#tce','#tcd','#tcs','#tcv'])$(k).onchange=safe(load);
   $('#tcp').onchange=safe(load);
   for(const k of ['#tcf','#tct'])$(k).onchange=safe(()=>{$('#tcp').value='custom';load()});
   $('#xlsx').onclick=e=>{e.currentTarget.href='/api/reports/timecards.xlsx?'+q()}; if(emps.length)safe(load)();

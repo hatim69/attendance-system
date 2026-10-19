@@ -393,6 +393,58 @@ def timecards(d1: str, d2: str, employee_id: str | None = None, department: str 
     return sorted(rows, key=lambda r: (r["date"], r["name"].lower(), r["device_user_id"]))
 
 
+PERF_MAX_DAYS = 31
+
+
+def perf_code(r: dict) -> str:
+    """Status code in the style of the old machine software's Monthly Performance Report."""
+    st, lv = r["status"], LEAVE_CODES.get(r.get("leave_type", ""), "LV")
+    if st == "Half Day":
+        return "P/2-" + lv if "half_leave" in r else "P/2"
+    if r.get("week_off_duty") and st in ("Present", "Late"):
+        return "POW"
+    return {"Present": "P", "Late": "P-LT", "Absent": "A", "Leave": lv, "Holiday": "HL", "Weekly Off": "WO"}.get(st, "")
+
+
+def performance(d1: str, d2: str, employee_id: str | None = None, department: str | None = None) -> list[dict]:
+    """Monthly Performance Report: per employee a summary line (present, holidays, weekly offs, absent, leave, paid
+    days, early going, late, work and overtime hours) and every day's arrival, departure, hours, status and shift.
+    Sorted by branch, department and name. Days in the future, before joining or after leaving are blank."""
+    shifts, emps, holidays, leaves, changes = _load()
+    pm, today = _punch_map(d1, d2, None), now_local().date().isoformat()
+    cache: dict = {}
+    days, x = [], Date.fromisoformat(d1)
+    while x.isoformat() <= d2:
+        days.append(x.isoformat())
+        x += timedelta(days=1)
+    out = []
+    for e in emps:
+        if (employee_id and e["device_user_id"] != employee_id) or (department and e["department"] != department) \
+                or not in_period(e, d1, d2):
+            continue
+        res, per_day = [], {}
+        for d in days:
+            if d > today or d < (e.get("joined") or "") or (e.get("left_on") and d > e["left_on"]):
+                continue
+            sh = shift_on(e, d, shifts, changes)
+            r = evaluate(e, sh, d, pm.get((e["device_user_id"], d)), holidays, leaves, today)
+            mark_absences(e, [r], shifts, holidays, changes, cache)
+            res.append(r)
+            per_day[d] = {"in": r["first_in"][:5], "out": r["last_out"][:5], "hours_min": round(r["hours"] * 60),
+                          "ot_min": r["ot_min"], "code": perf_code(r), "shift": sh["name"] if sh else "",
+                          "leave_type": r.get("leave_type", ""), "absent_adhoc": bool(r.get("absent_adhoc")),
+                          "week_off_duty": bool(r.get("week_off_duty"))}
+        summ = _summary(e, None, res)
+        halves = sum(1 for r in res if r["status"] == "Half Day")
+        out.append({"device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"] or "",
+                    "designation": e["designation"] or "", "branch": e["branch"] or "", "days": per_day,
+                    "present": summ["days_present"] - 0.5 * halves, "holidays": summ["holidays"],
+                    "weekly_offs": summ["weekly_offs"], "absent": summ["absent"], "leave": summ["leave"],
+                    "paid_days": summ["paid_days"], "early_min": summ["early_minutes"], "late_min": summ["late_minutes"],
+                    "work_min": round(summ["total_hours"] * 60), "ot_min": sum(r["ot_min"] for r in res)})
+    return sorted(out, key=lambda x: (x["branch"].lower(), x["department"].lower(), x["name"].lower(), x["device_user_id"]))
+
+
 def _adjustments(month: str) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {}
     for r in db.conn().execute("SELECT * FROM payroll_adjustments WHERE month=? ORDER BY id", (month,)):

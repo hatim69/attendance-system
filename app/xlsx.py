@@ -148,3 +148,134 @@ def inout_sheet(ws, title: str, rows: list[dict], start: str, end: str):
         if code.strip() in ("A", "10:25"):
             x.font = Font(bold=True, color="B91C1C")
         ws.cell(r0 + k, 2, label)
+
+
+def _hhmm(minutes: int) -> str:
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+# the summary line under each employee: (label, key, number of day columns it spans); 10 + 6 x 2 + 3 + 3 x 2 = 31
+PERF_SUMMARY = [("Name", "name", 10), ("Present", "present", 2), ("HL", "holidays", 2), ("WO", "weekly_offs", 2),
+                ("Absent", "absent", 2), ("Leave", "leave", 2), ("PaidDays", "paid_days", 2),
+                ("Early Going", "early_min", 3), ("LateHrs.", "late_min", 2), ("WorkHrs", "work_min", 2),
+                ("OvTim", "ot_min", 2)]
+PERF_ROWS = [("Arrived Time", "in"), ("Dept. Time", "out"), ("Working Hrs.", "hours_min"), ("O.Time Hrs.", "ot_min"),
+             ("Status", "code"), ("Shift", "shift")]
+
+
+def performance_workbook(people: list[dict], start: str, end: str, company: str = "") -> bytes:
+    """The old machine software's 'Monthly Performance Report', one sheet per branch: for each employee a department /
+    designation line, a summary line and a day-by-day grid (arrival, departure, working hours, overtime, status,
+    shift). Leave days are yellow (Informed) or red (Adhoc), as everywhere else; printed landscape on A4."""
+    import io
+    from datetime import datetime
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter as col
+
+    d1, d2 = date.fromisoformat(start), date.fromisoformat(end)
+    days = [date.fromordinal(o) for o in range(d1.toordinal(), d2.toordinal() + 1)]
+    ncols = 1 + max(len(days), 31)
+    thin = Side(style="thin", color="000000")
+    box = Border(top=thin, bottom=thin, left=thin, right=thin)
+    f = lambda size=7, bold=False, color="000000": Font(name="Verdana", size=size, bold=bold, color=color)
+    fills = {k: PatternFill("solid", fgColor=c) for k, c in reports.XLSX_FILLS.items()}
+    center, left = Alignment(horizontal="center", vertical="center"), Alignment(horizontal="left", vertical="center")
+    month = d1.strftime("%b %Y") if (d1.year, d1.month) == (d2.year, d2.month) else f"{d1:%b %Y} - {d2:%b %Y}"
+
+    def put(ws, r, c, v, span=1, font=None, align=center, border=True, fill=None):
+        if span > 1:
+            ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c + span - 1)
+        cell = ws.cell(r, c, safe(v))
+        cell.font, cell.alignment = font or f(), align
+        if fill:
+            cell.fill = fill
+        if border:
+            for k in range(c, c + span):
+                ws.cell(r, k).border = box
+        return cell
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    branches: dict[str, list[dict]] = {}
+    for p in people:
+        branches.setdefault(p["branch"] or "No branch", []).append(p)
+    used: set[str] = set()
+    for branch, staff in (branches or {"No branch": []}).items():
+        title = "".join(ch for ch in branch if ch not in '[]:*?/\\')[:31] or "Sheet"
+        while title.lower() in used:
+            title = title[:28] + f" {len(used)}"
+        used.add(title.lower())
+        ws = wb.create_sheet(title)
+        ws.column_dimensions["A"].width = 13
+        for c in range(2, ncols + 1):
+            ws.column_dimensions[col(c)].width = 6
+        third = (ncols - 1) // 3
+        put(ws, 1, 1, f"Report from : {d1:%d-%m-%Y} To : {d2:%d-%m-%Y}", 1 + third, f(8), left, False)
+        put(ws, 1, 2 + third, "Monthly Performance Report", third, Font(name="Arial", size=10, bold=True), center, False)
+        put(ws, 1, 2 + 2 * third, f"Print Date {datetime.now():%d/%m/%Y}", ncols - 1 - 2 * third, f(8),
+            Alignment(horizontal="right"), False)
+        r = 3
+        if company:
+            put(ws, r, 1, f"Company Name : {company}", ncols, Font(name="Arial", size=8, bold=True, color="0000FF"), left, False)
+            r += 1
+        put(ws, r, 1, f"Branch : {branch}", ncols, Font(name="Arial", size=8, bold=True, color="0000FF"), left, False)
+        r += 2
+        if not staff:
+            put(ws, r, 1, "No employees in this report", ncols, f(8), left, False)
+        for p in staff:
+            put(ws, r, 1, f"Dept:- {p['department']}", 11, f(7, True), left)
+            put(ws, r, 12, f"Desig : {p['designation']}", 11, f(7, True), left)
+            put(ws, r, 23, f"Attendance Month Of:- {month}", ncols - 22, f(7, True), left)
+            r += 1
+            put(ws, r, 1, "EmpCode", 1, f(8, True), left)
+            c = 2
+            for label, _, span in PERF_SUMMARY:
+                put(ws, r, c, label, span, f(8, True), left if label == "Name" else center)
+                c += span
+            r += 1
+            put(ws, r, 1, p["device_user_id"], 1, f(8), left)
+            c = 2
+            for _, key, span in PERF_SUMMARY:
+                v = p[key]
+                v = _hhmm(v) if key.endswith("_min") else (int(v) if isinstance(v, float) and v.is_integer() else v)
+                put(ws, r, c, v, span, f(8), left if key == "name" else center)
+                c += span
+            r += 1
+            for i in range(ncols - 1):       # empty boxes after the last date, as in the old report
+                put(ws, r, 2 + i, f"{days[i].day:02d}" if i < len(days) else "", 1, f(7, True))
+            put(ws, r, 1, "", 1)
+            r += 1
+            for label, key in PERF_ROWS:
+                put(ws, r, 1, label, 1, f(7), left)
+                for i in range(ncols - 1):
+                    x = p["days"].get(days[i].isoformat()) if i < len(days) else None
+                    v = "" if x is None else _hhmm(x[key]) if key in ("hours_min", "ot_min") else x[key]
+                    fill = None
+                    if x and key == "code":
+                        fill = fills.get(x["leave_type"]) or (fills["Adhoc"] if x["absent_adhoc"] else
+                                                              fills["WeekOff"] if x["week_off_duty"] else None)
+                    cell = put(ws, r, 2 + i, v, 1, f(5 if key == "shift" else 6), center, True, fill)
+                    if key == "shift":
+                        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                if key == "shift":
+                    ws.row_dimensions[r].height = 24
+                r += 1
+            r += 1
+        r += 1
+        for key, text in reports.XLSX_LEGEND:
+            put(ws, r, 1, "", 1, fill=fills[key])
+            put(ws, r, 2, text, 10, f(7), left, False)
+            r += 1
+        put(ws, r, 1, "Codes: P present, P-LT late, P/2 half day, POW worked on a weekly off, A absent, WO weekly off, "
+                      "HL holiday, IL Informed leave, AL Adhoc leave", ncols, f(7), left, False)
+        ps = ws.page_setup
+        ps.orientation, ps.paperSize, ps.fitToWidth, ps.fitToHeight = "landscape", ws.PAPERSIZE_A4, 1, 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_margins.left = ws.page_margins.right = 0.3
+        ws.oddFooter.left.text = "Page No &P of &N"
+        ws.oddFooter.right.text = "Approved BY :________________"
+        ws.sheet_view.showGridLines = False
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()

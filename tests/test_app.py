@@ -1589,3 +1589,34 @@ def test_editing_employee_details_and_changing_the_id():
         assert con.execute("SELECT COUNT(*) FROM punches WHERE device_user_id='91827'").fetchone()[0] == 1
         assert con.execute("SELECT COUNT(*) FROM leaves WHERE device_user_id='91827'").fetchone()[0] == 1
         assert con.execute("SELECT COUNT(*) FROM punches WHERE device_user_id='ED1'").fetchone()[0] == 0
+
+
+def test_performance_report_workbook(monkeypatch):
+    import io
+    from openpyxl import load_workbook
+    _freeze_today(monkeypatch, 2026, 10, 15)
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "Perf 10-19", "start": "10:00", "end": "19:00", "grace_min": 10,
+                                    "half_day_hours": 4, "ot_after_min": 0, "weekly_off": "SUN"})
+        sid = [x for x in c.get("/api/shifts").json() if x["name"] == "Perf 10-19"][0]["id"]
+        for uid, nm, br in (("PF1", "Perf One", "Mumbai"), ("PF2", "Perf Two", "Qutbi Arcade")):
+            c.post("/api/employees", json={"device_user_id": uid, "name": nm, "department": "Perf", "designation": "Exec",
+                                           "branch": br, "shift_id": sid, "joined": "2026-01-01"})
+        for ts in ("2026-10-01 10:30:00", "2026-10-01 19:30:00", "2026-10-02 09:55:00", "2026-10-02 19:00:00"):
+            c.post("/api/punches", json={"device_user_id": "PF1", "ts": ts})
+        c.post("/api/leaves", json={"device_user_id": "PF1", "start_date": "2026-10-03", "end_date": "2026-10-03", "type": "Informed", "override": True})
+        r = c.get("/api/reports/performance.xlsx", params={"start": "2026-10-01", "end": "2026-10-14", "department": "Perf"})
+        assert r.status_code == 200
+        wb = load_workbook(io.BytesIO(r.content))
+        assert wb.sheetnames == ["Mumbai", "Qutbi Arcade"]
+        ws = wb["Mumbai"]
+        cells = {(row, col): ws.cell(row, col).value for row in range(1, ws.max_row + 1) for col in range(1, 33)}
+        find = lambda v: next(k for k, x in cells.items() if x == v)
+        assert "Monthly Performance Report" in cells.values()
+        er, _ = find("PF1")
+        assert cells[(er, 2)] == "Perf One" and cells[(er, 12)] == 2 and cells[(er, 18)] == 9 and cells[(er, 20)] == 1   # present, absent, leave
+        status = find("Status")[0]
+        assert [cells[(status, c)] for c in (2, 3, 4, 5)] == ["P-LT", "P", "IL", "WO"]   # 1 Oct late, 3 Oct leave, 4 Oct Sunday
+        assert ws.cell(status, 4).fill.fgColor.rgb.endswith("FFEB9C")                     # Informed leave is yellow
+        assert cells[(find("Arrived Time")[0], 2)] == "10:30" and cells[(find("Dept. Time")[0], 2)] == "19:30"
+        assert c.get("/api/reports/performance.xlsx", params={"start": "2026-09-01", "end": "2026-10-14"}).status_code == 400

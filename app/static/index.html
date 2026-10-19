@@ -385,10 +385,10 @@ async function render(){
 
  } else if(tab=='sheet'){
   const LG=[['P','Present'],['L','Late'],['HD','Half day'],['A','Absent'],['IL','Informed leave'],['AL','Adhoc leave'],['H','Holiday'],['WO','Weekly off']];
-  m.innerHTML=card('',`<div class="tb">${fld('Month',`<input type="month" id="mo" value="${today().slice(0,7)}">`)}${fld('Source',devSel())}<div class="sp"></div>${dl('csv','CSV')}${dl('xlsx')}${dl('mus','Muster roll')}</div><div class="chips legend">${LG.map(([c,l])=>`<span><span class="cd c-${c}">${c}</span>${l}</span>`).join('')}</div><div id="t"></div>`);
+  m.innerHTML=card('',`<div class="tb">${fld('Month',`<input type="month" id="mo" value="${today().slice(0,7)}">`)}${fld('Source',devSel())}<div class="sp"></div>${dl('csv','CSV')}${dl('xlsx')}${dl('mus','Muster roll')}${dl('perf','Performance report')}</div><div class="chips legend">${LG.map(([c,l])=>`<span><span class="cd c-${c}">${c}</span>${l}</span>`).join('')}</div><div id="t"></div>`);
   const load=async()=>{const g=await j('/api/reports/grid?month='+$('#mo').value+dq());
    $('#t').innerHTML=g.rows.length?`<div class="tw"><table class="sheet"><thead><tr><th>Employee</th>${g.days.map(d=>`<th>${d}</th>`).join('')}<th>Worked</th><th>W.off</th><th>Hol.</th><th>IL</th><th>AL</th><th>Absent</th><th>Paid</th></tr></thead><tbody>${g.rows.map(r=>`<tr><td><b>${esc(r.name)}</b></td>${r.codes.map(c=>`<td>${c?`<span class="cd c-${c}">${c}</span>`:''}</td>`).join('')}${['worked','weekly_offs','holidays','informed_leave','adhoc_leave','absent','paid_days'].map(k=>`<td>${(k=='informed_leave'||k=='adhoc_leave')&&r.totals[k]?`<span class="cd c-${k=='informed_leave'?'IL':'AL'}">${r.totals[k]}</span>`:`<b>${r.totals[k]}</b>`}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:emptyBox('No employees yet')};
-  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.currentTarget.href='/api/reports/grid.csv?month='+$('#mo').value+dq()}; $('#xlsx').onclick=e=>{e.currentTarget.href='/api/reports/grid.xlsx?month='+$('#mo').value+dq()}; $('#mus').onclick=e=>{e.currentTarget.href='/api/reports/muster.xlsx?month='+$('#mo').value+dq()}; load();
+  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.currentTarget.href='/api/reports/grid.csv?month='+$('#mo').value+dq()}; $('#xlsx').onclick=e=>{e.currentTarget.href='/api/reports/grid.xlsx?month='+$('#mo').value+dq()}; $('#mus').onclick=e=>{e.currentTarget.href='/api/reports/muster.xlsx?month='+$('#mo').value+dq()}; $('#perf').onclick=e=>{const mo=$('#mo').value,[y,m]=mo.split('-').map(Number),last=new Date(y,m,0).getDate();e.currentTarget.href=`/api/reports/performance.xlsx?start=${mo}-01&end=${mo}-${String(last).padStart(2,'0')}`}; load();
 
  } else if(tab=='timecard'){
   const d0=today(), mo0=d0.slice(0,7)+'-01', depts=[...new Set(emps.map(e=>e.department).filter(Boolean))].sort();
@@ -399,7 +399,7 @@ async function render(){
      ${fld('Department',`<select id="tcd"><option value="">All</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select>`)}
      ${fld('View',`<select id="tcv"><option value="grid">In / Out by date</option><option value="list">Detailed list</option></select>`)}
      ${fld('Status',`<select id="tcs"><option value="">Any</option>${['Present','Late','Half Day','Absent','Leave','Informed','Adhoc','Holiday','Weekly Off','Week-off duty','Missing punch'].map(x=>`<option value="${x}">${x=='Informed'||x=='Adhoc'?x+' leave':x}</option>`).join('')}</select>`)}
-     <div class="sp"></div>${dl('xlsx','Export to Excel')}</div>
+     <div class="sp"></div>${dl('perf','Performance report')}${dl('xlsx','Export to Excel')}</div>
     <div class="cb" style="padding:8px 18px 0"><div class="lvleg">${lvPill('Informed',' leave')}${lvPill('Adhoc',' leave')}${pill('Week-off duty (rostered)','wod')}<span>The Excel file has an "In-Out" sheet like the grid, an "All Employees" sheet with the details, and one sheet for each person.</span></div></div>
     <div class="chips" id="tcsum"></div><div id="t">${emps.length?'':emptyBox('Add employees first')}</div>`);
   const span=()=>{const p=$('#tcp').value,n=new Date(),iso=x=>x.toLocaleDateString('en-CA');
@@ -434,7 +434,9 @@ async function render(){
   for(const k of ['#tce','#tcd','#tcs','#tcv'])$(k).onchange=safe(load);
   $('#tcp').onchange=safe(load);
   for(const k of ['#tcf','#tct'])$(k).onchange=safe(()=>{$('#tcp').value='custom';load()});
-  $('#xlsx').onclick=e=>{e.currentTarget.href='/api/reports/timecards.xlsx?'+q()}; if(emps.length)safe(load)();
+  $('#xlsx').onclick=e=>{e.currentTarget.href='/api/reports/timecards.xlsx?'+q()};
+  $('#perf').onclick=e=>{const p=q();if((new Date(p.get('end'))-new Date(p.get('start')))/864e5>=31){e.preventDefault();toast('The performance report covers up to 31 days: pick one month','bad');return}
+   p.delete('status');e.currentTarget.href='/api/reports/performance.xlsx?'+p}; if(emps.length)safe(load)();
 
  } else if(tab=='payroll'){
   m.innerHTML=card('',`<div class="tb">${fld('Month',`<input type="month" id="mo" value="${today().slice(0,7)}">`)}<span id="pub" style="display:flex;gap:8px;align-items:center;height:36px"></span><div class="sp"></div>${LVLEG}<button id="adj_open">${I('plus')}Adjustment</button>${dl('csv','CSV')}${dl('xlsx')}</div>

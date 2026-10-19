@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from .timeutil import now_local
 
-from .xlsx import TIMECARD_COLUMNS, XLSX_TYPE, inout_sheet, safe as _safe, timecard_human, xlsx_sheet
+from .xlsx import TIMECARD_COLUMNS, XLSX_TYPE, inout_sheet, performance_workbook, safe as _safe, timecard_human, xlsx_sheet
 from . import access, adms, app_api, auth, backup, config, db, fkweb, hr_api, hub, importer, leavepolicy, loans, lates, mailer, payslip, profile, push, reports, weekly, zk_poller
 
 logging.basicConfig(level=logging.INFO)
@@ -1259,6 +1259,20 @@ def report_timecards_xlsx(start: str, end: str, employee: str = "", department: 
     who = f"-{db.canon_id(employee)}" if employee else "-all"
     return Response(out.getvalue(), media_type=XLSX_TYPE,
                     headers={"Content-Disposition": f"attachment; filename=time-card{who}-{start}-to-{end}.xlsx"})
+
+
+@app.get("/api/reports/performance.xlsx", dependencies=[Depends(access.need("manager"))])
+def report_performance_xlsx(start: str, end: str, employee: str = "", department: str = ""):
+    """Monthly Performance Report in the old machine software's layout (up to 31 days, one sheet per branch)."""
+    a, b = _range(start, end)
+    if (date.fromisoformat(b) - date.fromisoformat(a)).days >= reports.PERF_MAX_DAYS:
+        raise HTTPException(400, f"The performance report covers up to {reports.PERF_MAX_DAYS} days: pick one month")
+    uid = db.canon_id(employee) if employee else None
+    if uid:
+        access.assert_in_scope(uid)
+    data = performance_workbook(reports.performance(a, b, uid, department or None), a, b, config.COMPANY_NAME)
+    return Response(data, media_type=XLSX_TYPE,
+                    headers={"Content-Disposition": f"attachment; filename=performance-report-{a}-to-{b}.xlsx"})
 
 
 @app.get("/api/reports/timecard.xlsx", dependencies=[Depends(access.need("manager"))])

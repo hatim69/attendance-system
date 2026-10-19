@@ -605,7 +605,7 @@ async function render(){
   [MS,DOCT]=await Promise.all([j('/api/masters'),canDocs?j('/api/document-types'):[]]);
   m.innerHTML=card('',`<div class="tb">${fld('Search',`<input id="q" placeholder="Name, ID, department…" style="width:240px">`)}${fld('Department',`<select id="qd"><option value="">All</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select>`)}<label class="chk"><input type="checkbox" id="qr">Show resigned</label><div class="sp"></div><button class="pri" id="eadd">${I('plus')}Add employee</button></div>
    <div class="tb" style="background:#fafbfd">${fld('Shift for the ticked people',shiftSel('bs'))}<button id="bb">Assign shift</button><span class="hint" style="align-self:center" id="ecount"></span></div><div id="t"></div>`)+
-   formDlg('empDlg','Add employee',`<div class="fg">${fld('Employee / device ID',`<input id="i" placeholder="same as on the machine">`)}${fld('Full name',`<input id="n">`)}${fld('Mobile',`<input id="mb" inputmode="tel">`)}${fld('Department',`<select id="dp"></select>`)}${fld('Designation',`<select id="dg"></select>`)}${fld('Branch',`<input id="br">`)}${fld('Shift',shiftSel('es'))}${fld('Monthly salary',`<input id="sal" type="number" min="0">`)}${fld('Joining date',`<input type="date" id="jd">`)}
+   formDlg('empDlg','Add employee',`<div class="fg">${fld('Employee / device ID',`<div style="display:flex;gap:6px"><input id="i" placeholder="same as on the machine" style="flex:1;min-width:0"><button type="button" class="sm" id="chid" style="display:none">Change ID</button></div>`)}${fld('Full name',`<input id="n">`)}${fld('Mobile',`<input id="mb" inputmode="tel">`)}${fld('Department',`<select id="dp"></select>`)}${fld('Designation',`<select id="dg"></select>`)}${fld('Branch',`<input id="br">`)}${fld('Shift',shiftSel('es'))}${canDocs?fld('Monthly salary',`<input id="sal" type="number" min="0">`):''}${fld('Joining date',`<input type="date" id="jd">`)}
      <label class="chk" style="grid-column:1/-1"><input type="checkbox" id="rmt">Can check in from anywhere with the phone app (work from home / field work)</label>
      <label class="chk"><input type="checkbox" id="ac" checked>Active</label><div id="lwBox" style="display:none">${fld('Last working day',`<input type="date" id="lw">`)}</div>
      ${canDocs?`<div class="fsec">Personal details</div>${fld("Father's / husband's name",`<input id="fn">`)}${PF.filter(f=>f[3]=='p').map(pfld).join('')}
@@ -617,6 +617,11 @@ async function render(){
   for(const [sel,kind] of [['#dp','department'],['#dg','designation']])$(sel).onchange=safe(async e=>{if(e.target.value!='__new')return;const v=await ask({title:'New '+kind,fields:[{label:'Name'}],ok:'Add'});e.target.value='';if(!v||!v[0].trim())return;
    await post('/api/masters/'+kind,{name:v[0].trim()});MS=await j('/api/masters');fillLists(kind=='department'?v[0].trim():$('#dp').value,kind=='designation'?v[0].trim():$('#dg').value)});
   $('#ac').onchange=()=>$('#lwBox').style.display=$('#ac').checked?'none':'';
+  $('#chid').onclick=safe(async()=>{const cur=$('#i').value;
+   const v=await ask({title:'Change employee ID',text:`Punches, leave, shifts and documents of ID ${cur} move to the new ID. Change it on the attendance machine too, or new punches will still come in under ${cur}. The person signs in to the phone app again with the new ID.`,fields:[{label:'New employee ID',value:cur}],ok:'Change ID'});
+   if(!v||!v[0].trim()||v[0].trim()==cur)return;
+   const r=await post('/api/employees/'+encodeURIComponent(cur)+'/change-id',{new_id:v[0].trim()});
+   toast('ID changed to '+r.device_user_id);$('#empDlg').close();render()});
   PENDING=[];
   const drawDocs=async()=>{if(!canDocs)return;const uid=$('#i').readOnly?$('#i').value:'';const have=uid?await j('/api/employees/'+encodeURIComponent(uid)+'/documents'):[];
    $('#dlist').innerHTML=have.map(d=>`<div class="who" style="padding:5px 0">${I('file')}<div style="flex:1;min-width:0"><a target="_blank" href="/api/documents/${d.id}">${esc(d.filename)}</a><small>${esc(d.doc_type)} · ${Math.ceil(d.size/1024)} KB · ${esc(d.uploaded_at.slice(0,10))} by ${esc(d.uploaded_by)}</small></div><button type="button" class="sm" onclick="delDoc(${d.id})">Remove</button></div>`).join('')+
@@ -624,9 +629,10 @@ async function render(){
   DRAWDOCS=drawDocs;
   if(canDocs)$('#dadd').onclick=safe(async()=>{const f=$('#dfile').files[0];if(!f)throw new Error('Choose a file first');if(f.size>10*1024*1024)throw new Error('File is larger than 10 MB');
    if($('#i').readOnly){await upDoc($('#i').value,f,$('#dtp').value);toast('Document uploaded')}else PENDING.push({file:f,type:$('#dtp').value});$('#dfile').value='';drawDocs()});
-  EMPFORM=(e)=>{const x=e||{};if(canDocs)for(const [f] of PF){const el=$('#p_'+f),v=x[f]||'';if(el.tagName=='SELECT'&&v&&![...el.options].some(o=>o.value==v))el.add(new Option(v,v));el.value=v}
-   $('#i').value=x.device_user_id||'';$('#i').readOnly=!!e;$('#n').value=x.name||'';fillLists(x.department||'',x.designation||'');$('#br').value=x.branch||'';$('#mb').value=x.mobile||'';$('#fn').value=x.father_name||'';
-   $('#ac').checked=e?!!x.active:true;$('#lw').value=x.left_on||'';$('#ac').onchange();$('#rmt').checked=!!x.remote_ok;$('#es').value=x.shift_id??'';$('#sal').value=x.salary||'';$('#jd').value=x.joined||'';PENDING=[];
+  EMPFORM=(e)=>{const x=e||{};if(canDocs)for(const [f] of PF){const el=$('#p_'+f),v=x[f]||'';if(el.tagName=='SELECT'&&v&&![...el.options].some(o=>o.value==v))el.add(new Option(v,v));
+     if(el.tagName=='INPUT'&&PF.find(p=>p[0]==f)[2]=='date'){const bad=v&&!/^\d{4}-\d\d-\d\d$/.test(v);el.type=bad?'text':'date';el.title=bad?'Could not read this date from the import: pick or type the right date (DD/MM/YYYY)':''}el.value=v}
+   $('#i').value=x.device_user_id||'';$('#i').readOnly=!!e;$('#chid').style.display=e?'':'none';$('#n').value=x.name||'';fillLists(x.department||'',x.designation||'');$('#br').value=x.branch||'';$('#mb').value=x.mobile||'';$('#fn').value=x.father_name||'';
+   $('#ac').checked=e?!!x.active:true;$('#lw').value=x.left_on||'';$('#ac').onchange();$('#rmt').checked=!!x.remote_ok;$('#es').value=x.shift_id??'';if(canDocs)$('#sal').value=x.salary||'';$('#jd').value=x.joined||'';PENDING=[];
    $('#empDlg .dt').textContent=e?'Edit '+x.name:'Add employee';$('#empDlg').showModal();drawDocs();if(!e)$('#i').focus()};
   const draw=()=>{const q=$('#q').value.toLowerCase(), dd=$('#qd').value, rs=$('#qr').checked;
    const rows=emps.filter(e=>(rs||e.active)&&(!dd||e.department==dd)&&(!q||[e.name,e.device_user_id,e.department,e.designation,e.branch,e.mobile].join(' ').toLowerCase().includes(q)));
@@ -639,7 +645,7 @@ async function render(){
   $('#bb').onclick=safe(async()=>{const ids=$$('.sel:checked').map(c=>c.value);if(!ids.length)throw new Error('Tick at least one employee in the list');
    const r=await post('/api/employees/bulk-shift',{ids,shift_id:$('#bs').value?+$('#bs').value:null});toast(r.updated+' employee'+(r.updated==1?'':'s')+' updated');render()});
   $('#s').onclick=safe(async()=>{if(!$('#ac').checked&&!$('#lw').value)throw new Error('Enter the last working day of the person who left');
-   await post('/api/employees',{device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value.replace('__new',''),designation:$('#dg').value.replace('__new',''),branch:$('#br').value,mobile:$('#mb').value,...(canDocs?{father_name:$('#fn').value,...Object.fromEntries(PF.map(([f])=>[f,$('#p_'+f).value]))}:{}),active:$('#ac').checked,left_on:$('#ac').checked?'':$('#lw').value,remote_ok:$('#rmt').checked,shift_id:$('#es').value?+$('#es').value:null,salary:+($('#sal').value||0),joined:$('#jd').value});
+   await post('/api/employees',{device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value.replace('__new',''),designation:$('#dg').value.replace('__new',''),branch:$('#br').value,mobile:$('#mb').value,...(canDocs?{father_name:$('#fn').value,...Object.fromEntries(PF.map(([f])=>[f,$('#p_'+f).value]))}:{}),active:$('#ac').checked,left_on:$('#ac').checked?'':$('#lw').value,remote_ok:$('#rmt').checked,shift_id:$('#es').value?+$('#es').value:null,...(canDocs?{salary:+($('#sal').value||0)}:{}),joined:$('#jd').value});
    for(const p of PENDING)await upDoc($('#i').value,p.file,p.type);
    $('#empDlg').close();toast('Employee saved'+(PENDING.length?' with '+PENDING.length+' document'+(PENDING.length>1?'s':''):''));PENDING=[];render()});
 

@@ -1553,3 +1553,39 @@ def test_absence_without_approved_leave_counts_as_adhoc(tmp_path, monkeypatch):
         # pay never goes below zero however many days are cut
         appdb.conn().execute("UPDATE settings SET value='2026-04-01' WHERE key='absent_as_adhoc_from'"); appdb.conn().commit()
         assert all(x["net_pay"] >= 0 for x in c.get("/api/reports/payroll?month=2026-10").json())
+
+
+def test_editing_employee_details_and_changing_the_id():
+    from app import db as appdb
+    with TestClient(app) as c:
+        c.post("/api/employees", json={"device_user_id": "ED1", "name": "Edna", "department": "Ops", "salary": 40000, "father_name": "Ed"})
+        # an untidy value kept from an import (lenient) must not block other edits
+        appdb.conn().execute("UPDATE employees SET pan='abc 123', dob='sometime 1990' WHERE device_user_id='ED1'"); appdb.conn().commit()
+        emp = lambda: {e["device_user_id"]: e for e in c.get("/api/employees").json()}["ED1"]
+        form = {**emp(), "name": "Edna Shah", "mobile": "9876543210"}
+        form.pop("shift", None)
+        assert c.post("/api/employees", json=form).status_code == 200
+        e = emp()
+        assert (e["name"], e["mobile"], e["pan"], e["dob"]) == ("Edna Shah", "9876543210", "abc 123", "sometime 1990")
+        # a value being changed is still checked
+        r = c.post("/api/employees", json={**form, "pan": "WRONG"})
+        assert r.status_code == 400 and "PAN" in r.json()["detail"]
+        assert c.post("/api/employees", json={**form, "pan": "abcde1234f", "dob": "15/03/1990"}).status_code == 200
+        assert (emp()["pan"], emp()["dob"]) == ("ABCDE1234F", "1990-03-15")
+        # salary and father's name left out (a team lead's form) stay as they were
+        assert c.post("/api/employees", json={"device_user_id": "ED1", "name": "Edna Shah", "department": "Ops"}).status_code == 200
+        assert (emp()["salary"], emp()["father_name"]) == (40000, "Ed")
+        # changing the ID moves punches and leave with the person
+        c.post("/api/punches", json={"device_user_id": "ED1", "ts": "2025-09-01 09:00:00"})
+        c.post("/api/leaves", json={"device_user_id": "ED1", "start_date": "2025-09-02", "end_date": "2025-09-02", "type": "Informed", "override": True})
+        c.post("/api/employees", json={"device_user_id": "ED2", "name": "Other", "department": "Ops"})
+        r = c.post("/api/employees/ED1/change-id", json={"new_id": "ED2"})
+        assert r.status_code == 409 and "Other" in r.json()["detail"]
+        assert c.post("/api/employees/ED1/change-id", json={"new_id": "bad id!"}).status_code == 400
+        assert c.post("/api/employees/ED1/change-id", json={"new_id": "0091827"}).json()["device_user_id"] == "91827"
+        ids = {e["device_user_id"]: e["name"] for e in c.get("/api/employees").json()}
+        assert ids.get("91827") == "Edna Shah" and "ED1" not in ids
+        con = appdb.conn()
+        assert con.execute("SELECT COUNT(*) FROM punches WHERE device_user_id='91827'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM leaves WHERE device_user_id='91827'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM punches WHERE device_user_id='ED1'").fetchone()[0] == 0

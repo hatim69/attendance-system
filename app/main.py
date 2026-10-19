@@ -59,12 +59,12 @@ class EmployeeIn(BaseModel):
     department: str = ""
     active: bool = True
     shift_id: int | None = None
-    salary: float = 0
+    salary: float | None = None   # left out = unchanged (team leads never see salaries); 0 for someone new
     joined: str = ""  # optional YYYY-MM-DD; days before it are not counted
     designation: str = ""
     branch: str = ""
     mobile: str = ""
-    father_name: str = ""
+    father_name: str | None = None
     remote_ok: bool = False   # may check in with the phone app from anywhere (work from home / field work)
     left_on: str = ""         # last working day, for someone who resigned
     # personal and bank details (db.PROFILE_FIELDS); left out = unchanged on an existing employee
@@ -369,11 +369,20 @@ def upsert_employee(e: EmployeeIn):
             _valid_date(d)
     if e.active:
         e.left_on = ""
+    c = db.conn()
+    old = c.execute("SELECT * FROM employees WHERE device_user_id=?", (e.device_user_id,)).fetchone()
+    # Only the details being changed are checked strictly: an untidy value kept from an import must not stop every
+    # other change to that person from saving.
+    given = {f: v for f in db.PROFILE_FIELDS if (v := getattr(e, f)) is not None
+             and not (old and profile.text(v) == profile.text(old[f]))}
     try:
-        prof = profile.clean_all({f: v for f in db.PROFILE_FIELDS if (v := getattr(e, f)) is not None}, strict=True)
+        prof = profile.clean_all(given, strict=True)
     except ValueError as ex:
         raise HTTPException(400, str(ex))
-    c = db.conn()
+    if e.salary is None:
+        e.salary = old["salary"] if old else 0
+    if e.father_name is None:
+        e.father_name = old["father_name"] if old else ""
     c.execute(
         "INSERT INTO employees(device_user_id,name,department,active,shift_id,salary,joined,designation,branch,mobile,father_name,remote_ok,left_on) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
@@ -392,6 +401,37 @@ def upsert_employee(e: EmployeeIn):
             c.execute("INSERT OR IGNORE INTO masters(kind,name) VALUES (?,?)", (kind, v.strip()))
     c.commit()
     return {"ok": True}
+
+
+class ChangeIdIn(BaseModel):
+    new_id: str
+
+
+@app.post("/api/employees/{device_user_id}/change-id", dependencies=[Depends(access.need("hr", "employees"))])
+def change_employee_id(device_user_id: str, body: ChangeIdIn):
+    """Correct an employee's ID. Everything recorded under the old ID (punches, leave, roster, documents, ...) moves
+    with them. The ID must match the one on the machine, so it has to be changed there too."""
+    old, new = db.canon_id(device_user_id), db.canon_id(body.new_id)
+    access.assert_in_scope(old)
+    if not new:
+        raise HTTPException(400, "Type the new employee ID")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", new):
+        raise HTTPException(400, "The ID can only have letters, numbers, - and _")
+    c = db.conn()
+    if not c.execute("SELECT 1 FROM employees WHERE device_user_id=?", (old,)).fetchone():
+        raise HTTPException(404, "No such employee")
+    if new == old:
+        return {"ok": True, "device_user_id": new}
+    other = c.execute("SELECT name FROM employees WHERE device_user_id=?", (new,)).fetchone()
+    if other:
+        raise HTTPException(409, f"ID {new} already belongs to {other['name']}")
+    tables = [t["name"] for t in c.execute("SELECT name FROM sqlite_master WHERE type='table'")
+              if any(col["name"] == "device_user_id" for col in c.execute(f"PRAGMA table_info({t['name']})"))]
+    for t in tables:   # punches the machine already sent under the new ID stay; exact duplicates are dropped
+        c.execute(f"UPDATE OR IGNORE {t} SET device_user_id=? WHERE device_user_id=?", (new, old))
+        c.execute(f"DELETE FROM {t} WHERE device_user_id=?", (old,))
+    c.commit()
+    return {"ok": True, "device_user_id": new}
 
 
 class BulkShiftIn(BaseModel):

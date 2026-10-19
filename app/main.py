@@ -465,6 +465,31 @@ def delete_employee(device_user_id: str):
     return {"ok": True}
 
 
+@app.post("/api/employees/{device_user_id}/erase")
+def erase_employee(device_user_id: str, u: dict = Depends(access.need("hr", "employees"))):
+    """Delete an employee for good, with everything recorded under their ID (punches, leave, roster, payroll
+    adjustments, documents and their files). Team leads cannot; for someone who left, untick Active instead."""
+    if u["role"] == "manager":
+        raise HTTPException(403, "Only HR or an admin can delete an employee")
+    uid = db.canon_id(device_user_id)
+    c = db.conn()
+    if not c.execute("SELECT 1 FROM employees WHERE device_user_id=?", (uid,)).fetchone():
+        raise HTTPException(404, "No such employee")
+    files = [r["stored"] for r in c.execute("SELECT stored FROM employee_documents WHERE device_user_id=?", (uid,))]
+    tables = [t["name"] for t in c.execute("SELECT name FROM sqlite_master WHERE type='table'")
+              if any(col["name"] == "device_user_id" for col in c.execute(f"PRAGMA table_info({t['name']})"))]
+    c.execute("DELETE FROM loan_repayments WHERE loan_id IN (SELECT id FROM loans WHERE device_user_id=?)", (uid,))
+    for t in tables:
+        c.execute(f"DELETE FROM {t} WHERE device_user_id=?", (uid,))
+    c.commit()
+    for f in files:
+        try:
+            os.remove(os.path.join(config.DOCS_DIR, f))
+        except OSError:
+            pass
+    return {"ok": True}
+
+
 @app.post("/api/employees/{device_user_id}/pin", dependencies=[Depends(access.need("hr", "employees"))])
 def set_pin(device_user_id: str, body: PinIn):
     device_user_id = db.canon_id(device_user_id)

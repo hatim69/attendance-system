@@ -272,6 +272,7 @@ const safe=fn=>async(...a)=>{try{await fn(...a)}catch(e){toast(e.message,'bad')}
 function ask({title,text='',fields=[],ok='Save',danger=false}){return new Promise(res=>{const d=$('#dlg');
  d.innerHTML=`<form method="dialog"><div class="dh"><h3>${esc(title)}</h3>${text?`<p>${esc(text)}</p>`:''}</div>${fields.length?`<div class="db"><div class="fg one">${fields.map((f,i)=>fld(esc(f.label),`<input name="f${i}" type="${f.type||'text'}" value="${esc(f.value??'')}" placeholder="${esc(f.ph||'')}" ${f.attrs||''}>`)).join('')}</div></div>`:'<div style="height:10px"></div>'}<div class="df"><button type="button" onclick="this.closest('dialog').close()">Cancel</button><button value="ok" class="${danger?'danger':'pri'}">${esc(ok)}</button></div></form>`;
  d.returnValue='';d.onclose=()=>res(d.returnValue=='ok'?fields.map((f,i)=>d.querySelector(`[name=f${i}]`).value):null);d.showModal();const f=d.querySelector('input');if(f)f.focus()})}
+const db_id=v=>{v=String(v||'').trim();return /^\d+$/.test(v)?(v.replace(/^0+/,'')||'0'):v};
 const confirmBox=(title,text,ok='Confirm',danger=true)=>ask({title,text,ok,danger}).then(v=>v!==null);
 // a page-level form dialog: id, title, body html, save button id
 const formDlg=(id,title,body,saveId,saveLabel='Save',sub='')=>`<dialog id="${id}"><div class="dh"><h3 class="dt">${title}</h3>${sub?`<p>${sub}</p>`:''}</div><div class="db">${body}</div><div class="df"><button type="button" onclick="this.closest('dialog').close()">Cancel</button><button class="pri" id="${saveId}">${saveLabel}</button></div></dialog>`;
@@ -613,7 +614,8 @@ async function render(){
      ${canDocs?`<div class="fsec">Personal details</div>${fld("Father's / husband's name",`<input id="fn">`)}${PF.filter(f=>f[3]=='p').map(pfld).join('')}
      <div class="fsec">Bank details<small>for salary transfer</small></div>${PF.filter(f=>f[3]=='b').map(pfld).join('')}`:''}</div>
     ${canDocs?`<div class="f" style="margin-top:16px"><span>Documents</span><div class="perm" style="display:block;padding:12px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="dtp">${DOCT.map(t=>`<option>${esc(t)}</option>`).join('')}</select><input type="file" id="dfile" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx" style="height:auto;padding:6px;flex:1;min-width:180px"><button type="button" class="sm" id="dadd">${I('upload')}Add</button></div><div id="dlist" style="margin-top:10px"></div><p class="hint" style="margin-top:6px">PDF, photo or Word file, up to 10 MB each.</p></div></div>`:''}
-    <p class="hint" style="margin-top:12px">IDs ignore leading zeros (00217315 = 217315). Set an app PIN from the list so the person can use the phone app.</p>`,'s','Save employee');
+    <p class="hint" style="margin-top:12px">IDs ignore leading zeros (00217315 = 217315). Set an app PIN from the list so the person can use the phone app.</p>
+    ${canDocs?`<div id="delBox" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:12px;align-items:center;justify-content:space-between"><span class="hint">Someone who left: untick <b>Active</b> instead, so their attendance and payroll history stays.</span><button type="button" class="sm danger" id="edel">Delete employee</button></div>`:''}`,'s','Save employee');
   const opts=(sel,list,kind,val)=>{const names=list.map(x=>x.name);if(val&&!names.includes(val))names.push(val);$(sel).innerHTML=`<option value="">—</option>${names.map(n=>`<option ${n==val?'selected':''}>${esc(n)}</option>`).join('')}<option value="__new">+ Add new ${kind}…</option>`};
   const fillLists=(d='',g='')=>{opts('#dp',MS.departments,'department',d);opts('#dg',MS.designations,'designation',g)};
   for(const [sel,kind] of [['#dp','department'],['#dg','designation']])$(sel).onchange=safe(async e=>{if(e.target.value!='__new')return;const v=await ask({title:'New '+kind,fields:[{label:'Name'}],ok:'Add'});e.target.value='';if(!v||!v[0].trim())return;
@@ -624,6 +626,10 @@ async function render(){
    if(!v||!v[0].trim()||v[0].trim()==cur)return;
    const r=await post('/api/employees/'+encodeURIComponent(cur)+'/change-id',{new_id:v[0].trim()});
    toast('ID changed to '+r.device_user_id);$('#empDlg').close();render()});
+  if(canDocs)$('#edel').onclick=safe(async()=>{const uid=$('#i').value,nm=$('#n').value;
+   const v=await ask({title:'Delete '+nm+'?',text:`This permanently deletes ${nm} (ID ${uid}) with all their punches, leave, shifts, loans, payroll adjustments and documents. It cannot be undone (only the nightly backup has a copy). Type the employee ID to confirm.`,fields:[{label:'Employee ID',ph:uid}],ok:'Delete for good',danger:true});
+   if(v===null)return;if(db_id(v[0])!==db_id(uid))throw new Error('The ID did not match, nothing was deleted');
+   await post('/api/employees/'+encodeURIComponent(uid)+'/erase',{});toast(nm+' deleted');$('#empDlg').close();render()});
   PENDING=[];
   const drawDocs=async()=>{if(!canDocs)return;const uid=$('#i').readOnly?$('#i').value:'';const have=uid?await j('/api/employees/'+encodeURIComponent(uid)+'/documents'):[];
    $('#dlist').innerHTML=have.map(d=>`<div class="who" style="padding:5px 0">${I('file')}<div style="flex:1;min-width:0"><a target="_blank" href="/api/documents/${d.id}">${esc(d.filename)}</a><small>${esc(d.doc_type)} · ${Math.ceil(d.size/1024)} KB · ${esc(d.uploaded_at.slice(0,10))} by ${esc(d.uploaded_by)}</small></div><button type="button" class="sm" onclick="delDoc(${d.id})">Remove</button></div>`).join('')+
@@ -633,7 +639,7 @@ async function render(){
    if($('#i').readOnly){await upDoc($('#i').value,f,$('#dtp').value);toast('Document uploaded')}else PENDING.push({file:f,type:$('#dtp').value});$('#dfile').value='';drawDocs()});
   EMPFORM=(e)=>{const x=e||{};if(canDocs)for(const [f] of PF){const el=$('#p_'+f),v=x[f]||'';if(el.tagName=='SELECT'&&v&&![...el.options].some(o=>o.value==v))el.add(new Option(v,v));
      if(el.tagName=='INPUT'&&PF.find(p=>p[0]==f)[2]=='date'){const bad=v&&!/^\d{4}-\d\d-\d\d$/.test(v);el.type=bad?'text':'date';el.title=bad?'Could not read this date from the import: pick or type the right date (DD/MM/YYYY)':''}el.value=v}
-   $('#i').value=x.device_user_id||'';$('#i').readOnly=!!e;$('#chid').style.display=e?'':'none';$('#n').value=x.name||'';fillLists(x.department||'',x.designation||'');$('#br').value=x.branch||'';$('#mb').value=x.mobile||'';$('#fn').value=x.father_name||'';
+   $('#i').value=x.device_user_id||'';$('#i').readOnly=!!e;$('#chid').style.display=e?'':'none';if($('#delBox'))$('#delBox').style.display=e?'flex':'none';$('#n').value=x.name||'';fillLists(x.department||'',x.designation||'');$('#br').value=x.branch||'';$('#mb').value=x.mobile||'';$('#fn').value=x.father_name||'';
    $('#ac').checked=e?!!x.active:true;$('#lw').value=x.left_on||'';$('#ac').onchange();$('#rmt').checked=!!x.remote_ok;$('#es').value=x.shift_id??'';if(canDocs)$('#sal').value=x.salary||'';$('#jd').value=x.joined||'';PENDING=[];
    $('#empDlg .dt').textContent=e?'Edit '+x.name:'Add employee';$('#empDlg').showModal();drawDocs();if(!e)$('#i').focus()};
   const draw=()=>{const q=$('#q').value.toLowerCase(), dd=$('#qd').value, rs=$('#qr').checked;

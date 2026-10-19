@@ -1620,3 +1620,25 @@ def test_performance_report_workbook(monkeypatch):
         assert ws.cell(status, 4).fill.fgColor.rgb.endswith("FFEB9C")                     # Informed leave is yellow
         assert cells[(find("Arrived Time")[0], 2)] == "10:30" and cells[(find("Dept. Time")[0], 2)] == "19:30"
         assert c.get("/api/reports/performance.xlsx", params={"start": "2026-09-01", "end": "2026-10-14"}).status_code == 400
+
+
+def test_delete_employee_for_good(tmp_path, monkeypatch):
+    from app import db as appdb
+    monkeypatch.setattr(config, "DOCS_DIR", str(tmp_path / "docs"))
+    with TestClient(app) as c:
+        c.post("/api/employees", json={"device_user_id": "DEL1", "name": "Gone Soon", "department": "Ops"})
+        c.post("/api/employees", json={"device_user_id": "DEL2", "name": "Stays", "department": "Ops"})
+        for uid in ("DEL1", "DEL2"):
+            c.post("/api/punches", json={"device_user_id": uid, "ts": "2025-09-01 09:00:00"})
+        c.post("/api/leaves", json={"device_user_id": "DEL1", "start_date": "2025-09-02", "end_date": "2025-09-02", "type": "Informed", "override": True})
+        assert c.post("/api/employees/DEL1/documents", files={"file": ("id.pdf", b"%PDF-1.4 x")}, data={"doc_type": "Other"}).status_code == 200
+        stored = appdb.conn().execute("SELECT stored FROM employee_documents WHERE device_user_id='DEL1'").fetchone()["stored"]
+        assert (tmp_path / "docs" / stored).exists()
+        assert c.post("/api/employees/DEL1/erase").json() == {"ok": True}
+        assert "DEL1" not in {e["device_user_id"] for e in c.get("/api/employees").json()}
+        con = appdb.conn()
+        for t in ("punches", "leaves", "employee_documents", "employees"):
+            assert con.execute(f"SELECT COUNT(*) FROM {t} WHERE device_user_id='DEL1'").fetchone()[0] == 0
+        assert not (tmp_path / "docs" / stored).exists()
+        assert con.execute("SELECT COUNT(*) FROM punches WHERE device_user_id='DEL2'").fetchone()[0] == 1   # others untouched
+        assert c.post("/api/employees/DEL1/erase").status_code == 404

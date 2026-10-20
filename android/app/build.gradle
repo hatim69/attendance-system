@@ -1,18 +1,11 @@
-// Play Store app: a Trusted Web Activity that opens the employee web app full screen (camera, GPS and
-// notifications work through Chrome). Built by .github/workflows/android.yml.
+// The Play Store app: a native Android app (Kotlin, Jetpack Compose) for employees. It talks to the attendance
+// server's /api/app endpoints, the same ones the phone web app uses. Built by .github/workflows/android.yml.
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
 }
 
-def twa = [
-    host           : 'attendance.madarwala.cloud',
-    startUrl       : '/m/',
-    name           : 'Madarwala Attendance',
-    launcherName   : 'Attendance',
-    themeColor     : '#4F46E5',
-    navigationColor: '#FFFFFF',
-    backgroundColor: '#F4F6FB',
-]
 def keystore = System.getenv('KEYSTORE_FILE')
 
 android {
@@ -25,16 +18,7 @@ android {
         targetSdk 36
         versionCode((System.getenv('VERSION_CODE') ?: '1') as int)
         versionName System.getenv('VERSION_NAME') ?: '1.0.0'
-
-        resValue 'string', 'appName', twa.name
-        resValue 'string', 'launcherName', twa.launcherName
-        resValue 'string', 'launchUrl', "https://${twa.host}${twa.startUrl}"
-        resValue 'string', 'providerAuthority', 'com.madarwala.attendance.fileprovider'
-        resValue 'string', 'assetStatements',
-            "[{ \\\"relation\\\": [\\\"delegate_permission/common.handle_all_urls\\\"], \\\"target\\\": {\\\"namespace\\\": \\\"web\\\", \\\"site\\\": \\\"https://${twa.host}\\\"}}]"
-        resValue 'color', 'colorPrimary', twa.themeColor
-        resValue 'color', 'navigationColor', twa.navigationColor
-        resValue 'color', 'backgroundColor', twa.backgroundColor
+        buildConfigField 'String', 'SERVER', '"https://attendance.madarwala.cloud"'
     }
 
     signingConfigs {
@@ -57,13 +41,27 @@ android {
         }
     }
 
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
 }
 
 dependencies {
-    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.5.0'
-    implementation 'com.google.androidbrowserhelper:locationdelegation:1.1.1'
+    implementation platform('androidx.compose:compose-bom:2025.05.01')
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-core'
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.activity:activity-compose:1.10.1'
+    implementation 'androidx.core:core-ktx:1.16.0'
+    implementation 'androidx.exifinterface:exifinterface:1.4.1'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
 }

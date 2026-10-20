@@ -1,8 +1,8 @@
 # Putting the employee app on the Google Play Store
 
-The Play Store app is a **Trusted Web Activity**: an Android app that opens `https://attendance.madarwala.cloud/m/`
-full screen, with camera and GPS working. Changes to the website show up in the app straight away; a new Play Store
-upload is only needed to change the app's name or icon.
+The Play Store app is a **native Android app** (Kotlin, in [`android/`](android)) for employees: check in and out
+with a selfie and GPS, the month's attendance, leave (apply, balance, history), payslips and work-from-home requests.
+It talks to `https://attendance.madarwala.cloud`, so the server must be updated before a new app version goes out.
 
 Everything for the listing is in the [`play-store/`](play-store) folder: the icon, the feature graphic and the phone
 screenshots.
@@ -114,21 +114,8 @@ Users can ask for their data to be deleted: Yes (through HR).
    Google first requires a **closed test with at least 12 testers for 14 days**. Organisation accounts do not have this
    rule. For a company-only app, internal testing can simply stay as the way you distribute it.
 
-## 5. Remove the browser bar (link the app to the website)
-
-Until this is done the app works but shows a small address bar at the top.
-
-1. In Play Console open **Test and release > App integrity > App signing**. Copy the **SHA-256 certificate fingerprint**
-   of the *App signing key*, and also the one of the *Upload key* (it is also shown on every GitHub build's summary page).
-2. Add both to `.env` on the server, separated by a comma:
-   ```
-   ANDROID_CERT_SHA256=AB:CD:...:12,98:76:...:EF
-   ```
-3. `docker compose -f docker-compose.nginx.yml up -d`, then check that
-   https://attendance.madarwala.cloud/.well-known/assetlinks.json shows your fingerprints. Close and reopen the app.
-
 ## Updating the app later
 
-- **Features and fixes:** nothing to do in the Play Store. Update the website and the app shows the changes.
-- **New icon or name:** change it in `android/`, let GitHub build it (the version code goes up by itself) and upload the
-  new `.aab` as a new release.
+- **Server-side changes** (leave rules, reports, the dashboard): update the server; the app needs nothing.
+- **Changes to the app itself:** GitHub builds a new `.aab` whenever `android/` changes (the version code goes up by
+  itself). Upload it to Play Console as a new release.

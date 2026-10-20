@@ -348,7 +348,8 @@ def timecard(month: str, employee_id: str, device: str | None = None) -> list[di
                      "day_type": "HOLIDAY" if d in holidays else "WEEKLY OFF" if wd in offs else "WORKDAY",
                      "schedule": ", ".join(f"{a}-{b}" for a, b in sh.get("windows", [(sh["start"], sh["end"])])) if sh else "flexible",
                      "in": r["first_in"], "out": r["last_out"], "hours": r["hours"], "late_min": r["late_min"],
-                     "early_min": r["early_min"], "overtime_min": r["ot_min"], "status": r["status"], "note": r["note"]})
+                     "early_min": r["early_min"], "overtime_min": r["ot_min"], "status": r["status"], "note": r["note"],
+                     "code": perf_code(r) if d <= today else ""})
     return rows
 
 

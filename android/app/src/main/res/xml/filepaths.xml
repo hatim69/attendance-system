@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <files-path name="twa_splash" path="twa_splash/" />
+    <!-- selfies taken for a punch, and payslip PDFs opened in a PDF viewer -->
+    <cache-path name="cache" path="." />
 </paths>

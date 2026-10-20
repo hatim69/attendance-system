@@ -130,6 +130,18 @@ async def punch(lat: float = Form(...), lng: float = Form(...), accuracy: float 
             "flag": flag}
 
 
+@router.get("/attendance")
+def my_attendance(month: str = "", emp: dict = Depends(current_employee)):
+    """My month day by day (the phone app's Attendance screen): in, out, hours and the status code."""
+    month = month or now_local().strftime("%Y-%m")
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise HTTPException(400, "Month must look like 2026-10")
+    rows = reports.timecard(month, emp["device_user_id"])
+    return [{"date": r["date"], "weekday": r["weekday"], "in": r["in"][:5], "out": r["out"][:5],
+             "hours": f"{round(r['hours'] * 60) // 60}:{round(r['hours'] * 60) % 60:02d}" if r["hours"] else "",
+             "status": r["status"], "code": r["code"], "late_min": r["late_min"], "note": r["note"]} for r in rows]
+
+
 @router.get("/payslips")
 def my_payslips(emp: dict = Depends(current_employee)):
     """Months HR has published that include this employee's pay (newest first)."""

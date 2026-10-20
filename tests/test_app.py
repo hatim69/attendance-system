@@ -1686,3 +1686,21 @@ def test_today_counts_only_after_the_punch_out(monkeypatch):
         c.post("/api/punches", json={"device_user_id": "TD1", "ts": "2026-10-20 19:05:00"})
         after = month()
         assert after["paid_days"] == before["paid_days"] + 1 and after["days_present"] == before["days_present"] + 1
+
+
+def test_phone_app_month_attendance(monkeypatch):
+    _freeze_today(monkeypatch, 2026, 10, 20)
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "App 10-19", "start": "10:00", "end": "19:00", "weekly_off": "SUN"})
+        sid = [x for x in c.get("/api/shifts").json() if x["name"] == "App 10-19"][0]["id"]
+        c.post("/api/employees", json={"device_user_id": "AP1", "name": "App User", "department": "Ops", "shift_id": sid, "joined": "2026-01-01"})
+        c.post("/api/employees/AP1/pin", json={"pin": "4321"})
+        tok = {"Authorization": "Bearer " + c.post("/api/app/login", json={"employee_id": "AP1", "pin": "4321"}).json()["token"]}
+        for ts in ("2026-10-01 10:30:00", "2026-10-01 19:15:00", "2026-10-20 09:55:00"):
+            c.post("/api/punches", json={"device_user_id": "AP1", "ts": ts})
+        rows = {r["date"]: r for r in c.get("/api/app/attendance?month=2026-10", headers=tok).json()}
+        assert len(rows) == 31
+        assert (rows["2026-10-01"]["in"], rows["2026-10-01"]["out"], rows["2026-10-01"]["hours"], rows["2026-10-01"]["code"]) == ("10:30", "19:15", "8:45", "P-LT")
+        assert rows["2026-10-04"]["code"] == "WO" and rows["2026-10-20"]["code"] == "IN" and rows["2026-10-25"]["code"] == ""
+        assert c.get("/api/app/attendance?month=2026-13", headers=tok).status_code == 400
+        assert c.get("/api/app/attendance").status_code == 401

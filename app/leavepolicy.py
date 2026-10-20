@@ -350,15 +350,19 @@ def balance(uid: str, on: date) -> dict | None:
 
 
 def year_summary(fy_start: int) -> list[dict]:
-    """Leave used and the credit left for encashment at the end of the financial year (31 March)."""
+    """Leave used and the credit left for encashment at the end of the financial year (31 March). For the year in
+    progress the credit earned so far and today's balance are given too (*_earned, balance_now): the year-end credit
+    includes months still to come, e.g. someone eligible from December shows 7 + 1 for the year but 0 today."""
     shifts, emps, holidays, _, changes = reports._load()
     out = []
     end = date(fy_start + 1, 3, 31)
+    now = min(reports.now_local().date(), end)
     for e in emps:
         if not e["active"] and (e.get("left_on") or "") < f"{fy_start}-04-01":   # left before this year
             continue
         used = [u for u in usage(e, (e, shifts, holidays, changes), {fy_start}) if fy(u[0]) == fy_start]
         ci, ca = credited(e, end)
+        ni, na = credited(e, now) if now >= date(fy_start, 4, 1) else (0, 0)
         ui = sum(a for _, b, a in used if b == "I")
         ua = sum(a for _, b, a in used if b == "A")
         bal = max(ci - ui, 0) + max(ca - ua, 0)
@@ -366,6 +370,7 @@ def year_summary(fy_start: int) -> list[dict]:
         adj = e["_adj"].get(fy_start, (0, 0))
         out.append({"device_user_id": e["device_user_id"], "name": e["name"], "department": e["department"],
                     "informed": ui, "informed_credit": ci, "adhoc": ua, "adhoc_credit": ca, "used": ui + ua,
-                    "adjusted_informed": adj[0], "adjusted_adhoc": adj[1],
+                    "adjusted_informed": adj[0], "adjusted_adhoc": adj[1], "informed_earned": ni, "adhoc_earned": na,
+                    "balance_now": max(ni - ui, 0) + max(na - ua, 0), "year_over": now == end,
                     "balance": bal, "day_rate": rate, "encashment": round(bal * rate, 2)})
     return out

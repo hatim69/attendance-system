@@ -797,6 +797,9 @@ def test_leave_policy_informed_adhoc_credits_and_workflow(tmp_path, monkeypatch)
         assert y1["encashment"] == 24000.0
         assert (y3["informed_credit"], y3["adhoc_credit"]) == (12, 2)
         assert y3["balance"] == (12 - y3["informed"]) + (2 - y3["adhoc"])
+        # today (10 Oct) only the credit earned so far counts: LV3 is eligible from September (Sep 2 + Oct 1, Oct 1 Adhoc)
+        assert (y3["informed_earned"], y3["adhoc_earned"], y3["year_over"]) == (3, 1, False)
+        assert y3["balance_now"] == max(3 - y3["informed"], 0) + max(1 - y3["adhoc"], 0)
 
 
 def test_leave_approval_is_scoped_to_the_team(tmp_path, monkeypatch):
@@ -1642,3 +1645,14 @@ def test_delete_employee_for_good(tmp_path, monkeypatch):
         assert not (tmp_path / "docs" / stored).exists()
         assert con.execute("SELECT COUNT(*) FROM punches WHERE device_user_id='DEL2'").fetchone()[0] == 1   # others untouched
         assert c.post("/api/employees/DEL1/erase").status_code == 404
+
+
+def test_new_joiner_has_no_leave_today_but_year_end_credit(monkeypatch):
+    _freeze_today(monkeypatch, 2026, 10, 20)
+    with TestClient(app) as c:
+        c.post("/api/employees", json={"device_user_id": "NJ1", "name": "New Joiner", "department": "Ops", "joined": "2026-09-19"})
+        y = {r["device_user_id"]: r for r in c.get("/api/leave-summary?fy=2026").json()}["NJ1"]
+        assert (y["informed_earned"], y["adhoc_earned"], y["balance_now"]) == (0, 0, 0)          # nothing until 19 Dec
+        assert (y["informed_credit"], y["adhoc_credit"]) == (7, 1)                               # Dec 2, Jan 1+1, Feb 2, Mar 2
+        b = c.get("/api/leave-balance?employee=NJ1").json()
+        assert (b["informed"]["left"], b["adhoc"]["left"], b["eligible_from"]) == (0, 0, "2026-12-19")

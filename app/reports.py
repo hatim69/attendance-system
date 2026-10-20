@@ -20,6 +20,8 @@ LEAVE_COLUMNS = {"Informed": ("informed_leave", "Informed Leave"), "Adhoc": ("ad
 
 
 def day_code(r: dict) -> str:
+    if r.get("in_progress"):
+        return "IN"
     return LEAVE_CODES.get(r.get("leave_type"), CODES["Leave"]) if r["status"] == "Leave" else CODES[r["status"]]
 LEAVE_TYPES = ["Informed", "Adhoc"]   # Informed (yellow) and Adhoc (red) follow the leave policy
 WFH_PAY = 0.8   # a work-from-home day is paid at 0.8 of a day (leave policy)
@@ -168,6 +170,10 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
         if half:            # worked the other half: a half day, without late / early marks
             status, out["late_min"], out["early_min"] = "Half Day", 0, 0
             half_leave()
+        if d == today and n == 1 and not single_out:
+            # still at work: shown (and late is flagged) but not counted in any total until they punch out
+            out["in_progress"] = True
+            out["note"] = out["note"].replace("missing out punch", "at work, no punch-out yet")
         out["status"] = status
         return out
     if d > today or d < (emp.get("joined") or "") or (emp.get("left_on") and d > emp["left_on"]):
@@ -264,6 +270,7 @@ def leave_days(res: list[dict], kind: str) -> float:
 
 
 def _summary(e: dict, sh: dict | None, res: list[dict]) -> dict:
+    res = [r for r in res if not r.get("in_progress")]   # today counts once the person has punched out
     cnt = lambda st: sum(r["status"] == st for r in res)
     paid_leave = sum(r["status"] == "Leave" and r["note"] != "Unpaid" for r in res)
     full = cnt("Present") + cnt("Late")
@@ -398,6 +405,8 @@ PERF_MAX_DAYS = 31
 
 def perf_code(r: dict) -> str:
     """Status code in the style of the old machine software's Monthly Performance Report."""
+    if r.get("in_progress"):
+        return "IN"
     st, lv = r["status"], LEAVE_CODES.get(r.get("leave_type", ""), "LV")
     if st == "Half Day":
         return "P/2-" + lv if "half_leave" in r else "P/2"

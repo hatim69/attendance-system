@@ -268,7 +268,7 @@ def performance_workbook(people: list[dict], start: str, end: str, company: str 
             put(ws, r, 2, text, 10, f(7), left, False)
             r += 1
         put(ws, r, 1, "Codes: P present, P-LT late, P/2 half day, POW worked on a weekly off, A absent, WO weekly off, "
-                      "HL holiday, IL Informed leave, AL Adhoc leave", ncols, f(7), left, False)
+                      "HL holiday, IL Informed leave, AL Adhoc leave, IN at work today (counted after the punch-out)", ncols, f(7), left, False)
         ps = ws.page_setup
         ps.orientation, ps.paperSize, ps.fitToWidth, ps.fitToHeight = "landscape", ws.PAPERSIZE_A4, 1, 0
         ws.sheet_properties.pageSetUpPr.fitToPage = True

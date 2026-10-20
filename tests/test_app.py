@@ -951,6 +951,7 @@ def test_documents_lists_loans_roster_breaks_wfh_and_payslip_rules(tmp_path, mon
         assert c.get("/api/app/wfh", headers=h3).json()[0]["status"] == "approved"
         assert [s["name"] for s in c.get("/api/app/me", headers=tok("H2")).json()["sites"]] == ["Office"]   # others' homes are private
         assert d("2026-10-10")["note"].startswith("WFH")
+        c.post("/api/punches", json={"device_user_id": "H3", "ts": "2026-10-10 18:00:00"})   # today counts after the punch-out
         mon = {r["device_user_id"]: r for r in c.get("/api/reports/monthly?month=2026-10").json()}
         assert mon["H3"]["wfh_days"] == 1 and round(mon["H3"]["paid_days"] % 1, 2) == 0.8     # a WFH day is paid at 0.8
         assert mon["H2"]["wfh_days"] == 0 and mon["H2"]["paid_days"] % 1 == 0                 # field work is a full day
@@ -1656,3 +1657,32 @@ def test_new_joiner_has_no_leave_today_but_year_end_credit(monkeypatch):
         assert (y["informed_credit"], y["adhoc_credit"]) == (7, 1)                               # Dec 2, Jan 1+1, Feb 2, Mar 2
         b = c.get("/api/leave-balance?employee=NJ1").json()
         assert (b["informed"]["left"], b["adhoc"]["left"], b["eligible_from"]) == (0, 0, "2026-12-19")
+
+
+def test_today_counts_only_after_the_punch_out(monkeypatch):
+    import io
+    from openpyxl import load_workbook
+    _freeze_today(monkeypatch, 2026, 10, 20)
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "Today 10-19", "start": "10:00", "end": "19:00", "weekly_off": "SUN"})
+        sid = [x for x in c.get("/api/shifts").json() if x["name"] == "Today 10-19"][0]["id"]
+        c.post("/api/employees", json={"device_user_id": "TD1", "name": "Today Person", "department": "TodayDept",
+                                       "shift_id": sid, "joined": "2026-01-01"})
+        for ts in ("2026-10-19 10:00:00", "2026-10-19 19:00:00", "2026-10-20 10:11:00"):
+            c.post("/api/punches", json={"device_user_id": "TD1", "ts": ts})
+        c.post("/api/punches", json={"device_user_id": "TD1", "ts": "2026-10-10 10:32:00"})   # a past day without punch-out
+        month = lambda: {r["device_user_id"]: r for r in c.get("/api/reports/monthly?month=2026-10").json()}["TD1"]
+        before = month()
+        today = {r["device_user_id"]: r for r in c.get("/api/reports/daily?day=2026-10-20").json()}["TD1"]
+        assert today["status"] == "Late" and today["in_progress"] and "no punch-out yet" in today["note"]   # still on the dashboard
+        assert {r["device_user_id"]: r for r in c.get("/api/reports/daily?day=2026-10-10").json()}["TD1"]["status"] == "Late"
+        grid = {r["device_user_id"]: r for r in c.get("/api/reports/grid?month=2026-10").json()["rows"]}["TD1"]
+        assert grid["codes"][19] == "IN" and grid["totals"]["paid_days"] == before["paid_days"]
+        wb = load_workbook(io.BytesIO(c.get("/api/reports/performance.xlsx", params={"start": "2026-10-20", "end": "2026-10-20",
+                                                                                 "department": "TodayDept"}).content))
+        ws = wb.active
+        status = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value == "Status")
+        assert ws.cell(status, 2).value == "IN"
+        c.post("/api/punches", json={"device_user_id": "TD1", "ts": "2026-10-20 19:05:00"})
+        after = month()
+        assert after["paid_days"] == before["paid_days"] + 1 and after["days_present"] == before["days_present"] + 1

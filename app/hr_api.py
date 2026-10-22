@@ -185,6 +185,14 @@ class LoanIn(BaseModel):
     note: str = ""
 
 
+class LoanEditIn(BaseModel):
+    kind: str = "Loan"
+    amount: float
+    emi: float                # monthly instalment
+    start_month: str
+    note: str = ""
+
+
 class RepayIn(BaseModel):
     month: str
     amount: float
@@ -224,6 +232,28 @@ def _loan(loan_id: int) -> dict:
         raise HTTPException(404, "No such loan")
     access.assert_in_scope(row["device_user_id"])
     return dict(row)
+
+
+@router.post("/loans/{loan_id}/edit")
+async def edit_loan(loan_id: int, body: LoanEditIn, u: dict = Depends(access.need("hr", "payroll_edit"))):
+    """Correct a loan: type, amount, monthly instalment, first deduction month, note. Repayments already made stay;
+    the amount cannot go below what has been repaid."""
+    loan = loans.summary(_loan(loan_id))
+    if body.kind not in ("Loan", "Advance"):
+        raise HTTPException(400, "Type must be Loan or Advance")
+    if not (0 < body.amount <= 10_000_000):
+        raise HTTPException(400, "Give the amount")
+    if body.amount + 0.001 < loan["repaid"]:
+        raise HTTPException(400, f"{loan['repaid']:,.0f} has already been repaid: the amount cannot be less than that")
+    if not (0 < body.emi <= body.amount):
+        raise HTTPException(400, "The monthly instalment must be more than 0 and not more than the amount")
+    if not MONTH_RE.fullmatch(body.start_month):
+        raise HTTPException(400, "First deduction month must look like 2026-11")
+    c = db.conn()
+    c.execute("UPDATE loans SET kind=?, amount=?, emi=?, start_month=?, note=? WHERE id=?",
+              (body.kind, round(body.amount, 2), round(body.emi, 2), body.start_month, body.note.strip()[:120], loan_id))
+    c.commit()
+    return {"ok": True}
 
 
 @router.post("/loans/{loan_id}/repay")

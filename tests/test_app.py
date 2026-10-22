@@ -974,6 +974,14 @@ def test_documents_lists_loans_roster_breaks_wfh_and_payslip_rules(tmp_path, mon
         assert (L["repaid"], L["outstanding"], L["status"]) == (15000, 35000, "Active")
         led = c.get("/api/loans/ledger/H1").json()
         assert [e["balance"] for e in led] == [50000, 40000, 35000]
+        # edit: a bigger loan with a smaller EMI from November; never below what is already repaid
+        edit = lambda **k: c.post(f"/api/loans/{lid}/edit", json={"kind": "Loan", "amount": 60000, "emi": 5000, "start_month": "2026-09", "note": "bike", **k})
+        assert edit(amount=10000).status_code == 400 and edit(emi=0).status_code == 400 and edit(start_month="2026/11").status_code == 400
+        assert edit().status_code == 200
+        L = c.get("/api/loans?employee=H1").json()[0]
+        assert (L["amount"], L["emi"], L["outstanding"], L["months_left"]) == (60000, 5000, 45000, 9)
+        assert [x for x in c.get("/api/reports/payroll?month=2026-10").json() if x["device_user_id"] == "H1"][0]["loan_deduction"] == 5000
+        assert edit(amount=50000, emi=10000).status_code == 200                            # back as it was
         assert c.delete(f"/api/loans/{lid}").status_code == 400 and c.post(f"/api/loans/{lid}/close").status_code == 200
         assert c.post("/api/payroll/2026-09/unpublish").status_code == 200
         assert c.get("/api/loans?employee=H1").json()[0]["repaid"] == 5000          # unpublishing removes the salary deduction

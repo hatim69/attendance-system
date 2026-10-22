@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the page opens instantly (API calls always hit the network),
 // and shows check-in / check-out reminders sent by the server.
-const CACHE = "att-shell-v5";
+const CACHE = "att-shell-v6";
 const SHELL = ["/m/", "/m/manifest.webmanifest", "/m/icon-192.png", "/m/icon-512.png"];
 self.addEventListener("install", e => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); });
 self.addEventListener("activate", e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())));

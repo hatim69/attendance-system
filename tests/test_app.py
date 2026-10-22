@@ -1727,3 +1727,13 @@ def test_roster_whole_month_for_one_person():
         r = c.post("/api/roster/range", json={"device_user_id": "RM1", "start": "2026-11-01", "end": "2026-11-30", "value": ""})
         assert r.json()["days"] == 30 and cells() == {}       # Normal clears every day
         assert c.post("/api/roster/range", json={"device_user_id": "RM1", "start": "2026-11-01", "end": "2027-03-01", "value": "off"}).status_code == 400
+        # Excel: normal shift, changed days highlighted, weekly offs WO
+        import io
+        from openpyxl import load_workbook
+        c.post("/api/roster", json={"device_user_id": "RM1", "date": "2026-11-03", "value": "off"})
+        r = c.get("/api/roster.xlsx", params={"start": "2026-11-01", "days": 30, "department": "HR"})
+        assert r.status_code == 200
+        ws = load_workbook(io.BytesIO(r.content)).active
+        row = next(x for x in ws.iter_rows(min_row=4, values_only=True) if x[1] == "RM1")
+        assert row[3] == "Roster 9:30-2:30" and row[4] == "WO" and row[5] == "Roster 9:30-2:30" and row[6] == "Off"
+        assert len(row) == 4 + 30 and ws.cell(3, 5).value == "Sun 01"

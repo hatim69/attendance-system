@@ -6,7 +6,7 @@ import uuid
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from . import access, config, db, loans
@@ -339,6 +339,74 @@ def get_roster(start: str, days: int = 7):
     for e in emps:
         e["cells"] = cells.get(e["device_user_id"], {})
     return {"dates": dates, "rows": emps}
+
+
+@router.get("/roster.xlsx", dependencies=[Depends(access.need("manager"))])
+def roster_xlsx(start: str, days: int = 7, department: str = ""):
+    """The roster as a sheet: one row per person, one column per day, the shift they work that day. Days changed in
+    the roster are highlighted; weekly offs show WO."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from .xlsx import XLSX_TYPE, safe
+    g = get_roster(start, days)
+    c = db.conn()
+    shifts = {str(r["id"]): dict(r) for r in c.execute("SELECT * FROM shifts")}
+    normal = {r["device_user_id"]: r["shift_id"] for r in c.execute("SELECT device_user_id, shift_id FROM employees")}
+    rows = [r for r in g["rows"] if not department or r["department"] == department]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Roster"
+    thin = Side(style="thin", color="CBD5E1")
+    box, mid = Border(left=thin, right=thin, top=thin, bottom=thin), Alignment(horizontal="center", vertical="center", wrap_text=True)
+    changed, off, wo = (PatternFill("solid", fgColor=x) for x in ("E0E7FF", "F1F5F9", "F8FAFC"))
+    d0, d1 = date.fromisoformat(g["dates"][0]), date.fromisoformat(g["dates"][-1])
+    ws.append([f"Shift roster {d0:%d %b %Y} to {d1:%d %b %Y}" + (f" · {department}" if department else "")])
+    ws["A1"].font = Font(bold=True, size=12)
+    ws.append([])
+    ws.append(["Employee", "ID", "Department", "Normal shift"] + [date.fromisoformat(d).strftime("%a %d") for d in g["dates"]])
+    for cell in ws[3]:
+        cell.font, cell.alignment, cell.border = Font(bold=True), mid, box
+    name = lambda ids: " + ".join(shifts[i]["name"] for i in ids if i in shifts)
+    for r in rows:
+        sh = shifts.get(str(normal.get(r["device_user_id"]) or ""))
+        offs = {o.strip().upper() for o in ((sh["weekly_off"] if sh else config.WEEKLY_OFF) or "").split(",") if o.strip()}
+        line = [safe(r["name"]), safe(r["device_user_id"]), safe(r["department"] or ""), safe(sh["name"] if sh else "Flexible")]
+        kinds = []
+        for d in g["dates"]:
+            v = r["cells"].get(d, "")
+            if v == "off":
+                line.append("Off"); kinds.append(off)
+            elif v:
+                line.append(name(v.split(","))); kinds.append(changed)
+            elif ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")[date.fromisoformat(d).weekday()] in offs:
+                line.append("WO"); kinds.append(wo)
+            else:
+                line.append(sh["name"] if sh else "Flexible"); kinds.append(None)
+        ws.append(line)
+        for i, cell in enumerate(ws[ws.max_row]):
+            cell.border = box
+            if i >= 4:
+                cell.alignment = mid
+                if kinds[i - 4]:
+                    cell.fill = kinds[i - 4]
+                if kinds[i - 4] is changed:
+                    cell.font = Font(bold=True, color="3730A3")
+    ws.append([])
+    ws.append(["Highlighted = changed in the roster · Off = day off given in the roster · WO = weekly off"])
+    for col, w in zip("ABCD", (24, 10, 16, 18)):
+        ws.column_dimensions[col].width = w
+    for i in range(len(g["dates"])):
+        ws.column_dimensions[get_column_letter(5 + i)].width = 14
+    ws.freeze_panes = "E4"
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    out = io.BytesIO()
+    wb.save(out)
+    return Response(out.getvalue(), media_type=XLSX_TYPE,
+                    headers={"Content-Disposition": f"attachment; filename=roster-{d0}-to-{d1}.xlsx"})
 
 
 MAX_SHIFTS_PER_DAY = 4

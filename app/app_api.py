@@ -142,6 +142,36 @@ def my_attendance(month: str = "", emp: dict = Depends(current_employee)):
              "status": r["status"], "code": r["code"], "late_min": r["late_min"], "note": r["note"]} for r in rows]
 
 
+@router.get("/notifications")
+def my_notifications(emp: dict = Depends(current_employee)):
+    """What the phone app should show now: check-in / check-out reminders, and HR's decisions on my leave and
+    work-from-home requests from the last 3 days. Each item has a key; the app shows a key only once."""
+    now = now_local()
+    out = push.for_employee(emp["device_user_id"], now)
+    since = (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
+    c = db.conn()
+    seen = set()
+    for r in c.execute("SELECT id, group_id, start_date, end_date, type, status FROM leaves WHERE device_user_id=? AND requested_by=? "
+                       "AND status IN ('approved','rejected') AND decided_at>=? ORDER BY id", (emp["device_user_id"], emp["device_user_id"], since)):
+        g = r["group_id"] or r["id"]
+        if g in seen:
+            continue
+        seen.add(g)
+        days = _span(r["start_date"], r["end_date"])
+        out.append({"key": f"leave-{g}-{r['status']}", "title": f"Leave {r['status']}",
+                    "body": f"Your leave for {days} was {r['status']} by HR."})
+    for r in c.execute("SELECT id, start_date, end_date, status FROM wfh_requests WHERE device_user_id=? AND status IN ('approved','rejected') "
+                       "AND decided_at>=?", (emp["device_user_id"], since)):
+        out.append({"key": f"wfh-{r['id']}-{r['status']}", "title": f"Work from home {r['status']}",
+                    "body": f"Your work-from-home request for {_span(r['start_date'], r['end_date'])} was {r['status']}."})
+    return out
+
+
+def _span(a: str, b: str) -> str:
+    fa = date.fromisoformat(a).strftime("%d %b")
+    return fa if a == b else f"{fa} to {date.fromisoformat(b).strftime('%d %b')}"
+
+
 @router.get("/payslips")
 def my_payslips(emp: dict = Depends(current_employee)):
     """Months HR has published that include this employee's pay (newest first)."""

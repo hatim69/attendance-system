@@ -142,7 +142,7 @@ fun App(api: Api) {
         AppState(api, snackbar, scope,
             go = { s -> if (s in TABS) { stack.clear(); stack.add(s) } else stack.add(s) },
             back = { if (stack.size > 1) stack.removeAt(stack.size - 1) },
-            logout = { api.logout(); stack.clear(); stack.add(Screen.Home); loggedIn = false })
+            logout = { Reminders.stop(api.context); api.logout(); stack.clear(); stack.add(Screen.Home); loggedIn = false })
     }
     BackHandler(enabled = stack.size > 1) { state.back() }
     Scaffold(
@@ -253,6 +253,11 @@ fun HomeScreen(s: AppState) {
         }
     }
     LaunchedEffect(Unit) { while (true) { now = Date(); delay(1000) } }
+    val notifyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { Reminders.start(context) }
+    LaunchedEffect(Unit) {   // reminders: ask once for permission to show notifications (Android 13+), then start checking
+        if (!Reminders.allowed(context) && android.os.Build.VERSION.SDK_INT >= 33) notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        else Reminders.start(context)
+    }
     val scope = rememberCoroutineScope()
     val photo = selfieFile(context)
 
@@ -412,6 +417,7 @@ fun SettingsScreen(s: AppState) {
                 }
                 Spacer(Modifier.height(12.dp))
                 HorizontalDivider(color = Line)
+                KeyValue("Reminders", if (Reminders.allowed(LocalContext.current)) "On" else "Off: allow notifications for this app in phone Settings")
                 KeyValue("Company", "Madarwala Tours and Travels")
                 KeyValue("App version", BuildConfig.VERSION_NAME)
             }

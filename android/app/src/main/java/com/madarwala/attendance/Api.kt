@@ -14,7 +14,7 @@ import java.net.URLEncoder
 class ApiError(val code: Int, message: String) : Exception(message)
 
 /** The attendance server's employee API (/api/app). Every call runs off the main thread. */
-class Api(context: Context) {
+class Api(val context: Context) {
     private val prefs = context.getSharedPreferences("session", Context.MODE_PRIVATE)
     private val base = BuildConfig.SERVER
 

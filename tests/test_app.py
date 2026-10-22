@@ -1737,3 +1737,30 @@ def test_roster_whole_month_for_one_person():
         row = next(x for x in ws.iter_rows(min_row=4, values_only=True) if x[1] == "RM1")
         assert row[3] == "Roster 9:30-2:30" and row[4] == "WO" and row[5] == "Roster 9:30-2:30" and row[6] == "Off"
         assert len(row) == 4 + 30 and ws.cell(3, 5).value == "Sun 01"
+
+
+def test_phone_app_notifications_feed(monkeypatch):
+    from datetime import datetime as DT
+    from app import push
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "Notify 10-19", "start": "10:00", "end": "19:00", "weekly_off": "SUN"})
+        sid = [x for x in c.get("/api/shifts").json() if x["name"] == "Notify 10-19"][0]["id"]
+        c.post("/api/employees", json={"device_user_id": "NT1", "name": "Notify Me", "department": "Ops", "shift_id": sid, "joined": "2024-01-01"})
+        c.post("/api/employees/NT1/pin", json={"pin": "1357"})
+        tok = {"Authorization": "Bearer " + c.post("/api/app/login", json={"employee_id": "NT1", "pin": "1357"}).json()["token"]}
+        at = lambda h, m: monkeypatch.setattr("app.app_api.now_local", lambda: DT(2026, 10, 21, h, m))
+        keys = lambda: [n["key"] for n in c.get("/api/app/notifications", headers=tok).json()]
+        at(10, 30); assert keys() == []                                   # within the first hour: no reminder yet
+        at(11, 5); assert keys() == ["in-2026-10-21"]
+        c.post("/api/punches", json={"device_user_id": "NT1", "ts": "2026-10-21 11:06:00"})
+        at(18, 50); assert keys() == ["out-2026-10-21"]
+        at(19, 20); assert keys() == ["out-2026-10-21"]                 # still shown a little after the end
+        c.post("/api/punches", json={"device_user_id": "NT1", "ts": "2026-10-21 19:21:00"})
+        at(19, 25); assert keys() == []
+        at(11, 5); monkeypatch.setattr("app.app_api.now_local", lambda: DT(2026, 10, 25, 11, 5)); assert keys() == []   # Sunday
+        # HR's decision on a WFH request shows up
+        monkeypatch.setattr("app.app_api.now_local", lambda: DT(2026, 10, 22, 9, 0))
+        wid = c.post("/api/app/wfh", json={"start_date": "2026-10-23"}, headers=tok).json()["id"]
+        c.post(f"/api/wfh/{wid}/approve")
+        n = c.get("/api/app/notifications", headers=tok).json()
+        assert any(x["key"] == f"wfh-{wid}-approved" and "23 Oct" in x["body"] for x in n)

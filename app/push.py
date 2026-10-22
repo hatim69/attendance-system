@@ -105,6 +105,33 @@ def due(now) -> list[dict]:
     return out
 
 
+def for_employee(uid: str, now, out_grace: int = 30) -> list[dict]:
+    """The reminders that apply to one person right now (the native app asks for them; it shows each once a day).
+    The check-out reminder stays on until out_grace minutes after the shift ends, as the phone checks every ~15 min."""
+    day, mins = now.date().isoformat(), now.hour * 60 + now.minute
+    shifts, emps, holidays, leaves, changes = reports._load(scoped=False)
+    e = next((x for x in emps if x["device_user_id"] == uid and x["active"]), None)
+    if not e:
+        return []
+    sh = reports.shift_on(e, day, shifts, changes)
+    if not sh or day in holidays or reports.WEEKDAYS[now.weekday()] in [o.strip().upper() for o in (sh["weekly_off"] or "").split(",")]:
+        return []
+    leave = next((l for l in leaves if l["device_user_id"] == uid and l["start_date"] <= day <= l["end_date"]), None)
+    if leave and not leave.get("half"):
+        return []
+    start, end = reports._hm(sh["start"]), reports._hm(sh["end"])
+    n = db.conn().execute("SELECT COUNT(*) FROM punches WHERE device_user_id=? AND date(ts)=? AND COALESCE(flag,'')!='rejected'",
+                          (uid, day)).fetchone()[0]
+    out = []
+    if n == 0 and not leave and start + IN_AFTER_MIN <= mins < end:
+        out.append({"key": f"in-{day}", "title": "You haven't checked in",
+                    "body": f"Your shift started at {sh['start']}. Open the app to check in."})
+    if n % 2 == 1 and end - OUT_BEFORE_MIN <= mins < end + out_grace:
+        out.append({"key": f"out-{day}", "title": "Don't forget to check out",
+                    "body": f"Your shift ends at {sh['end']}. Check out before you leave."})
+    return out
+
+
 def run_once(now=None) -> int:
     now = now or now_local()
     c = db.conn()

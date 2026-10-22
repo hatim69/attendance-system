@@ -1712,3 +1712,18 @@ def test_phone_app_month_attendance(monkeypatch):
         assert rows["2026-10-04"]["code"] == "WO" and rows["2026-10-20"]["code"] == "IN" and rows["2026-10-25"]["code"] == ""
         assert c.get("/api/app/attendance?month=2026-13", headers=tok).status_code == 400
         assert c.get("/api/app/attendance").status_code == 401
+
+
+def test_roster_whole_month_for_one_person():
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "Roster 9:30-2:30", "start": "09:30", "end": "14:30", "weekly_off": "SUN"})
+        sid = [x for x in c.get("/api/shifts").json() if x["name"] == "Roster 9:30-2:30"][0]["id"]
+        c.post("/api/employees", json={"device_user_id": "RM1", "name": "Roster Month", "department": "HR", "shift_id": sid})
+        cells = lambda: [r for r in c.get("/api/roster?start=2026-11-01&days=30").json()["rows"] if r["device_user_id"] == "RM1"][0]["cells"]
+        r = c.post("/api/roster/range", json={"device_user_id": "RM1", "start": "2026-11-01", "end": "2026-11-30", "value": "off"})
+        assert r.json()["days"] == 25                       # 30 days minus 5 Sundays (weekly offs untouched)
+        got = cells()
+        assert "2026-11-01" not in got and got["2026-11-02"] == "off" and len(got) == 25
+        r = c.post("/api/roster/range", json={"device_user_id": "RM1", "start": "2026-11-01", "end": "2026-11-30", "value": ""})
+        assert r.json()["days"] == 30 and cells() == {}       # Normal clears every day
+        assert c.post("/api/roster/range", json={"device_user_id": "RM1", "start": "2026-11-01", "end": "2027-03-01", "value": "off"}).status_code == 400

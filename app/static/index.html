@@ -113,6 +113,8 @@ img.th{width:40px;height:40px;object-fit:cover;border-radius:8px;cursor:zoom-in;
 .chip b{font-variant-numeric:tabular-nums}.chip.on{border-color:var(--brand);background:var(--brand-l);color:var(--brand-d)}
 /* roster */
 table.roster select{height:30px;padding:0 4px;font-size:12px;width:100%;min-width:92px;border-color:#e2e8f0;background:#fff}
+table.roster select.rall{margin-top:6px;min-width:140px;border-style:dashed;color:var(--brand-d)}table.roster.month select.rc{min-width:78px;font-size:11px}
+table.roster.month td:first-child,table.roster.month th:first-child{position:sticky;left:0;background:#fff;z-index:1}
 table.roster select.set{background:var(--brand-l);border-color:#c7d2fe;color:var(--brand-d);font-weight:600}table.roster select.off{background:#f1f5f9;color:#64748b}
 /* attendance sheet */
 table.sheet td,table.sheet th{padding:6px 4px;text-align:center;font-size:11.5px;min-width:30px}
@@ -279,7 +281,7 @@ const formDlg=(id,title,body,saveId,saveLabel='Save',sub='')=>`<dialog id="${id}
 
 let AUDITLOAD=()=>{}, DASH={day:'',dept:''}, ADJCACHE=[], ADJRELOAD=()=>{};
 function auditRange(n){const d=new Date();d.setDate(d.getDate()-n);$('#af').value=n?d.toLocaleDateString('en-CA'):'';$('#at').value=n?today():'';AUDITLOAD()}
-let devs=[], emps=[], shifts=[], listCache=[], MS={departments:[],designations:[]}, DOCT=[], PENDING=[], DRAWDOCS=()=>{}, EMPFORM=()=>{}, RWEEK='';
+let devs=[], emps=[], shifts=[], listCache=[], MS={departments:[],designations:[]}, DOCT=[], PENDING=[], DRAWDOCS=()=>{}, EMPFORM=()=>{}, RWEEK='', RMODE='week', RMONTH='';
 const devName=id=>{const d=devs.find(x=>x.dev_id==id);return d?(d.name||d.dev_id):id};
 const devSel=()=>`<select id="dv"><option value="">All machines &amp; app</option>${devs.map(d=>`<option value="${esc(d.dev_id)}">${esc(d.name||d.dev_id)}${d.location?' · '+esc(d.location):''}</option>`).join('')}<option value="app">Phone app</option></select>`;
 const dq=()=>{const v=$('#dv')?$('#dv').value:'';return v?'&device='+encodeURIComponent(v):''};
@@ -667,17 +669,27 @@ async function render(){
 
  } else if(tab=='roster'){
   const mon=d=>{const x=new Date(d+'T00:00');x.setDate(x.getDate()-((x.getDay()+6)%7));return x.toLocaleDateString('en-CA')};
-  RWEEK=RWEEK||mon(today());
-  const g=await j('/api/roster?start='+RWEEK); const depts=[...new Set(g.rows.map(r=>r.department).filter(Boolean))].sort();
+  RWEEK=RWEEK||mon(today()); RMONTH=RMONTH||today().slice(0,7);
+  const mdays=m0=>new Date(+m0.slice(0,4),+m0.slice(5,7),0).getDate();
+  const g=await j(RMODE=='month'?`/api/roster?start=${RMONTH}-01&days=${mdays(RMONTH)}`:'/api/roster?start='+RWEEK); const depts=[...new Set(g.rows.map(r=>r.department).filter(Boolean))].sort();
   const shName=id=>(shifts.find(s=>String(s.id)==id)||{name:'?'}).name;
   const shOpt=v=>`<option value="" ${v==''?'selected':''}>Normal</option><option value="off" ${v=='off'?'selected':''}>Off</option>${v.includes(',')?`<option value="${esc(v)}" selected>${esc(v.split(',').map(shName).join(' + '))}</option>`:''}${shifts.map(s=>`<option value="${s.id}" ${String(s.id)==v?'selected':''}>${esc(s.name)}</option>`).join('')}<option value="__multi">Several shifts…</option>`;
   const shift0=r=>r.shift||'Flexible';
-  m.innerHTML=card('',`<div class="tb"><button id="rprev">‹ Previous week</button>${fld('Week starting',`<input type="date" id="rw" value="${RWEEK}">`)}<button id="rnext">Next week ›</button>${fld('Department',`<select id="rdp"><option value="">All</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select>`)}<div class="sp"></div><button id="rcopy">${I('swap')}Copy previous week here</button></div>
-   <div class="cb" style="padding:10px 18px"><p class="hint">Pick a shift for a day to override the person's normal shift (<b>Normal</b> = their usual shift and weekly off). <b>Off</b> makes it a day off. <b>Several shifts…</b> gives one day two or more shifts (for example 10 AM - 2 PM and 7 PM - 9 PM): it counts as one working day, late is checked against the first shift, early leaving and overtime against the last, the time between shifts is not counted as worked, and under half the scheduled hours is a half day. Changes save immediately.</p></div>
-   ${g.rows.length?`<div class="tw"><table class="sheet roster"><thead><tr><th>Employee</th>${g.dates.map(d=>`<th>${esc(new Date(d+'T00:00').toLocaleDateString(undefined,{weekday:'short',day:'numeric'}))}</th>`).join('')}</tr></thead><tbody>${g.rows.map(r=>`<tr data-d="${esc(r.department)}"><td><b>${esc(r.name)}</b><div class="small muted">${esc(shift0(r))}</div></td>${g.dates.map(d=>`<td><select class="rc ${r.cells[d]=='off'?'off':r.cells[d]?'set':''}" data-u="${esc(r.device_user_id)}" data-day="${d}" data-v="${esc(r.cells[d]||'')}" title="${esc((r.cells[d]||'').split(',').filter(x=>x&&x!='off').map(shName).join(' + '))}">${shOpt(r.cells[d]||'')}</select></td>`).join('')}</tr>`).join('')}</tbody></table></div>`:emptyBox('No employees yet')}`)+
+  const allOpt=`<option value="">Set all days…</option><option value="normal">Normal (clear)</option><option value="off">Off</option>${shifts.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}`;
+  m.innerHTML=card('',`<div class="tb">${fld('View',`<select id="rmode"><option value="week" ${RMODE=='week'?'selected':''}>Week</option><option value="month" ${RMODE=='month'?'selected':''}>Month</option></select>`)}${RMODE=='month'?`<button id="rprev">‹ Previous month</button>${fld('Month',`<input type="month" id="rw" value="${RMONTH}">`)}<button id="rnext">Next month ›</button>`:`<button id="rprev">‹ Previous week</button>${fld('Week starting',`<input type="date" id="rw" value="${RWEEK}">`)}<button id="rnext">Next week ›</button>`}${fld('Department',`<select id="rdp"><option value="">All</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select>`)}<div class="sp"></div>${RMODE=='week'?`<button id="rcopy">${I('swap')}Copy previous week here</button>`:''}</div>
+   <div class="cb" style="padding:10px 18px"><p class="hint">Pick a shift for a day to override the person's normal shift (<b>Normal</b> = their usual shift and weekly off). <b>Off</b> makes it a day off. <b>Several shifts…</b> gives one day two or more shifts (for example 10 AM - 2 PM and 7 PM - 9 PM): it counts as one working day, late is checked against the first shift, early leaving and overtime against the last, the time between shifts is not counted as worked, and under half the scheduled hours is a half day. Changes save immediately. <b>Set all days…</b> under a name gives that person the same shift on every day shown (switch View to Month for the whole month); their weekly off days are left as they are.</p></div>
+   ${g.rows.length?`<div class="tw"><table class="sheet roster ${RMODE}"><thead><tr><th>Employee</th>${g.dates.map(d=>`<th>${esc(new Date(d+'T00:00').toLocaleDateString(undefined,{weekday:'short',day:'numeric'}))}</th>`).join('')}</tr></thead><tbody>${g.rows.map(r=>`<tr data-d="${esc(r.department)}"><td><b>${esc(r.name)}</b><div class="small muted">${esc(shift0(r))}</div><select class="rall" data-u="${esc(r.device_user_id)}" data-n="${esc(r.name)}">${allOpt}</select></td>${g.dates.map(d=>`<td><select class="rc ${r.cells[d]=='off'?'off':r.cells[d]?'set':''}" data-u="${esc(r.device_user_id)}" data-day="${d}" data-v="${esc(r.cells[d]||'')}" title="${esc((r.cells[d]||'').split(',').filter(x=>x&&x!='off').map(shName).join(' + '))}">${shOpt(r.cells[d]||'')}</select></td>`).join('')}</tr>`).join('')}</tbody></table></div>`:emptyBox('No employees yet')}`)+
    formDlg('msDlg','Several shifts on one day',`<p class="hint" id="mswho" style="margin-top:0"></p><div id="mslist" class="perm" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;padding:12px"></div>`,'msok','Save');
   const shiftW=n=>{const x=new Date(RWEEK+'T00:00');x.setDate(x.getDate()+n);RWEEK=x.toLocaleDateString('en-CA');render()};
-  $('#rprev').onclick=()=>shiftW(-7); $('#rnext').onclick=()=>shiftW(7); $('#rw').onchange=e=>{RWEEK=mon(e.target.value);render()};
+  const shiftM=n=>{const x=new Date(+RMONTH.slice(0,4),+RMONTH.slice(5,7)-1+n,1);RMONTH=x.toLocaleDateString('en-CA').slice(0,7);render()};
+  $('#rmode').onchange=e=>{RMODE=e.target.value;if(RMODE=='month')RMONTH=RWEEK.slice(0,7);else RWEEK=mon(RMONTH==today().slice(0,7)?today():RMONTH+'-01');render()};
+  if(RMODE=='month'){$('#rprev').onclick=()=>shiftM(-1);$('#rnext').onclick=()=>shiftM(1);$('#rw').onchange=e=>{if(e.target.value){RMONTH=e.target.value;render()}}}
+  else{$('#rprev').onclick=()=>shiftW(-7); $('#rnext').onclick=()=>shiftW(7); $('#rw').onchange=e=>{RWEEK=mon(e.target.value);render()}}
+  $$('.rall').forEach(sl=>sl.onchange=safe(async()=>{const v=sl.value;if(!v)return;
+   const label=v=='normal'?'back to Normal':v=='off'?'Off':shName(v),span=RMODE=='month'?'every day of '+new Date(RMONTH+'-01T00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'}):'every day of this week';
+   if(!await confirmBox(`${sl.dataset.n}: ${label}`,`Sets ${span}${v=='normal'?'':', except their weekly off days'}.`,'Apply',false)){sl.value='';return}
+   const r=await post('/api/roster/range',{device_user_id:sl.dataset.u,start:g.dates[0],end:g.dates[g.dates.length-1],value:v=='normal'?'':v});
+   toast(`${sl.dataset.n}: ${r.days} days set`);render()}));
   $('#rdp').onchange=e=>$$('table.roster tbody tr').forEach(tr=>tr.style.display=!e.target.value||tr.dataset.d==e.target.value?'':'none');
   let MS_CELL=null;
   $$('.rc').forEach(sl=>sl.onchange=safe(async()=>{
@@ -688,7 +700,7 @@ async function render(){
    await post('/api/roster',{device_user_id:sl.dataset.u,date:sl.dataset.day,value:sl.value});sl.dataset.v=sl.value;sl.className='rc '+(sl.value=='off'?'off':sl.value?'set':'');toast('Roster saved')}));
   if($('#msok'))$('#msok').onclick=safe(async()=>{const ids=$$('#mslist input:checked').map(c=>c.value);if(!ids.length)throw new Error('Tick at least one shift');
    await post('/api/roster',{device_user_id:MS_CELL.dataset.u,date:MS_CELL.dataset.day,value:ids.join(',')});$('#msDlg').close();toast(ids.length>1?ids.length+' shifts saved for the day':'Roster saved');render()});
-  $('#rcopy').onclick=safe(async()=>{const x=new Date(RWEEK+'T00:00');x.setDate(x.getDate()-7);const from=x.toLocaleDateString('en-CA');
+  if($('#rcopy'))$('#rcopy').onclick=safe(async()=>{const x=new Date(RWEEK+'T00:00');x.setDate(x.getDate()-7);const from=x.toLocaleDateString('en-CA');
    if(!await confirmBox('Copy the week of '+fmtDay(from)+'?','Its roster replaces this week’s for everyone listed.','Copy',false))return;const r=await post('/api/roster/copy',{from_start:from,to_start:RWEEK});toast(r.copied+' roster days copied');render()});
 
  } else if(tab=='loans'){

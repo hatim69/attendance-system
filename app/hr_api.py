@@ -302,6 +302,14 @@ class RosterIn(BaseModel):
     value: str = ""        # "" = back to normal, "off" = day off, otherwise a shift id, or several: "3,7"
 
 
+class RosterRangeIn(BaseModel):
+    device_user_id: str
+    start: str
+    end: str
+    value: str = ""        # as for one day: "" normal, "off", a shift id or several
+    skip_weekly_off: bool = True   # leave the person's normal weekly off days alone
+
+
 class RosterCopyIn(BaseModel):
     from_start: str        # copy the 7 days starting here ...
     to_start: str          # ... onto the 7 days starting here (for everyone you can see)
@@ -364,6 +372,27 @@ async def set_roster(body: RosterIn, u: dict = Depends(access.need("manager", "s
     _set_cell(c, uid, body.date, body.value, u["username"])
     c.commit()
     return {"ok": True}
+
+
+@router.post("/roster/range")
+async def set_roster_range(body: RosterRangeIn, u: dict = Depends(access.need("manager", "shifts"))):
+    """The same shift (or Off, or back to Normal) on every day from start to end, e.g. a whole month at once."""
+    uid = _employee(body.device_user_id)
+    a, b = _iso(body.start), _iso(body.end)
+    if b < a or (b - a).days > 92:
+        raise HTTPException(400, "Choose an end date on or after the start, at most 3 months")
+    c = db.conn()
+    row = c.execute("SELECT s.weekly_off FROM employees e LEFT JOIN shifts s ON s.id=e.shift_id WHERE e.device_user_id=?",
+                    (uid,)).fetchone()
+    offs = {o.strip().upper() for o in ((row["weekly_off"] if row and row["weekly_off"] is not None else config.WEEKLY_OFF) or "").split(",") if o.strip()}
+    n, d = 0, a
+    while d <= b:
+        if not (body.skip_weekly_off and body.value and ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")[d.weekday()] in offs):
+            _set_cell(c, uid, d.isoformat(), body.value, u["username"])
+            n += 1
+        d += timedelta(days=1)
+    c.commit()
+    return {"ok": True, "days": n}
 
 
 @router.post("/roster/copy")

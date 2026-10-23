@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Attendance · Admin</title>
+<link rel="icon" href="/m/icon-192.png">
+<style>
+:root{--bg:#f4f6fb;--panel:#fff;--line:#e5e8f0;--line2:#eef1f6;--text:#0f172a;--muted:#64748b;--soft:#94a3b8;
+ --brand:#4f46e5;--brand-d:#4338ca;--brand-l:#eef2ff;--side:#0b1220;--side2:#131c2e;
+ --ok:#16a34a;--ok-l:#dcfce7;--warn:#d97706;--warn-l:#fef3c7;--bad:#dc2626;--bad-l:#fee2e2;--vio:#7c3aed;--vio-l:#ede9fe;--org:#ea580c;--org-l:#ffedd5;--sky:#0284c7;--sky-l:#e0f2fe;
+ --r:12px;--sh:0 1px 2px rgba(15,23,42,.04),0 2px 8px rgba(15,23,42,.04)}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+a{color:var(--brand);text-decoration:none}
+svg.i{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+/* sidebar */
+#side{position:fixed;inset:0 auto 0 0;width:248px;background:var(--side);color:#cbd5e1;display:flex;flex-direction:column;z-index:30;transition:transform .2s}
+.brand{display:flex;gap:11px;align-items:center;padding:18px 18px 14px}
+.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:grid;place-items:center;color:#fff;box-shadow:0 4px 14px rgba(99,102,241,.35)}
+.logo svg.i{width:22px;height:22px}
+.brand b{color:#fff;font-size:14.5px;display:block;line-height:1.25;max-width:170px}.brand small{color:#7c8aa5;font-size:12px}
+#nav{flex:1;overflow-y:auto;padding:4px 10px 12px}
+#nav .grp{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:#56627a;font-weight:700;padding:16px 10px 6px}
+#nav a{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:8px;color:#aab6cb;cursor:pointer;font-size:13.5px;margin:1px 0;position:relative}
+#nav a:hover{background:var(--side2);color:#fff}
+#nav a.on{background:#1b2540;color:#fff}
+#nav a.on::before{content:"";position:absolute;left:-10px;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:#818cf8}
+#nav a.on svg.i{color:#a5b4fc}
+.badge{margin-left:auto;background:#f59e0b;color:#1f1300;font-size:11px;font-weight:700;border-radius:10px;padding:0 7px;line-height:18px}
+.badge:empty{display:none}
+.me{border-top:1px solid #1c2638;padding:12px 14px;display:flex;align-items:center;gap:10px}
+.me .av{width:34px;height:34px;font-size:13px}
+.me .mi{flex:1;min-width:0}.me b{color:#fff;font-size:13px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.me small{color:#7c8aa5;font-size:11.5px;text-transform:capitalize}
+.me button{background:none;border:0;color:#7c8aa5;cursor:pointer;padding:6px;border-radius:6px;display:grid}.me button:hover{background:var(--side2);color:#fff}
+/* main */
+.shell{margin-left:248px;min-height:100vh;display:flex;flex-direction:column}
+.top{position:sticky;top:0;z-index:20;background:rgba(244,246,251,.88);backdrop-filter:blur(8px);display:flex;align-items:center;gap:14px;padding:18px 28px 14px}
+.top h1{margin:0;font-size:21px;letter-spacing:-.01em}.top p{margin:2px 0 0;color:var(--muted);font-size:13px}
+.top .r{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12.5px;white-space:nowrap}
+#menuBtn{display:none;border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px;cursor:pointer}
+.live{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:3px 10px 3px 8px;font-weight:600;font-size:12px}
+.live i{width:8px;height:8px;border-radius:50%;background:var(--soft)}.live.on i{background:var(--ok);box-shadow:0 0 0 3px var(--ok-l)}.live.off i{background:var(--bad)}
+main{padding:4px 28px 40px;max-width:1400px;width:100%}
+/* building blocks */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);margin-bottom:18px;min-width:0}
+.ch{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line2);flex-wrap:wrap}
+.ch h3{margin:0;font-size:14.5px;font-weight:650}.ch .ca{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.cb{padding:16px 18px}
+.tb{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:14px 18px;border-bottom:1px solid var(--line2)}
+.tb .sp{flex:1}
+.g2{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px}
+.g2e{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.muted{color:var(--muted)}.small{font-size:12.5px}
+.hint{color:var(--muted);font-size:13px;margin:0}
+input,select,textarea{font:inherit;color:inherit;height:36px;padding:0 11px;border:1px solid #d6dbe6;border-radius:8px;background:#fff;outline:none;min-width:0}
+textarea{height:auto;padding:8px 11px}
+input[type=checkbox]{flex:none;width:16px;height:16px;accent-color:var(--brand);vertical-align:-3px;margin:0 6px 0 0}
+input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(79,70,229,.15)}
+input[readonly]{background:#f8fafc;color:var(--muted)}
+.f{display:flex;flex-direction:column;gap:5px;min-width:0}.f>span{font-size:12px;font-weight:600;color:#475569}
+.f.w{grid-column:1/-1}
+.fg{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px}.fg.one{grid-template-columns:1fr}
+.fsec{grid-column:1/-1;margin-top:8px;padding-top:14px;border-top:1px solid var(--line2);font-size:13px;font-weight:700}.fsec small{font-weight:400;color:var(--muted);margin-left:6px}
+.chk{display:inline-flex;align-items:center;font-size:13px;color:#334155;cursor:pointer;min-height:36px}
+.btn,button{font:inherit;font-weight:600;font-size:13px;height:36px;padding:0 14px;border-radius:8px;border:1px solid #d6dbe6;background:#fff;color:#1e293b;cursor:pointer;display:inline-flex;align-items:center;gap:7px;white-space:nowrap;text-decoration:none}
+.btn:hover,button:hover{background:#f8fafc;border-color:#c5ccda}
+.btn.pri,button.pri{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 1px 2px rgba(79,70,229,.3)}
+.btn.pri:hover,button.pri:hover{background:var(--brand-d)}
+.btn.danger,button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+button.sm,.btn.sm{height:28px;padding:0 10px;font-size:12px;border-radius:7px}
+button.lnk{border:0;background:none;color:var(--brand);padding:0 6px;height:auto}
+button.lnk.red{color:var(--bad)}
+button:disabled{opacity:.55;cursor:default}
+.btn svg.i,button svg.i{width:16px;height:16px}
+/* tables */
+.tw{overflow:auto;max-height:calc(100vh - 210px)}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13.2px}
+th{position:sticky;top:0;z-index:1;background:#f8fafc;color:#64748b;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--line2);white-space:nowrap;vertical-align:middle}
+tbody tr:hover td{background:#fafbff}
+tbody tr:last-child td{border-bottom:0}
+tr.tot td{font-weight:700;background:#f8fafc}
+table.inout td{min-width:46px;font-size:12px}table.inout thead tr:last-child th:first-child{position:static;min-width:46px;text-align:center;padding-left:4px;background:#f8fafc}table.inout thead tr:first-child th{border-bottom:0}table.inout thead tr:last-child th{font-size:10.5px;color:var(--muted)}tr.rI td{background:#fffbeb}tr.rA td{background:#fef2f2}tr.rW td{background:#eff6ff}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+td .acts{display:flex;gap:6px;justify-content:flex-end}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:650;padding:2px 9px;border-radius:20px;background:#f1f5f9;color:#475569;white-space:nowrap}
+.pill.ok{background:var(--ok-l);color:#166534}.pill.warn{background:var(--warn-l);color:#92400e}.pill.bad{background:var(--bad-l);color:#991b1b}
+.pill.violet{background:var(--vio-l);color:#5b21b6}.pill.orange{background:var(--org-l);color:#9a3412}.pill.sky{background:var(--sky-l);color:#075985}.pill.mute{background:#f1f5f9;color:#64748b}
+.pill.brand{background:var(--brand-l);color:var(--brand-d)}
+.pill.lvI{background:#fef3c7;color:#854d0e;box-shadow:inset 0 0 0 1px #fcd34d}.pill.lvA{background:#fee2e2;color:#991b1b;box-shadow:inset 0 0 0 1px #fca5a5}.pill.wod{background:#dbeafe;color:#1e40af}
+.lvleg{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12px;color:var(--muted)}
+.strike{text-decoration:line-through;color:var(--soft)}
+.av{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:12px;color:#fff;flex:none}
+.who{display:flex;align-items:center;gap:10px}.who b{font-weight:600}.who small{display:block;color:var(--muted);font-size:12px}
+img.th{width:40px;height:40px;object-fit:cover;border-radius:8px;cursor:zoom-in;display:block}
+.empty{text-align:center;padding:42px 20px;color:var(--soft)}.empty svg.i{width:34px;height:34px;stroke-width:1.4}.empty p{margin:8px 0 0;color:var(--muted)}
+/* dashboard */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin-bottom:18px}.kpis.five{grid-template-columns:repeat(5,minmax(0,1fr))}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;box-shadow:var(--sh);cursor:pointer;display:flex;gap:14px;align-items:flex-start;transition:transform .12s,box-shadow .12s}
+.kpi:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(15,23,42,.07)}
+.kpi .ic{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;background:var(--l);color:var(--c)}.kpi .ic svg.i{width:21px;height:21px}
+.kpi span{color:var(--muted);font-size:12.5px;font-weight:600}.kpi b{display:block;font-size:28px;line-height:1.15;letter-spacing:-.02em;margin:2px 0}
+.kpi small{color:var(--muted);font-size:12px}
+.meter{height:6px;border-radius:6px;background:#eef1f6;overflow:hidden;margin-top:8px;width:100%}.meter i{display:block;height:100%;background:var(--c);border-radius:6px}
+.hbar{display:grid;grid-template-columns:minmax(80px,140px) 1fr 36px;gap:12px;align-items:center;padding:7px 0;font-size:13px}
+.hbar>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#334155}.hbar>b{text-align:right;font-variant-numeric:tabular-nums}
+.hbar .meter{margin:0;height:9px}.hbar .meter i{background:linear-gradient(90deg,#818cf8,#6366f1)}
+.rows>div{display:flex;align-items:center;gap:12px;padding:11px 18px;border-bottom:1px solid var(--line2)}.rows>div:last-child{border-bottom:0}
+.rows .t{margin-left:auto;text-align:right;font-size:12.5px;color:var(--muted);white-space:nowrap}.rows .t b{display:block;color:var(--text);font-size:13.5px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:none;box-shadow:0 0 0 3px var(--ok-l)}.dot.off{background:#cbd5e1;box-shadow:0 0 0 3px #f1f5f9}
+.banner{display:flex;align-items:center;gap:12px;background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-radius:var(--r);padding:11px 16px;margin-bottom:18px;cursor:pointer}
+.banner svg.i{color:#d97706}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:12px 18px;border-bottom:1px solid var(--line2)}
+.chip{border:1px solid var(--line);background:#fff;border-radius:20px;padding:4px 12px;font-size:12.5px;cursor:pointer;display:inline-flex;gap:6px;align-items:center;height:auto;font-weight:500}
+.chip b{font-variant-numeric:tabular-nums}.chip.on{border-color:var(--brand);background:var(--brand-l);color:var(--brand-d)}
+/* roster */
+table.roster select{height:30px;padding:0 4px;font-size:12px;width:100%;min-width:92px;border-color:#e2e8f0;background:#fff}
+table.roster select.rall{margin-top:6px;min-width:140px;border-style:dashed;color:var(--brand-d)}table.roster.month select.rc{min-width:78px;font-size:11px}
+table.roster.month td:first-child,table.roster.month th:first-child{position:sticky;left:0;background:#fff;z-index:1}
+table.roster select.set{background:var(--brand-l);border-color:#c7d2fe;color:var(--brand-d);font-weight:600}table.roster select.off{background:#f1f5f9;color:#64748b}
+/* attendance sheet */
+table.sheet td,table.sheet th{padding:6px 4px;text-align:center;font-size:11.5px;min-width:30px}
+table.sheet td:first-child,table.sheet th:first-child{text-align:left;position:sticky;left:0;background:#fff;z-index:2;padding-left:14px;min-width:170px}
+table.sheet th:first-child{background:#f8fafc;z-index:3}
+.cd{display:inline-block;min-width:24px;padding:2px 0;border-radius:5px;font-weight:700;font-size:10.5px}
+.c-P{background:var(--ok-l);color:#166534}.c-L{background:var(--warn-l);color:#92400e}.c-HD{background:var(--org-l);color:#9a3412}.c-A{background:var(--bad-l);color:#991b1b}.c-LV{background:var(--vio-l);color:#5b21b6}.c-IL{background:#fef3c7;color:#854d0e;box-shadow:inset 0 0 0 1px #fcd34d}.c-AL{background:#fee2e2;color:#991b1b;box-shadow:inset 0 0 0 1px #fca5a5}.c-H{background:var(--sky-l);color:#075985}.c-WO{background:#f1f5f9;color:#94a3b8}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted)}.legend span{display:inline-flex;gap:5px;align-items:center}
+/* pickers */
+.pick{border:1px solid var(--line);border-radius:10px;max-height:260px;overflow:auto;padding:6px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px}
+.pick label{padding:6px 8px;border-radius:7px;cursor:pointer;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pick label:hover{background:#f8fafc}
+.pick small{color:var(--muted)}
+.perm{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:4px;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.policy{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;padding:16px 18px}
+.policy div{background:#f8fafc;border:1px solid var(--line2);border-radius:10px;padding:12px 14px}.policy b{display:block;font-size:13.5px;margin-bottom:3px}.policy span{color:var(--muted);font-size:12.5px}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;padding:18px}
+.step{border:1px dashed #cfd6e4;border-radius:11px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.step>b{display:flex;align-items:center;gap:8px}.step>b i{font-style:normal;width:22px;height:22px;border-radius:50%;background:var(--brand-l);color:var(--brand-d);display:grid;place-items:center;font-size:12px}
+.devs{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:18px;margin-bottom:18px}
+.dev{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;box-shadow:var(--sh)}
+.dev h4{margin:0;font-size:15px;display:flex;align-items:center;gap:8px}.dev dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:12px 0;font-size:12.5px}.dev dt{color:var(--muted)}.dev dd{margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f1f5f9;border-radius:6px;padding:2px 7px;font-size:12.5px}
+.note{background:var(--brand-l);border:1px solid #c7d2fe;color:#312e81;border-radius:10px;padding:10px 14px;font-size:13px}
+.note.ok{background:var(--ok-l);border-color:#bbf7d0;color:#14532d}
+.totbar{display:flex;gap:28px;flex-wrap:wrap;padding:14px 18px;border-top:1px solid var(--line2);font-size:13px;color:var(--muted)}.totbar b{color:var(--text);font-size:16px;display:block}
+/* dialog + toasts */
+dialog{border:0;border-radius:16px;padding:0;width:min(680px,94vw);box-shadow:0 24px 60px rgba(15,23,42,.25);color:var(--text)}
+dialog.sm{width:min(440px,94vw)}
+dialog::backdrop{background:rgba(15,23,42,.45);backdrop-filter:blur(2px)}
+.dh{padding:18px 22px 4px}.dh h3{margin:0;font-size:17px}.dh p{margin:4px 0 0;color:var(--muted);font-size:13px}
+.db{padding:14px 22px;max-height:68vh;overflow:auto}
+.df{display:flex;justify-content:flex-end;gap:10px;padding:14px 22px;border-top:1px solid var(--line2);background:#fafbfd;border-radius:0 0 16px 16px}
+.toasts{position:fixed;right:20px;bottom:20px;display:flex;flex-direction:column;gap:8px;z-index:100;pointer-events:none}
+.tst{background:#0f172a;color:#fff;padding:11px 16px;border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.25);font-size:13.5px;max-width:380px;border-left:4px solid #4ade80;animation:tin .18s ease-out}
+.tst.bad{border-left-color:#f87171}.tst.info{border-left-color:#818cf8}.tst.out{opacity:0;transform:translateY(6px);transition:.3s}
+@keyframes tin{from{opacity:0;transform:translateY(8px)}}
+#big{position:fixed;inset:0;background:rgba(2,6,23,.82);display:none;align-items:center;justify-content:center;z-index:90;cursor:zoom-out}#big img{max-width:92%;max-height:92%;border-radius:12px}
+.scrim{display:none}
+.skel{height:120px;border-radius:var(--r);background:linear-gradient(90deg,#eef1f6 25%,#f6f8fb 37%,#eef1f6 63%);background-size:400% 100%;animation:sk 1.2s infinite;margin-bottom:18px}
+@keyframes sk{0%{background-position:100% 50%}100%{background-position:0 50%}}
+@media(max-width:1100px){.kpis,.kpis.five{grid-template-columns:repeat(2,minmax(0,1fr))}.g2,.g2e{grid-template-columns:1fr}}
+@media(max-width:900px){
+ #side{transform:translateX(-100%)}body.nav-open #side{transform:none}
+ body.nav-open .scrim{display:block;position:fixed;inset:0;background:rgba(15,23,42,.4);z-index:25}
+ .shell{margin-left:0}#menuBtn{display:grid}.top{padding:14px 16px 10px}main{padding:4px 16px 32px}
+ .top .r .dt{display:none}.policy,.steps{grid-template-columns:1fr}
+}
+@media(max-width:520px){.kpis{gap:12px}.kpi{padding:14px}.kpi b{font-size:24px}.kpi .ic{display:none}.top h1{font-size:18px}.top p{display:none}}
+</style></head><body>
+<aside id="side">
+ <div class="brand"><div class="logo" data-i="finger"></div><div><b id="co">Attendance</b><small>Attendance &amp; payroll</small></div></div>
+ <nav id="nav">
+  <div class="grp">Overview</div>
+  <a data-t="live" data-i="grid">Dashboard</a>
+  <div class="grp">Attendance</div>
+  <a data-t="punches" data-i="finger">Punches</a>
+  <a data-t="daily" data-i="day">Daily report</a>
+  <a data-t="monthly" data-i="chart">Monthly summary</a>
+  <a data-t="sheet" data-i="sheet">Attendance sheet</a>
+  <a data-t="timecard" data-i="card">Time card</a>
+  <div class="grp">People</div>
+  <a data-t="emp" data-i="users">Employees</a>
+  <a data-t="masters" data-i="tag">Departments</a>
+  <a data-t="shifts" data-i="clock">Shifts</a>
+  <a data-t="roster" data-i="sheet">Shift roster</a>
+  <a data-t="shiftchange" data-i="swap">Shift changes</a>
+  <a data-t="leave" data-i="leave">Leave <span class="badge" id="pendBadge"></span></a>
+  <a data-t="wfh" data-i="home">Work from home <span class="badge" id="wfhBadge"></span></a>
+  <a data-t="holidays" data-i="star">Holidays</a>
+  <div class="grp">Payroll</div>
+  <a data-t="payroll" data-i="wallet">Payroll &amp; payslips</a>
+  <a data-t="loans" data-i="bank">Loans &amp; advances</a>
+  <div class="grp">Setup</div>
+  <a data-t="devices" data-i="device">Devices</a>
+  <a data-t="sites" data-i="pin">GPS sites</a>
+  <a data-t="import" data-i="upload">Import data</a>
+  <a data-t="users" data-i="shield">Users &amp; roles</a>
+  <a data-t="audit" data-i="list">Audit log</a>
+  <a data-t="backups" data-i="down">Backups</a>
+ </nav>
+ <div class="me"><div class="av" id="meAv" style="background:#6366f1">?</div><div class="mi"><b id="who"></b><small id="whoRole"></small></div>
+  <button id="pw" title="Change password" data-i="key"></button><button id="out" title="Log out" data-i="logout"></button></div>
+</aside>
+<div class="scrim" onclick="document.body.classList.remove('nav-open')"></div>
+<div class="shell">
+ <header class="top"><button id="menuBtn" data-i="menu" aria-label="Menu"></button>
+  <div><h1 id="ptitle">Dashboard</h1><p id="psub"></p></div>
+  <div class="r"><span class="dt" id="today"></span><span class="live" id="conn" title="Live updates"><i></i>Live</span></div></header>
+ <main id="m"><div class="skel"></div><div class="skel"></div></main>
+</div>
+<dialog id="dlg" class="sm"></dialog>
+<div id="big" onclick="this.style.display='none'"><img alt=""></div>
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)], m=$('#m'); let tab='live', ME={};
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const today=()=>new Date().toLocaleDateString('en-CA');
+const j=async(u,o)=>{o=o||{};o.headers=Object.assign({'X-Requested-With':'fetch'},o.headers||{});const r=await fetch(u,o); if(r.status==401){location.href='/login';throw new Error('Please log in')} const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(typeof d.detail=='string'?d.detail:'Request failed ('+r.status+')'); return d};
+const post=(u,b)=>j(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+
+/* ---------- icons ---------- */
+const P={grid:'<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+ finger:'<path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M8.3 17.5c-.2 1.3-.6 2.4-1.2 3.3"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/>',
+ day:'<rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/><path d="m9 15 2 2 4-4"/>',
+ chart:'<path d="M3 3v18h18"/><path d="M8 16v-4M12.5 16V8M17 16v-6.5"/>',
+ sheet:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>',
+ card:'<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6.3 16c.6-1.4 1.6-2 2.7-2s2.1.6 2.7 2M14 10h4M14 14h3"/>',
+ users:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c2 .7 3.2 2.6 3.6 5.2"/>',
+ clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+ swap:'<path d="M4 8h14l-3.5-3.5M20 16H6l3.5 3.5"/>',
+ leave:'<rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18M10 13.5l4 4M14 13.5l-4 4"/>',
+ star:'<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+ wallet:'<rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18"/><path d="M6 6V5a2 2 0 0 1 2-2h9"/>',
+ device:'<rect x="5" y="2.5" width="14" height="19" rx="2.5"/><path d="M9.5 6h5"/><circle cx="12" cy="12.5" r="3"/><path d="M11.5 18.5h1"/>',
+ pin:'<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+ upload:'<path d="M12 15V3.5M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>',
+ shield:'<path d="M12 3 4.5 6v6c0 4.8 3.3 7.9 7.5 9 4.2-1.1 7.5-4.2 7.5-9V6z"/><path d="m9 12 2 2 4-4"/>',
+ list:'<path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
+ inbox:'<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/>',
+ menu:'<path d="M4 6h16M4 12h16M4 18h16"/>', plus:'<path d="M12 5v14M5 12h14"/>',
+ down:'<path d="M12 3.5V15M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
+ key:'<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2M17 6l3 3M14.5 8.5l2 2"/>',
+ logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+ search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+ alert:'<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+ check:'<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>', x:'<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
+ home:'<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>',
+ tag:'<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+ bank:'<path d="M3 10h18L12 4z"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18"/>', file:'<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>',
+ phone:'<rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/>', edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m14 6 4 4"/>'};
+const I=(k,cls='')=>`<svg class="i ${cls}" viewBox="0 0 24 24">${P[k]||''}</svg>`;
+$$('[data-i]').forEach(el=>el.insertAdjacentHTML('afterbegin',I(el.dataset.i)));
+
+/* ---------- ui helpers ---------- */
+const card=(title,body,actions='')=>`<section class="card">${title||actions?`<div class="ch"><h3>${title}</h3><div class="ca">${actions}</div></div>`:''}${body}</section>`;
+const fld=(label,input,wide)=>`<label class="f${wide?' w':''}"><span>${label}</span>${input}</label>`;
+const pill=(t,k)=>`<span class="pill ${k||''}">${esc(t)}</span>`;
+const STK={'Present':'ok','Late':'warn','Half Day':'orange','Absent':'bad','Leave':'violet','Holiday':'sky','Weekly Off':'mute',approved:'ok',pending:'warn',rejected:'bad'};
+// leave colours: Informed = yellow, Adhoc = red, always with the text label
+const lvPill=(t,suffix='')=>pill(t+suffix,t=='Informed'?'lvI':t=='Adhoc'?'lvA':'mute');
+const LVLEG=`<div class="lvleg"><span>Leave:</span>${lvPill('Informed',' leave')}${lvPill('Adhoc',' leave')}</div>`;
+const stCol=(k='status',l='Status')=>[k,l,r=>!r[k]?'':r[k]=='Leave'&&r.leave_type?lvPill(r.leave_type,' leave'):pill(r[k],STK[r[k]])+(r.absent_adhoc?' '+lvPill('Adhoc',' counted'):'')+(r.leave_type?' '+lvPill(r.leave_type,' ½'):'')+(r.week_off_duty?' '+pill('Week-off duty','wod'):'')];
+const emptyBox=t=>`<div class="empty">${I('inbox')}<p>${t}</p></div>`;
+const COLORS=['#6366f1','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#14b8a6','#ec4899','#64748b','#84cc16'];
+const avatar=n=>{n=String(n||'?');let h=0;for(const c of n)h=(h*31+c.charCodeAt(0))>>>0;const ini=n.trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();return `<span class="av" style="background:${COLORS[h%COLORS.length]}">${esc(ini||'?')}</span>`};
+const person=(name,sub)=>`<div class="who">${avatar(name)}<div><b>${esc(name)}</b>${sub?`<small>${esc(sub)}</small>`:''}</div></div>`;
+// cols: [key, label, optional render fn returning trusted HTML, optional class]
+const tbl=(cols,rows,{cls='',empty='Nothing here yet',rowCls}={})=>rows.length?`<div class="tw"><table class="${cls}"><thead><tr>${cols.map(c=>`<th class="${c[3]||''}">${c[1]}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr class="${rowCls?rowCls(r):''}">${cols.map(c=>`<td class="${c[3]||''}">${c[2]?c[2](r):esc(r[c[0]])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:emptyBox(empty);
+const money=n=>(+n||0).toLocaleString('en-IN',{maximumFractionDigits:2});
+const mins=n=>n?`${Math.floor(n/60)}h ${n%60}m`:'';
+const hm=ts=>String(ts||'').slice(11,16);
+const fmtDay=d=>d?new Date(d+'T00:00').toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}):'';
+const dl=(id,label='Excel',icon='down')=>`<a href="#" class="btn" id="${id}">${I(icon)}${label}</a>`;
+function toast(t,k='ok'){const host=document.querySelector('dialog[open]')||document.body;let box=host.querySelector(':scope > .toasts');if(!box){box=document.createElement('div');box.className='toasts';host.append(box)}
+ const d=document.createElement('div');d.className='tst '+k;d.textContent=t;box.append(d);while(box.children.length>4)box.firstChild.remove();setTimeout(()=>d.classList.add('out'),3500);setTimeout(()=>d.remove(),3900)}
+const safe=fn=>async(...a)=>{try{await fn(...a)}catch(e){toast(e.message,'bad')}};
+// small modal: fields [{label,type,value,ph,attrs}] -> array of values, or null when cancelled
+function ask({title,text='',fields=[],ok='Save',danger=false}){return new Promise(res=>{const d=$('#dlg');
+ d.innerHTML=`<form method="dialog"><div class="dh"><h3>${esc(title)}</h3>${text?`<p>${esc(text)}</p>`:''}</div>${fields.length?`<div class="db"><div class="fg one">${fields.map((f,i)=>fld(esc(f.label),`<input name="f${i}" type="${f.type||'text'}" value="${esc(f.value??'')}" placeholder="${esc(f.ph||'')}" ${f.attrs||''}>`)).join('')}</div></div>`:'<div style="height:10px"></div>'}<div class="df"><button type="button" onclick="this.closest('dialog').close()">Cancel</button><button value="ok" class="${danger?'danger':'pri'}">${esc(ok)}</button></div></form>`;
+ d.returnValue='';d.onclose=()=>res(d.returnValue=='ok'?fields.map((f,i)=>d.querySelector(`[name=f${i}]`).value):null);d.showModal();const f=d.querySelector('input');if(f)f.focus()})}
+const db_id=v=>{v=String(v||'').trim();return /^\d+$/.test(v)?(v.replace(/^0+/,'')||'0'):v};
+const confirmBox=(title,text,ok='Confirm',danger=true)=>ask({title,text,ok,danger}).then(v=>v!==null);
+// a page-level form dialog: id, title, body html, save button id
+const formDlg=(id,title,body,saveId,saveLabel='Save',sub='')=>`<dialog id="${id}"><div class="dh"><h3 class="dt">${title}</h3>${sub?`<p>${sub}</p>`:''}</div><div class="db">${body}</div><div class="df"><button type="button" onclick="this.closest('dialog').close()">Cancel</button><button class="pri" id="${saveId}">${saveLabel}</button></div></dialog>`;
+
+let AUDITLOAD=()=>{}, DASH={day:'',dept:''}, ADJCACHE=[], ADJRELOAD=()=>{};
+function auditRange(n){const d=new Date();d.setDate(d.getDate()-n);$('#af').value=n?d.toLocaleDateString('en-CA'):'';$('#at').value=n?today():'';AUDITLOAD()}
+let devs=[], emps=[], shifts=[], listCache=[], MS={departments:[],designations:[]}, DOCT=[], PENDING=[], DRAWDOCS=()=>{}, EMPFORM=()=>{}, RWEEK='', RMODE='week', RMONTH='';
+const devName=id=>{const d=devs.find(x=>x.dev_id==id);return d?(d.name||d.dev_id):id};
+const devSel=()=>`<select id="dv"><option value="">All machines &amp; app</option>${devs.map(d=>`<option value="${esc(d.dev_id)}">${esc(d.name||d.dev_id)}${d.location?' · '+esc(d.location):''}</option>`).join('')}<option value="app">Phone app</option></select>`;
+const dq=()=>{const v=$('#dv')?$('#dv').value:'';return v?'&device='+encodeURIComponent(v):''};
+const empSel=(id)=>`<select id="${id}">${emps.filter(e=>e.active).map(e=>`<option value="${esc(e.device_user_id)}">${esc(e.name)} (${esc(e.device_user_id)})</option>`).join('')}</select>`;
+const shiftSel=(id)=>`<select id="${id}"><option value="">No shift (flexible)</option>${shifts.map(s=>`<option value="${s.id}">${esc(s.name)} · ${s.start}–${s.end}</option>`).join('')}</select>`;
+const via=r=>r.method=='app'?pill('Phone app','brand'):r.method=='manual'?pill('Manual','mute'):pill(devName(r.source),'sky');
+const punchCols=[
+ ['ts','Time',r=>`<b class="${r.flag=='rejected'?'strike':''}">${esc(String(r.ts).slice(11,16))}</b>`],
+ ['name','Employee',r=>person(r.name,r.device_user_id)],
+ ['method','Via',via],
+ ['site','Place',r=>r.method!='app'?'<span class="muted">—</span>':`${esc(r.site||'Outside sites')}${r.distance_m!=null?` <span class="muted">· ${Math.round(r.distance_m)} m</span>`:''} ${r.lat!=null?`<a target="_blank" rel="noopener" href="https://maps.google.com/?q=${+r.lat},${+r.lng}">map</a>`:''}`],
+ ['selfie','Selfie',r=>r.selfie?`<img class="th" src="/api/selfies/${esc(r.selfie)}" onclick="big(this.src)" alt="">`:''],
+ ['flag','Status',r=>r.flag=='outside_geofence'?pill('Outside area','warn'):r.flag=='rejected'?pill('Rejected','bad'):r.flag=='approved'?pill('Approved','ok'):pill('OK','ok')],
+ ['note','Remark',r=>`<span class="muted">${esc(r.note)}</span>`],
+ ['id','',r=>`<div class="acts">${r.flag=='rejected'?`<button class="sm" onclick="review(${r.id},'')">Restore</button>`:`<button class="sm" onclick="fixPunch(${r.id})">Fix time</button>${r.flag=='outside_geofence'?`<button class="sm" onclick="review(${r.id},'approved')">Approve</button>`:''}<button class="sm" onclick="review(${r.id},'rejected')">Reject</button>`}</div>`]];
+const punchMap={};
+function go(t){location.hash=t}
+function big(src){const b=$('#big');b.querySelector('img').src=src;b.style.display='flex'}
+const review=safe(async(id,flag)=>{await post(`/api/punches/${id}/review`,{flag});toast(flag=='rejected'?'Punch rejected':flag=='approved'?'Punch approved':'Punch restored');render()});
+const fixPunch=safe(async id=>{const r=punchMap[id];const v=await ask({title:'Fix punch time',text:`${r.name}: the old punch stays on record as rejected and a corrected one is added.`,fields:[{label:'Correct date and time',type:'datetime-local',value:r.ts.slice(0,16).replace(' ','T')},{label:'Reason (optional)',ph:'e.g. machine clock was wrong',attrs:'maxlength=45'}],ok:'Save correction'});
+ if(!v||!v[0])return;await post(`/api/punches/${id}/correct`,{ts:v[0].replace('T',' '),remark:v[1]});toast('Punch corrected');render()});
+const ADJ=[['Bonus',1],['Incentive',1],['Overtime pay',1],['Reimbursement',1],['Arrears',1],['Fine',-1],['Deduction',-1],['Other deduction',-1]];
+const PL={employees:'Employees (add / edit)',shifts:'Shifts (edit shared)',leave:'Leave (record / approve)',holidays:'Holidays',punches:'Punches (fix)',import:'Import',payroll:'Payroll (view)',payroll_edit:'Payroll (edit / publish)',sites:'GPS sites',devices:'Devices'};
+// employee personal (p) and bank (b) fields: [field, label, input, section]
+const PF=[['mother_name',"Mother's name",'','p'],['spouse_name','Spouse name','','p'],['dob','Date of birth','date','p'],['gender','Gender',['Male','Female','Other'],'p'],
+ ['blood_group','Blood group',['A+','A-','B+','B-','AB+','AB-','O+','O-'],'p'],['nationality','Nationality','placeholder="Indian"','p'],['email','Personal e-mail','type="email"','p'],['work_email','Work e-mail','type="email"','p'],
+ ['govt_uid','Aadhaar / Govt. ID','inputmode="numeric"','p'],['pan','PAN','placeholder="ABCDE1234F" style="text-transform:uppercase"','p'],['passport_no','Passport number','','p'],['passport_expiry','Passport expiry','date','p'],
+ ['alt_contact','Emergency contact','placeholder="name, relation, number"','p'],['address','Address','area','p'],
+ ['bank_name','Bank name','placeholder="e.g. State Bank of India"','b'],['bank_account','Account number','inputmode="numeric"','b'],['bank_ifsc','IFSC code','placeholder="SBIN0001234" style="text-transform:uppercase"','b'],
+ ['bank_holder','Account holder name','','b'],['bank_type','Account type',['Savings','Current','Salary'],'b']];
+const HRD=['employees','shifts','leave','holidays','punches','import','payroll','payroll_edit'], MG=['employees','shifts','leave','holidays','payroll'];
+const ROLE={admin:['Admin','bad'],management:['Management','violet'],hr:['HR','sky'],manager:['Team lead','warn']};
+const PAGES={live:['Dashboard',()=>'Today at a glance · '+new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})],
+ punches:['Punches','Every check-in from the fingerprint machines and the phone app'],daily:['Daily report','Who came in, who was late and who is missing'],
+ monthly:['Monthly summary','Totals for each employee over a month'],sheet:['Attendance sheet','The whole month on one page'],timecard:['Time card','Everyone or one employee, day by day'],
+ payroll:['Payroll & payslips','Salary from attendance, adjustments, and payslips for the phone app'],emp:['Employees','Everyone on the system, their shift, salary and app PIN'],
+ shifts:['Shifts','Working hours, breaks, grace time, overtime and weekly offs'],roster:['Shift roster','Plan who works which shift, day by day'],
+ masters:['Departments & designations','The lists you pick from when adding employees'],loans:['Loans & advances','Money given to employees and recovered from salary in monthly instalments'],shiftchange:['Shift changes','Move people to another shift for some dates'],
+ leave:['Leave','Requests from the phone app, balances and leave records'],wfh:['Work from home','Requests from the phone app. Approved days: check in from anywhere, paid 0.8 of a day'],holidays:['Holidays','Company holidays for the year'],
+ devices:['Devices','Fingerprint machines connected to this server'],sites:['GPS sites','Places where phone check-ins are allowed'],
+ import:['Import data','Bring in employees, shifts, leave and old attendance from Excel or CSV'],users:['Users & roles','Who can sign in to this dashboard and what they can do'],audit:['Audit log','Every change made through the dashboard, newest first'],backups:['Backups','A copy of everything, every night, kept on the server and emailed']};
+
+/* ---------- pages ---------- */
+async function render(){
+ const [t,s]=PAGES[tab]||PAGES.live; $('#ptitle').textContent=t; $('#psub').textContent=typeof s=='function'?s():s; document.title=t+' · Attendance';
+ $$('#nav a').forEach(a=>a.classList.toggle('on',a.dataset.t==tab));
+ try{
+ [devs,emps,shifts]=await Promise.all([j('/api/devices'),j('/api/employees'),j('/api/shifts')]);
+ if(tab=='live'){
+  const d=await j('/api/dashboard?'+new URLSearchParams({day:DASH.day||today(),department:DASH.dept||''})); const mx=Math.max(1,...d.departments.map(x=>x.present)); const pct=d.total?Math.round(d.present/d.total*100):0;
+  $('#pendBadge').textContent=d.pending_leaves||''; $('#wfhBadge').textContent=d.pending_wfh||'';
+  const kpi=(ic,c,l,label,val,sub,extra='')=>`<div class="kpi" style="--c:${c};--l:${l}" onclick="go('daily')"><div class="ic">${I(ic)}</div><div style="flex:1;min-width:0"><span>${label}</span><b>${val}</b><small>${sub}</small>${extra}</div></div>`;
+  const LST={limit:['Limit reached','warn'],over:['Over the limit · HR review','bad']};
+  m.innerHTML=`<div class="tb" style="padding:0 0 14px">${fld('Day',`<input type="date" id="dd" value="${esc(d.day)}">`)}${fld('Department',`<select id="ddp"><option value="">All departments</option>${d.dept_options.map(x=>`<option ${x==d.department?'selected':''}>${esc(x)}</option>`).join('')}</select>`)}<div class="sp"></div>${LVLEG}</div>${d.pending_wfh?`<div class="banner" onclick="go('wfh')">${I('home')}<div><b>${d.pending_wfh} work-from-home request${d.pending_wfh>1?'s':''} waiting for approval</b></div></div>`:''}${d.pending_leaves?`<div class="banner" onclick="go('leave')">${I('alert')}<div><b>${d.pending_leaves} leave request${d.pending_leaves>1?'s':''} waiting for approval</b> <span class="small">· open Leave to approve or reject</span></div></div>`:''}
+  <div class="kpis">
+   ${kpi('users','#6366f1','#eef2ff','Employees',d.total,'active on the system')}
+   ${kpi('check','#16a34a','#dcfce7','Present today',d.present,pct+'% of staff',`<div class="meter"><i style="width:${pct}%"></i></div>`)}
+   ${kpi('clock','#d97706','#fef3c7','Late',d.late,'came in after grace time')}
+   ${kpi('x','#dc2626','#fee2e2','Absent',d.absent,(d.on_leave||0)+' on leave')}
+  </div>
+  <div class="kpis five">
+   ${kpi('leave','#ca8a04','#fef9c3','Informed leave',d.informed_leave,'yellow · planned')}
+   ${kpi('alert','#dc2626','#fee2e2','Adhoc leave',d.adhoc_leave,'red · emergency or absent')}
+   ${kpi('down','#0891b2','#cffafe','Early logins',d.early_in,'came before the shift')}
+   ${kpi('logout','#ea580c','#ffedd5','Early logouts',d.early_out,'left before the shift ended')}
+   ${kpi('clock','#4f46e5','#eef2ff','Hours worked',d.total_hours,'total for the day')}
+  </div>
+  ${card(`Late arrivals · ${esc(d.late_policy.period_label)}`,`<div class="cb" style="padding-bottom:4px"><p class="hint"><b>${d.late_total}</b> qualifying late arrival${d.late_total==1?'':'s'} this period (after the grace time). People at the limit of <b>${d.late_policy.limit}</b> or beyond are listed for HR review; no salary is cut automatically.</p></div>${d.late_watch.length?tbl([['name','Employee',x=>person(x.name,x.department)],['count','Late arrivals',x=>`<b>${x.count}</b> / ${x.limit}`,'num'],['state','',x=>pill(...LST[x.state])]],d.late_watch):`<div class="cb">${emptyBox('Nobody has reached the limit this period')}</div>`}`,`<button class="sm" onclick="go('shifts')">Settings</button><button class="sm" onclick="go('timecard')">Time card</button>`)}
+  <div class="g2">
+   ${card('Present by department',`<div class="cb">${d.departments.map(x=>`<div class="hbar"><span title="${esc(x.name)}">${esc(x.name)}</span><div class="meter"><i style="width:${Math.round(x.present/mx*100)}%"></i></div><b>${x.present}</b></div>`).join('')||emptyBox('Nobody has checked in yet today')}</div>`,`<button class="sm" onclick="go('daily')">Daily report</button>`)}
+   ${card('Fingerprint machines',`<div class="rows">${d.devices.map(x=>`<div><span class="dot ${x.online?'':'off'}"></span><div style="min-width:0"><b>${esc(x.name||x.dev_id)}</b><div class="small muted">${esc(x.location||x.dev_id)} · ${x.online?'online':'offline'}</div></div><div class="t"><b>${x.last_punch?esc(hm(x.last_punch)):'—'}</b>${x.last_punch?esc(fmtDay(x.last_punch.slice(0,10))):'no punches yet'}</div></div>`).join('')||emptyBox('No machine has connected yet')}</div>`,`<button class="sm" onclick="go('devices')">Manage</button>`)}
+  </div>
+  <div class="g2e">
+   ${card('Latest punches',`<div class="rows" id="feed">${(d.recent||[]).map(r=>`<div>${person(r.name,r.device_user_id)}<div class="t"><b>${esc(hm(r.ts))}</b>${r.method=='app'?'Phone app':r.method=='manual'?'Manual':esc(devName(r.source))}</div></div>`).join('')||emptyBox('No punches yet today')}</div>`,`<button class="sm" onclick="go('punches')">All punches</button>`)}
+   ${card('Phone app check-ins',`<div class="rows">${d.gps_punches.map(g=>`<div>${g.selfie?`<img class="th" src="/api/selfies/${esc(g.selfie)}" onclick="big(this.src)" alt="">`:avatar(g.name)}<div style="min-width:0"><b>${esc(g.name)}</b><div class="small muted">${esc(g.site||'Outside sites')} · <a target="_blank" rel="noopener" href="https://maps.google.com/?q=${+g.lat},${+g.lng}">map</a></div></div><div class="t"><b>${esc(hm(g.ts))}</b>${g.flag=='outside_geofence'?pill('Outside area','warn'):''}</div></div>`).join('')||emptyBox('No phone check-ins today')}</div>`)}
+  </div>`;
+
+  $('#dd').onchange=e=>{DASH.day=e.target.value;render()}; $('#ddp').onchange=e=>{DASH.dept=e.target.value;render()};
+ } else if(tab=='punches'){
+  m.innerHTML=card('',`<div class="tb">${fld('Day',`<input type="date" id="d" value="${today()}">`)}${fld('Source',devSel())}<div class="sp"></div><button class="pri" id="mp_open">${I('plus')}Add punches</button></div><div id="t"></div>`)+
+   formDlg('mpDlg','Add punches for a day',`<div class="fg">${fld('Employee',empSel('mp_e'),1)}${fld('Date',`<input type="date" id="mp_d" value="${today()}">`)}${fld('In time',`<input type="time" id="mp_i">`)}${fld('Out time',`<input type="time" id="mp_o">`)}${fld('Remark',`<input id="mp_r" placeholder="e.g. forgot to punch" maxlength=45>`,1)}</div>`,'mp_b','Save punches','Use this when someone forgot to punch. To change a wrong time, use Fix time on the row instead. Everything is logged with your name.');
+  const load=async()=>{const rows=await j('/api/punches?day='+$('#d').value+dq()); rows.forEach(r=>punchMap[r.id]=r); $('#t').innerHTML=tbl(punchCols,rows,{empty:'No punches on this day'})};
+  $('#d').onchange=load; $('#dv').onchange=load; $('#mp_open').onclick=()=>$('#mpDlg').showModal();
+  $('#mp_b').onclick=safe(async()=>{await post('/api/punches/day',{employee_id:$('#mp_e').value,date:$('#mp_d').value,in_time:$('#mp_i').value,out_time:$('#mp_o').value,remark:$('#mp_r').value}); $('#mpDlg').close(); toast('Punches saved'); $('#d').value=$('#mp_d').value; load()}); load();
+
+ } else if(tab=='daily'){
+  m.innerHTML=card('',`<div class="tb">${fld('Day',`<input type="date" id="d" value="${today()}">`)}${fld('Source',devSel())}${fld('Show',`<select id="f"><option value="">Everyone</option><option>Present</option><option>Late</option><option>Half Day</option><option>Absent</option><option>Leave</option><option value="Informed">Informed leave</option><option value="Adhoc">Adhoc leave</option><option value="early">Left early</option><option value="miss">Missing out punch</option><option value="dept">Department summary</option></select>`)}<div class="sp"></div>${dl('csv','CSV')}${dl('xlsx')}</div><div class="chips" id="chips"></div><div id="t"></div>`);
+  const load=async()=>{let r=await j('/api/reports/daily?day='+$('#d').value+dq()); const f=$('#f').value;
+   const cnt=k=>r.filter(x=>x.status==k).length;
+   $('#chips').innerHTML=[['','Everyone',r.length],['Present','Present',cnt('Present')],['Late','Late',cnt('Late')],['Half Day','Half day',cnt('Half Day')],['Absent','Absent',cnt('Absent')],['Leave','On leave',cnt('Leave')],['Informed','Informed leave',r.filter(x=>x.leave_type=='Informed').length],['Adhoc','Adhoc leave',r.filter(x=>x.leave_type=='Adhoc').length]].map(([v,l,n])=>`<button class="chip ${f==v?'on':''}" data-v="${v}">${v=='Informed'||v=='Adhoc'?lvPill(v,' leave'):l} <b>${n}</b></button>`).join('');
+   $$('#chips .chip').forEach(b=>b.onclick=()=>{$('#f').value=b.dataset.v;load()});
+   if(f=='dept'){const g={};r.forEach(x=>{const k=x.department||'Unassigned';const o=g[k]||(g[k]={department:k,total:0,present:0,late:0,absent:0,leave:0,weekoff:0});o.total++;if(['Present','Late','Half Day'].includes(x.status))o.present++;if(x.status=='Late')o.late++;if(x.status=='Absent')o.absent++;if(x.status=='Leave')o.leave++;if(x.status=='Weekly Off'||x.status=='Holiday')o.weekoff++});
+    const rows=Object.values(g).sort((a,b)=>a.department.localeCompare(b.department));const tt=rows.reduce((a,x)=>{for(const k of ['total','present','late','absent','leave','weekoff'])a[k]+=x[k];return a},{department:'TOTAL',total:0,present:0,late:0,absent:0,leave:0,weekoff:0,_tot:1});
+    $('#t').innerHTML=tbl([['department','Department'],['total','Employees',0,'num'],['present','Present',0,'num'],['late','Late',0,'num'],['absent','Absent',0,'num'],['leave','Leave',0,'num'],['weekoff','Off / holiday',0,'num']],rows.concat([tt]),{rowCls:x=>x._tot?'tot':''});return}
+   if(f=='early')r=r.filter(x=>x.early_min>0); else if(f=='Informed'||f=='Adhoc')r=r.filter(x=>x.leave_type==f); else if(f=='miss')r=r.filter(x=>(x.note||'').includes('missing out')); else if(f)r=r.filter(x=>x.status==f);
+   $('#t').innerHTML=tbl([['name','Employee',x=>person(x.name,x.department)],['shift','Shift'],['first_in','In',x=>`<b>${esc(String(x.first_in||'').slice(0,5))}</b>`],['last_out','Out',x=>`<b>${esc(String(x.last_out||'').slice(0,5))}</b>`],['hours','Hours',0,'num'],['late_min','Late',x=>mins(x.late_min)],['early_min','Early out',x=>mins(x.early_min)],['ot_min','Overtime',x=>mins(x.ot_min)],stCol(),['note','Note',x=>`<span class="muted">${esc(x.note)}</span>`]],r,{empty:'Nobody matches this filter'})};
+  $('#d').onchange=load; $('#dv').onchange=load; $('#f').onchange=load; $('#csv').onclick=e=>{e.currentTarget.href='/api/reports/daily.csv?day='+$('#d').value+dq()}; $('#xlsx').onclick=e=>{e.currentTarget.href='/api/reports/daily.xlsx?day='+$('#d').value+dq()}; load();
+
+ } else if(tab=='monthly'){
+  m.innerHTML=card('',`<div class="tb">${fld('Month',`<input type="month" id="mo" value="${today().slice(0,7)}">`)}${fld('Source',devSel())}<div class="sp"></div>${LVLEG}${dl('csv','CSV')}${dl('xlsx')}</div><div id="t"></div>`);
+  const N=(k,l)=>[k,l,0,'num'], LV=(k,t)=>[k,t,x=>x[k]?lvPill(t,' '+x[k]):'<span class="muted">0</span>','num'];
+  const load=async()=>$('#t').innerHTML=tbl([['name','Employee',x=>person(x.name,x.department)],['shift','Shift'],N('days_present','Present'),N('late_days','Late'),N('half_days','Half'),N('absent','Absent'),LV('informed_leave','Informed'),LV('adhoc_leave','Adhoc'),N('holidays','Hol.'),N('weekly_offs','W.off'),N('total_hours','Hours'),N('overtime_hours','OT hrs'),N('late_minutes','Late min'),['paid_days','Paid days',x=>`<b>${esc(x.paid_days)}</b>`,'num']],await j('/api/reports/monthly?month='+$('#mo').value+dq()),{empty:'No employees yet'});
+  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.currentTarget.href='/api/reports/monthly.csv?month='+$('#mo').value+dq()}; $('#xlsx').onclick=e=>{e.currentTarget.href='/api/reports/monthly.xlsx?month='+$('#mo').value+dq()}; load();
+
+ } else if(tab=='sheet'){
+  const LG=[['P','Present'],['L','Late'],['HD','Half day'],['A','Absent'],['IL','Informed leave'],['AL','Adhoc leave'],['H','Holiday'],['WO','Weekly off'],['IN','At work today: counted after the punch-out']];
+  m.innerHTML=card('',`<div class="tb">${fld('Month',`<input type="month" id="mo" value="${today().slice(0,7)}">`)}${fld('Source',devSel())}<div class="sp"></div>${dl('csv','CSV')}${dl('xlsx')}${dl('mus','Muster roll')}${dl('perf','Performance report')}</div><div class="chips legend">${LG.map(([c,l])=>`<span><span class="cd c-${c}">${c}</span>${l}</span>`).join('')}</div><div id="t"></div>`);
+  const load=async()=>{const g=await j('/api/reports/grid?month='+$('#mo').value+dq());
+   $('#t').innerHTML=g.rows.length?`<div class="tw"><table class="sheet"><thead><tr><th>Employee</th>${g.days.map(d=>`<th>${d}</th>`).join('')}<th>Worked</th><th>W.off</th><th>Hol.</th><th>IL</th><th>AL</th><th>Absent</th><th>Paid</th></tr></thead><tbody>${g.rows.map(r=>`<tr><td><b>${esc(r.name)}</b></td>${r.codes.map(c=>`<td>${c?`<span class="cd c-${c}">${c}</span>`:''}</td>`).join('')}${['worked','weekly_offs','holidays','informed_leave','adhoc_leave','absent','paid_days'].map(k=>`<td>${(k=='informed_leave'||k=='adhoc_leave')&&r.totals[k]?`<span class="cd c-${k=='informed_leave'?'IL':'AL'}">${r.totals[k]}</span>`:`<b>${r.totals[k]}</b>`}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:emptyBox('No employees yet')};
+  $('#mo').onchange=load; $('#dv').onchange=load; $('#csv').onclick=e=>{e.currentTarget.href='/api/reports/grid.csv?month='+$('#mo').value+dq()}; $('#xlsx').onclick=e=>{e.currentTarget.href='/api/reports/grid.xlsx?month='+$('#mo').value+dq()}; $('#mus').onclick=e=>{e.currentTarget.href='/api/reports/muster.xlsx?month='+$('#mo').value+dq()}; $('#perf').onclick=e=>{const mo=$('#mo').value,[y,m]=mo.split('-').map(Number),last=new Date(y,m,0).getDate();e.currentTarget.href=`/api/reports/performance.xlsx?start=${mo}-01&end=${mo}-${String(last).padStart(2,'0')}`}; load();
+
+ } else if(tab=='timecard'){
+  const d0=today(), mo0=d0.slice(0,7)+'-01', depts=[...new Set(emps.map(e=>e.department).filter(Boolean))].sort();
+  const people=emps.filter(e=>e.active||e.left_on).sort((a,b)=>a.name.localeCompare(b.name));
+  m.innerHTML=card('',`<div class="tb">${fld('Employee',`<select id="tce"><option value="">All employees</option>${people.map(e=>`<option value="${esc(e.device_user_id)}">${esc(e.name)} (${esc(e.device_user_id)})${e.active?'':' · left'}</option>`).join('')}</select>`)}
+     ${fld('Period',`<select id="tcp"><option value="month">This month</option><option value="today">Today</option><option value="last">Last month</option><option value="year">This year</option><option value="fy">This financial year</option><option value="custom">Custom dates</option></select>`)}
+     ${fld('From',`<input type="date" id="tcf" value="${mo0}">`)}${fld('To',`<input type="date" id="tct" value="${d0}">`)}
+     ${fld('Department',`<select id="tcd"><option value="">All</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select>`)}
+     ${fld('View',`<select id="tcv"><option value="grid">In / Out by date</option><option value="list">Detailed list</option></select>`)}
+     ${fld('Status',`<select id="tcs"><option value="">Any</option>${['Present','Late','Half Day','Absent','Leave','Informed','Adhoc','Holiday','Weekly Off','Week-off duty','Missing punch'].map(x=>`<option value="${x}">${x=='Informed'||x=='Adhoc'?x+' leave':x}</option>`).join('')}</select>`)}
+     <div class="sp"></div>${dl('perf','Performance report')}${dl('xlsx','Export to Excel')}</div>
+    <div class="cb" style="padding:8px 18px 0"><div class="lvleg">${lvPill('Informed',' leave')}${lvPill('Adhoc',' leave')}${pill('Week-off duty (rostered)','wod')}<span>The Excel file has an "In-Out" sheet like the grid, an "All Employees" sheet with the details, and one sheet for each person.</span></div></div>
+    <div class="chips" id="tcsum"></div><div id="t">${emps.length?'':emptyBox('Add employees first')}</div>`);
+  const span=()=>{const p=$('#tcp').value,n=new Date(),iso=x=>x.toLocaleDateString('en-CA');
+   if(p=='today')return [d0,d0]; if(p=='month')return [mo0,d0];
+   if(p=='last'){const a=new Date(n.getFullYear(),n.getMonth()-1,1),b=new Date(n.getFullYear(),n.getMonth(),0);return [iso(a),iso(b)]}
+   if(p=='year')return [n.getFullYear()+'-01-01',d0]; if(p=='fy'){const y=n.getMonth()>=3?n.getFullYear():n.getFullYear()-1;return [y+'-04-01',d0]}
+   return [$('#tcf').value,$('#tct').value]};
+  const q=()=>{const [a,b]=span();$('#tcf').value=a;$('#tct').value=b;return new URLSearchParams({start:a,end:b,employee:$('#tce').value,department:$('#tcd').value,status:$('#tcs').value})};
+  const T=t=>`<b>${esc(t||'')}</b>`, MAXROWS=1500;
+  const load=async()=>{const rows=await j('/api/reports/timecards?'+q()), all=!$('#tce').value;
+   const c=k=>rows.filter(x=>x.status==k).length, hrs=rows.reduce((a,x)=>a+(+x.hours||0),0);
+   $('#tcsum').innerHTML=[['Rows',rows.length],['Present',c('Present')+c('Late')+c('Half Day')],['Late',c('Late')],['Absent',c('Absent')],['Informed leave',rows.filter(x=>x.leave_type=='Informed').length],['Adhoc leave',rows.filter(x=>x.leave_type=='Adhoc').length],['Early logins',rows.filter(x=>x.early_in_min>0).length],['Early logouts',rows.filter(x=>x.early_min>0).length],['Hours',hrs.toFixed(1)]].map(([l,n])=>`<span class="chip">${l} <b>${n}</b></span>`).join('');
+   const cols=[...(all?[['name','Employee',x=>person(x.name,'ID '+x.device_user_id+(x.department?' · '+x.department:''))]]:[]),['date','Date',x=>`<b>${esc(fmtDay(x.date))}</b>`],['day_type','Day type',x=>`<span class="muted small">${esc(x.day_type)}</span>`],
+    ['scheduled_in','Sched. in',x=>esc(x.scheduled_in)],['in','In',x=>T(x.in)],['scheduled_out','Sched. out',x=>esc(x.scheduled_out)],['out','Out',x=>T(x.out)],
+    ['late_min','Late',x=>mins(x.late_min)],['early_in_min','Early in',x=>mins(x.early_in_min)],['early_min','Early out',x=>mins(x.early_min)],['hours','Hours',0,'num'],stCol(),['note','Note',x=>`<span class="muted">${esc(x.note)}</span>`]];
+   if($('#tcv').value=='grid'){$('#t').innerHTML=inoutGrid(rows);return}
+   $('#t').innerHTML=tbl(cols,rows.slice(0,MAXROWS),{empty:'No records for this selection',rowCls:x=>x.leave_type=='Informed'?'rI':x.leave_type=='Adhoc'?'rA':x.week_off_duty?'rW':''})+
+    (rows.length>MAXROWS?`<div class="cb"><p class="hint">Showing the first ${MAXROWS} of ${rows.length} rows. Export to Excel to see them all.</p></div>`:'')};
+  const inoutGrid=rows=>{if(!rows.length)return emptyBox('No records for this selection');
+   const [a,b]=span(), days=[];for(let x=new Date(a+'T00:00');x.toLocaleDateString('en-CA')<=b;x.setDate(x.getDate()+1))days.push(x.toLocaleDateString('en-CA'));
+   const by={};rows.forEach(r=>by[r.device_user_id+'|'+r.date]=r);
+   const ppl=[...new Map(rows.map(r=>[r.device_user_id,r])).values()].sort((x,y)=>x.name.localeCompare(y.name));
+   const CODE={'Weekly Off':'WO','Holiday':'H','Absent':'A'};
+   const cell=r=>{if(!r||!r.status)return '<td></td><td></td>';
+    if(r.status=='Leave'){const c=r.leave_type=='Informed'?'IL':r.leave_type=='Adhoc'?'AL':'LV';return `<td colspan="2"><span class="cd c-${c}" title="${esc(r.leave_type||'')} leave">${c}</span></td>`}
+    if(CODE[r.status])return `<td colspan="2"><span class="cd c-${r.absent_adhoc?'AL':CODE[r.status]}" title="${r.absent_adhoc?'Absent without approved leave: counted as Adhoc':''}">${CODE[r.status]}</span></td>`;
+    const bg=r.leave_type=='Informed'?'#fffbeb':r.leave_type=='Adhoc'?'#fef2f2':r.week_off_duty?'#eff6ff':'';
+    return `<td style="${bg?'background:'+bg:''}" title="${esc(r.status+(r.late_min?' · '+r.late_min+' min late':''))}">${r.late_min?`<b style="color:var(--bad)">${esc(r.in)}</b>`:esc(r.in)}</td><td style="${bg?'background:'+bg:''}">${esc(r.out)}</td>`};
+   return `<div class="tw"><table class="sheet inout"><thead><tr><th rowspan="2">Employee</th>${days.map(d=>`<th colspan="2">${esc(new Date(d+'T00:00').toLocaleDateString(undefined,{weekday:'short',day:'2-digit',month:'2-digit'}))}</th>`).join('')}</tr><tr>${days.map(()=>'<th>In</th><th>Out</th>').join('')}</tr></thead>
+    <tbody>${ppl.map(p=>`<tr><td><b>${esc(p.name)}</b><div class="small muted">${esc(p.device_user_id)}</div></td>${days.map(d=>cell(by[p.device_user_id+'|'+d])).join('')}</tr>`).join('')}</tbody></table></div>
+    <div class="cb"><div class="chips legend"><span><span class="cd c-IL">IL</span>Informed leave</span><span><span class="cd c-AL">AL</span>Adhoc leave</span><span><span class="cd c-WO">WO</span>Weekly off</span><span><span class="cd c-H">H</span>Holiday</span><span><span class="cd c-A">A</span>Absent</span><span><span class="cd c-AL">A</span>Absent, counted as Adhoc</span><span><b style="color:var(--bad)">10:25</b>Late check-in</span><span><span class="cd" style="background:#eff6ff">&nbsp;&nbsp;&nbsp;</span>Rostered on a weekly off</span></div></div>`};
+  for(const k of ['#tce','#tcd','#tcs','#tcv'])$(k).onchange=safe(load);
+  $('#tcp').onchange=safe(load);
+  for(const k of ['#tcf','#tct'])$(k).onchange=safe(()=>{$('#tcp').value='custom';load()});
+  $('#xlsx').onclick=e=>{e.currentTarget.href='/api/reports/timecards.xlsx?'+q()};
+  $('#perf').onclick=e=>{const p=q();if((new Date(p.get('end'))-new Date(p.get('start')))/864e5>=31){e.preventDefault();toast('The performance report covers up to 31 days: pick one month','bad');return}
+   p.delete('status');e.currentTarget.href='/api/reports/performance.xlsx?'+p}; if(emps.length)safe(load)();
+
+ } else if(tab=='payroll'){
+  m.innerHTML=card('',`<div class="tb">${fld('Month',`<input type="month" id="mo" value="${today().slice(0,7)}">`)}<span id="pub" style="display:flex;gap:8px;align-items:center;height:36px"></span><div class="sp"></div>${LVLEG}<button id="adj_open">${I('plus')}Adjustment</button>${dl('csv','CSV')}${dl('xlsx')}</div>
+   <div class="cb" style="padding-bottom:0"><p class="hint">Pay = monthly salary ÷ days in month × paid days (present, paid leave, holidays and weekly offs; half day counts 0.5), plus adjustments, minus loan EMIs and the leave-policy cuts (1.5× / 2× a day's salary for leave beyond the balance). A work-from-home day counts 0.8. No tax or PF/ESI. Days before the system's first punch are not counted. Payslips are available once the month has ended (or for someone who has left); <b>Publish</b> to let employees download theirs in the phone app.</p></div>
+   <div id="adj"></div><div id="t" style="margin-top:12px"></div>`)+
+   formDlg('adjDlg','Add an adjustment',`<div class="fg">${fld('Employee',empSel('ae'),1)}${fld('Date',`<input type="date" id="ad" value="${today()}">`)}${fld('Type',`<select id="ak">${ADJ.map(([k,sg])=>`<option value="${k}" data-s="${sg}">${k} (${sg>0?'adds to pay':'deducted'})</option>`).join('')}</select>`)}${fld('Amount (₹)',`<input id="aa" type="number" min="0" placeholder="e.g. 1000">`)}${fld('Note',`<input id="al" placeholder="Optional, e.g. Diwali bonus">`)}</div>`,'ab','Add','Goes into the payroll of the month of the date. Loans and salary advances are handled in Loans & advances.');
+  const load=async()=>{const mo=$('#mo').value;const [r,st,adj]=await Promise.all([j('/api/reports/payroll?month='+mo),j(`/api/payroll/${mo}/status`),j('/api/payroll/adjustments?month='+mo)]);
+   const tot=r.reduce((a,x)=>a+x.net_pay,0);
+   $('#pub').innerHTML=st.published?`${pill('Published'+(st.published_by?' by '+st.published_by:''),'ok')} <button class="sm" id="unp">Unpublish</button>`:`${pill('Not published','mute')} <button class="sm pri" id="pb">Publish payslips</button>`;
+   if(st.published)$('#unp').onclick=safe(async()=>{if(await confirmBox('Unpublish payslips?','Employees will no longer see '+mo+' in the app.','Unpublish')){await post(`/api/payroll/${mo}/unpublish`,{});toast('Unpublished');load()}});
+   else $('#pb').onclick=safe(async()=>{if(await confirmBox('Publish payslips for '+mo+'?','Employees will be able to download them in the phone app.','Publish',false)){await post(`/api/payroll/${mo}/publish`,{});toast('Payslips published');load()}});
+   listCache=adj; $('#adj').innerHTML=adj.length?`<div class="cb" style="padding-bottom:0"><b class="small">Adjustments this month</b></div>`+tbl([['name','Employee'],['date','Date',x=>esc(fmtDay(x.date||''))],['label','Adjustment'],['amount','Amount',x=>`<b style="color:${x.amount<0?'var(--bad)':'var(--ok)'}">${x.amount>0?'+':''}${money(x.amount)}</b>`,'num'],['x','',x=>`<div class="acts"><button class="sm" onclick="delAdj(${listCache.indexOf(x)})">Remove</button></div>`]],adj):'';
+   $('#t').innerHTML=tbl([['name','Employee',x=>person(x.name,x.department)],['monthly_salary','Monthly salary',x=>money(x.monthly_salary),'num'],['days_in_month','Days',0,'num'],['informed_leave','Informed',x=>x.informed_leave?lvPill('Informed',' '+x.informed_leave):'','num'],['adhoc_leave','Adhoc',x=>x.adhoc_leave?lvPill('Adhoc',' '+x.adhoc_leave):'','num'],['paid_days','Paid days',0,'num'],['unpaid_days','Unpaid',0,'num'],['adjustments','Adjustments',x=>money(x.adjustments),'num'],['loan_deduction','Loan EMI',x=>x.loan_deduction?'−'+money(x.loan_deduction):'','num'],['leave_cut','Leave cut',x=>x.leave_cut?'−'+money(x.leave_cut):'','num'],['net_pay','Net pay',x=>`<b>${money(x.net_pay)}</b>`,'num'],['pdf','Payslip',x=>x.payslip_ready?`<a class="btn sm" target="_blank" href="/api/payslips/${encodeURIComponent(x.device_user_id)}/${mo}.pdf">${I('down')}PDF</a>`:`<span class="muted small" title="Payslips are made after the month ends, or for someone who has left">after month end</span>`]],r,{empty:'No employees with a salary yet'})+
+    (r.length?`<div class="totbar"><div>Employees<b>${r.length}</b></div><div>Total net pay<b>₹ ${money(tot)}</b></div>${!r[0].month_complete?`<div style="align-self:center">${pill('Month not finished: days still to come are not counted','warn')}</div>`:''}</div>`:'')};
+  $('#mo').onchange=load; $('#csv').onclick=e=>{e.currentTarget.href='/api/reports/payroll.csv?month='+$('#mo').value}; $('#xlsx').onclick=e=>{e.currentTarget.href='/api/reports/payroll.xlsx?month='+$('#mo').value};
+  $('#adj_open').onclick=()=>{const mo=$('#mo').value;if($('#ad').value.slice(0,7)!=mo)$('#ad').value=mo==today().slice(0,7)?today():mo+'-01';$('#adjDlg').showModal()};
+  $('#ab').onclick=safe(async()=>{const k=$('#ak').selectedOptions[0], amt=Math.abs(+$('#aa').value);if(!amt)throw new Error('Enter the amount');
+   await post('/api/payroll/adjustments',{date:$('#ad').value,device_user_id:$('#ae').value,label:k.value+($('#al').value.trim()?': '+$('#al').value.trim():''),amount:amt*(+k.dataset.s)});
+   $('#al').value='';$('#aa').value='';$('#adjDlg').close();toast('Adjustment added');if($('#ad').value.slice(0,7)!=$('#mo').value){$('#mo').value=$('#ad').value.slice(0,7)}load()}); load();
+
+ } else if(tab=='shiftchange'){
+  const act=emps.filter(e=>e.active);
+  m.innerHTML=card('New shift change',`<div class="cb"><p class="hint" style="margin-bottom:14px">Overrides people's normal shift on these dates only (for example a team swap or a one-off timing). Team leads can do this for their own team.</p>
+    <div class="fg" style="margin-bottom:14px">${fld('From',`<input type="date" id="sc_f" value="${today()}">`)}${fld('To',`<input type="date" id="sc_t" value="${today()}">`)}${fld('Shift',shiftSel('sc_s'))}</div>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap"><label class="chk"><input type="checkbox" id="sc_all">Select all</label><input id="sc_q" placeholder="Search people…" style="max-width:240px"><span class="muted small" id="sc_n"></span><div style="flex:1"></div><button class="pri" id="sc_b">Apply to selected</button></div>
+    <div class="pick">${act.map(e=>`<label data-s="${esc((e.name+' '+e.device_user_id+' '+e.department).toLowerCase())}"><input type="checkbox" class="sc" value="${esc(e.device_user_id)}">${esc(e.name)} <small>${esc(e.department||'')}</small></label>`).join('')||'<span class="muted">No employees yet</span>'}</div></div>`)+
+   card('Shift changes',`<div id="t"></div>`,`<input type="month" id="mo" value="${today().slice(0,7)}">`);
+  const cntSel=()=>$('#sc_n').textContent=$$('.sc:checked').length+' selected';
+  const load=async()=>{const l=await j('/api/shift-changes?month='+$('#mo').value);listCache=l;$('#t').innerHTML=tbl([['name','Employee',x=>person(x.name,'')],['start_date','From',x=>esc(fmtDay(x.start_date))],['end_date','To',x=>esc(fmtDay(x.end_date))],['shift','Shift',x=>`${esc(x.shift)} <span class="muted">${esc(x.start)}–${esc(x.end)}</span>`],['created_by','By',x=>`<span class="muted">${esc(x.created_by)}</span>`],['x','',x=>`<div class="acts"><button class="sm" onclick="delShiftChange(${listCache.indexOf(x)})">Remove</button></div>`]],l,{empty:'No shift changes this month'})};
+  $('#sc_all').onclick=e=>{$$('.pick label').forEach(l=>{if(l.style.display!='none')l.querySelector('input').checked=e.target.checked});cntSel()};
+  $('#sc_q').oninput=e=>{const q=e.target.value.toLowerCase();$$('.pick label').forEach(l=>l.style.display=l.dataset.s.includes(q)?'':'none')};
+  $$('.sc').forEach(c=>c.onchange=cntSel); cntSel();
+  $('#mo').onchange=load;
+  $('#sc_b').onclick=safe(async()=>{const ids=$$('.sc:checked').map(c=>c.value);if(!ids.length)throw new Error('Tick at least one employee');
+   if(!$('#sc_s').value)throw new Error('Choose a shift');
+   const r=await post('/api/shift-changes',{ids,start_date:$('#sc_f').value,end_date:$('#sc_t').value,shift_id:+$('#sc_s').value});toast(r.created+' shift change'+(r.created==1?'':'s')+' saved');load()}); load();
+
+ } else if(tab=='shifts'){
+  listCache=shifts;
+  const dur=s=>{const [a,b]=[s.start,s.end].map(t=>{const [h,mm]=t.split(':');return +h*60+ +mm});const d=b-a;return d>0?(d/60).toFixed(d%60?1:0)+' h':''};
+  m.innerHTML=card('',`<div class="tb"><p class="hint" style="flex:1;align-self:center">Create one shift for each timing you use, then give it to people in Employees (or plan days in Shift roster). Break times are paid and shown for reference. People without a shift are flexible: never late, no overtime. Overnight shifts are not supported yet.</p><button class="pri" id="sadd">${I('plus')}New shift</button></div>
+   ${tbl([['name','Shift',r=>`<b>${esc(r.name)}</b>`],['start','Hours',r=>`${esc(r.start)} – ${esc(r.end)} <span class="muted">· ${dur(r)}</span>`],['break_start','Break',r=>r.break_start?`${esc(r.break_start)}–${esc(r.break_end)}`:'<span class="muted">—</span>'],['grace_min','Grace',r=>r.grace_min+' min'],['half_day_hours','Half day below',r=>r.half_day_hours+' h'],['ot_after_min','Overtime after',r=>r.ot_after_min+' min'],['weekly_off','Weekly off',r=>pill(r.weekly_off||'none','mute')],['employees','People',r=>pill(r.employees,'brand')],['x','',r=>`<div class="acts"><button class="sm" onclick="editShift(${listCache.indexOf(r)})">Edit</button><button class="sm" onclick="delShift(${r.id})">Delete</button></div>`]],shifts,{empty:'No shifts yet. Create your first one.'})}`)+
+   card('Late arrivals',`<div class="cb"><p class="hint" style="margin-bottom:12px">Late = checking in more than the shift's grace time after it starts. Each late arrival is e-mailed the same day to the employee (work e-mail), their team lead (e-mail on their login) and HR. The counter below decides when someone is flagged for HR review. Nothing is deducted from salary.</p><div class="tb" style="padding:0">${fld('Count late arrivals per',`<select id="lp_p"></select>`)}${fld('Limit',`<input id="lp_l" type="number" min="1" max="31" style="width:90px">`)}<button class="pri" id="lp_s">Save</button><span class="hint" id="lp_m" style="align-self:center"></span></div></div>`)+
+   formDlg('shiftDlg','New shift',`<input type="hidden" id="sid"><div class="fg">${fld('Shift name',`<input id="sn" placeholder="e.g. Morning 9 to 6">`,1)}${fld('Start',`<input type="time" id="ss" value="09:00">`)}${fld('End',`<input type="time" id="se" value="18:00">`)}${fld('Break from (optional, paid)',`<input type="time" id="sb1">`)}${fld('Break to',`<input type="time" id="sb2">`)}${fld('Grace (minutes)',`<input id="sg" type="number" value="10">`)}${fld('Half day if under (hours)',`<input id="sh" type="number" step="0.5" value="4">`)}${fld('Overtime after (minutes)',`<input id="so" type="number" value="30">`)}${fld('Weekly off',`<input id="sw" value="SUN" placeholder="SUN or SAT,SUN">`)}</div>`,'s','Save shift');
+  j('/api/late-policy').then(p=>{$('#lp_p').innerHTML=Object.entries(p.periods).map(([k,l])=>`<option value="${k}" ${k==p.period?'selected':''}>${esc(l)}</option>`).join('');$('#lp_l').value=p.limit;
+   $('#lp_m').innerHTML=p.emails?`E-mails on · HR: ${esc(p.hr_email)}`:'<span style="color:var(--warn)">E-mails are off until the mail server (SMTP) is set in .env</span>'});
+  $('#lp_s').onclick=safe(async()=>{await post('/api/late-policy',{period:$('#lp_p').value,limit:+$('#lp_l').value});toast('Late-arrival settings saved')});
+  $('#sadd').onclick=()=>{$('#sid').value='';$('#sn').value='';$('#sb1').value='';$('#sb2').value='';$('#shiftDlg .dt').textContent='New shift';$('#shiftDlg').showModal()};
+  $('#s').onclick=safe(async()=>{await post('/api/shifts',{id:$('#sid').value?+$('#sid').value:null,name:$('#sn').value,start:$('#ss').value,end:$('#se').value,grace_min:+$('#sg').value,half_day_hours:+$('#sh').value,ot_after_min:+$('#so').value,weekly_off:$('#sw').value,break_start:$('#sb1').value,break_end:$('#sb2').value});$('#shiftDlg').close();toast('Shift saved');render()});
+
+ } else if(tab=='holidays'){
+  m.innerHTML=card('',`<div class="tb">${fld('Year',`<input type="number" id="y" value="${today().slice(0,4)}" style="width:96px">`)}<div class="sp"></div>${fld('Date',`<input type="date" id="hd">`)}${fld('Holiday name',`<input id="hn" placeholder="e.g. Diwali">`)}<button class="pri" id="s">${I('plus')}Add holiday</button></div>
+   <div class="cb" style="padding:10px 18px"><p class="hint"><b>Holiday</b> = office closed for everyone (paid).</p></div><div id="t"></div>`);
+  const load=async()=>{const h=await j('/api/holidays?year='+$('#y').value);listCache=h;$('#t').innerHTML=tbl([['date','Date',x=>`<b>${esc(fmtDay(x.date))}</b>`],['name','Holiday'],['x','',x=>`<div class="acts"><button class="sm" onclick="delHoliday(${listCache.indexOf(x)})">Delete</button></div>`]],h,{empty:'No holidays added for this year'})};
+  $('#y').onchange=load; $('#s').onclick=safe(async()=>{await post('/api/holidays',{date:$('#hd').value,name:$('#hn').value});$('#hn').value='';toast('Holiday added');load()}); load();
+
+ } else if(tab=='leave'){
+  const fyNow=(()=>{const d=new Date();return d.getMonth()>=3?d.getFullYear():d.getFullYear()-1})();
+  m.innerHTML=card('Leave policy · 24 paid leaves a year (April to March)',`<div class="policy" style="grid-template-columns:repeat(4,minmax(0,1fr))"><div><b>${lvPill('Informed')} 20 a year</b><span>Planned leave, whenever it is applied. Uses the Informed balance only; beyond it: 1.5× a day's salary cut per day.</span></div><div><b>${lvPill('Adhoc')} 4 a year</b><span>Adhoc leave applied for, or absent without approved leave. Uses the Adhoc balance only; beyond it: 2× a day's salary cut.</span></div><div><b>Credited monthly</b><span>First month of each quarter (Apr, Jul, Oct, Jan): 1 Informed + 1 Adhoc. Other months: 2 Informed. Unused credit carries to 31 March, then is encashed.</span></div><div><b>After 3 months</b><span>Credits start 3 months after joining; leave before that is beyond the balance (1.5× / 2×). Half day: ½ from that balance (or half the cut: 0.75 / 1 day). Work from home pays 0.8 of a day (0.2 cut).</span></div></div>
+   <div class="cb" style="padding-top:0"><div class="note"><b>Absent without approved leave</b> (none applied, still pending, or rejected) stays marked <b>Absent</b> but counts as ${lvPill('Adhoc')}: paid from an Adhoc credit if one is left, otherwise a 2× day's salary cut. Today is never counted until the day is over. <span style="white-space:nowrap">Counted from <input type="date" id="abs_from" style="height:30px"> <button class="sm" id="abs_save">Save</button></span></div></div><div class="cb" style="padding-top:0"><p class="hint">Employees apply in the phone app; requests show below as pending and should be decided within 24 hours (older ones are flagged). Informed leave uses only the Informed balance and Adhoc only the Adhoc balance. Beyond the balance the employee must sign a consent showing the salary cut (kept below as proof). One application can show as several rows; approving or rejecting one decides them all.</p></div>`)+
+   card('',`<div class="tb">${fld('Month',`<input type="month" id="mo" value="${today().slice(0,7)}">`)}<label class="chk"><input type="checkbox" id="pendonly">Pending only</label>${fld('Type',`<select id="lvk"><option value="">All</option><option>Informed</option><option>Adhoc</option></select>`)}<div class="sp"></div>${LVLEG}<button class="pri" id="lv_open">${I('plus')}Record leave</button></div><div id="t"></div>`)+
+   card('Leave balance & encashment',`<div class="cb" style="padding-bottom:0"><div class="tb" style="padding:0"><p class="hint" style="flex:1;align-self:center">Credit earned in the year minus leave taken (used / credited). What is left on 31 March is encashed: balance × a day's salary (monthly salary ÷ 31). Someone who became eligible during the year is credited from that month only. <b>Adjust balance</b> adds days (or takes them away with a minus number), for example a balance carried over from the old system.</p><button id="adj_lv">${I('plus')}Adjust balance</button></div></div><div id="ys"></div><div id="adjl"></div>`,`<select id="fy">${Array.from({length:6},(_,i)=>fyNow-i).map(y=>`<option value="${y}">FY ${y}-${String(y+1).slice(2)}${y==fyNow?' (current)':''}</option>`).join('')}</select>`)+
+   formDlg('lvAdjDlg','Adjust leave balance',`<div class="fg">${fld('Employee',empSel('la_e'),1)}${fld('Financial year',`<select id="la_fy">${Array.from({length:3},(_,i)=>fyNow+1-i).map(y=>`<option value="${y}" ${y==fyNow?'selected':''}>FY ${y}-${String(y+1).slice(2)}</option>`).join('')}</select>`)}${fld('Informed days (+ / −)',`<input id="la_i" type="number" step="0.5" placeholder="e.g. 3 or -1">`)}${fld('Adhoc days (+ / −)',`<input id="la_a" type="number" step="0.5" placeholder="e.g. 1">`)}${fld('Reason',`<input id="la_r" placeholder="e.g. balance carried over from Realtime">`,1)}</div>`,'la_s','Save','Added to the year\'s credit: the days can be used from the start of the year (once the person has completed 3 months) and count in the March encashment. Your name is kept with it.')+
+   formDlg('leaveDlg','Record leave',`<div class="fg">${fld('Employee',empSel('le'),1)}${fld('From',`<input type="date" id="lf" value="${today()}">`)}${fld('To',`<input type="date" id="lt" value="${today()}">`)}${fld('Type',`<select id="ly"><option value="Informed">Informed (yellow)</option><option value="Adhoc">Adhoc (red)</option><option value="WFH">Work from home</option></select>`)}${fld('Duration',`<select id="ldur"><option value="full">Full day(s)</option><option value="half">Half day</option></select>`)}${fld('Note',`<input id="ln" placeholder="Optional">`)}<label class="chk" style="grid-column:1/-1" title="Record it exactly as entered, even if it breaks the policy"><input type="checkbox" id="lo"><b>Exception: no salary cut</b>&nbsp;(skip the balance and pay-cut rules; saved with your name)</label></div><div id="lprev" style="margin-top:12px"></div><div style="margin-top:12px"><button type="button" class="sm" id="bal">Check balance</button><div id="balbox" style="margin-top:10px"></div></div>`,'s','Save leave');
+  const typeCell=x=>lvPill(x.type,x.half?' · ½ day':'')+(x.lop?' '+pill(x.lop+'× pay cut','bad'):'');
+  const load=async()=>{let all=await j('/api/leaves?month='+$('#mo').value), l=$('#pendonly').checked?all.filter(x=>x.status=='pending'):all;if($('#lvk').value)l=l.filter(x=>x.type==$('#lvk').value);listCache=l;
+   const now=Date.now(), overdue=x=>x.status=='pending'&&x.applied_on&&now-new Date(x.applied_on+'T00:00').getTime()>36*3600e3;
+   const clash=x=>x.status=='rejected'||!x.department?[]:all.filter(y=>y.device_user_id!=x.device_user_id&&y.department==x.department&&y.status!='rejected'&&y.start_date<=x.end_date&&x.start_date<=y.end_date).map(y=>y.name);
+   $('#t').innerHTML=tbl([['name','Employee',x=>person(x.name,x.department)],['start_date','From',x=>esc(fmtDay(x.start_date))],['end_date','To',x=>esc(fmtDay(x.end_date))],['type','Type',typeCell],['status','Status',x=>pill(x.status,STK[x.status])+(overdue(x)?' '+pill('over 24 h','bad'):'')],['applied_on','Applied',x=>`<span class="muted">${esc(x.applied_on)}</span>`],['consent_id','Consent',x=>x.consent_id?`<button class="sm" onclick="showConsent(${x.consent_id})">${I('file')}Signed</button>`:''],['note','Note',x=>{const c=[...new Set(clash(x))];return `<span class="muted">${esc(x.note)}</span>${c.length?`<div class="small" style="color:var(--warn)">Overlaps in team: ${esc(c.join(', '))}</div>`:''}`}],['x','',x=>`<div class="acts">${x.status=='pending'?`<button class="sm pri" onclick="decideLeave(${listCache.indexOf(x)},'approve')">Approve</button><button class="sm" onclick="decideLeave(${listCache.indexOf(x)},'reject')">Reject</button>`:''}<button class="sm" onclick="delLeave(${listCache.indexOf(x)})">Delete</button></div>`]],l,{empty:'No leave this month'})};
+  const loadYear=async()=>{try{const y=await j('/api/leave-summary?fy='+$('#fy').value);$('#ys').innerHTML=tbl([['name','Employee',x=>person(x.name,x.department)],['informed','Informed used / earned',x=>lvPill('Informed',` ${x.informed} / ${x.year_over?x.informed_credit:x.informed_earned}`)+(!x.year_over&&x.informed_credit!=x.informed_earned?`<div class="small muted">${x.informed_credit} by 31 Mar</div>`:'')+(x.adjusted_informed?`<div class="small muted">${x.adjusted_informed>0?'+':''}${x.adjusted_informed} adjusted</div>`:''),'num'],['adhoc','Adhoc used / earned',x=>lvPill('Adhoc',` ${x.adhoc} / ${x.year_over?x.adhoc_credit:x.adhoc_earned}`)+(!x.year_over&&x.adhoc_credit!=x.adhoc_earned?`<div class="small muted">${x.adhoc_credit} by 31 Mar</div>`:'')+(x.adjusted_adhoc?`<div class="small muted">${x.adjusted_adhoc>0?'+':''}${x.adjusted_adhoc} adjusted</div>`:''),'num'],['used','Used',x=>`<b>${x.used}</b>`,'num'],['balance','Balance',x=>{const b=x.year_over?x.balance:x.balance_now;return pill(b+' days',b?'ok':'mute')+(!x.year_over&&x.balance!=b?`<div class="small muted">${x.balance} by 31 Mar</div>`:'')},'num'],['encashment','Encashment (31 Mar)',x=>x.day_rate?'₹ '+money(x.encashment)+(x.year_over?'':'<div class="small muted">if no more leave is taken</div>'):'<span class="muted">no salary set</span>','num']],y,{empty:'No employees yet'})}catch(e){$('#ys').innerHTML=''}};
+  const loadAdj=async()=>{const a=await j('/api/leave-adjustments?fy='+$('#fy').value);ADJCACHE=a;
+   $('#adjl').innerHTML=a.length?`<div class="cb" style="padding-bottom:0"><b class="small">Balance adjustments in this year</b></div>`+tbl([['name','Employee',x=>person(x.name,x.department)],['informed','Informed',x=>x.informed?lvPill('Informed',` ${x.informed>0?'+':''}${x.informed}`):'','num'],['adhoc','Adhoc',x=>x.adhoc?lvPill('Adhoc',` ${x.adhoc>0?'+':''}${x.adhoc}`):'','num'],['reason','Reason'],['created_by','By',x=>`<span class="muted">${esc(x.created_by)} · ${esc(x.created_at.slice(0,10))}</span>`],['x','',x=>`<div class="acts"><button class="sm" onclick="delLvAdj(${ADJCACHE.indexOf(x)})">Remove</button></div>`]],a):''};
+  ADJRELOAD=()=>{loadYear();loadAdj()};
+  j('/api/absence-rule').then(x=>$('#abs_from').value=x.start);
+  $('#abs_save').onclick=safe(async()=>{const r=await post('/api/absence-rule',{start:$('#abs_from').value});toast('Absences count as Adhoc from '+fmtDay(r.start));load();loadYear()});
+  $('#adj_lv').onclick=()=>{$('#la_fy').value=$('#fy').value;['la_i','la_a','la_r'].forEach(k=>$('#'+k).value='');$('#lvAdjDlg').showModal()};
+  $('#la_s').onclick=safe(async()=>{await post('/api/leave-adjustments',{device_user_id:$('#la_e').value,fy:+$('#la_fy').value,informed:+($('#la_i').value||0),adhoc:+($('#la_a').value||0),reason:$('#la_r').value});
+   $('#lvAdjDlg').close();toast('Leave balance adjusted');$('#fy').value=$('#la_fy').value;ADJRELOAD()});
+  $('#mo').onchange=load; $('#pendonly').onchange=load; $('#lvk').onchange=load; $('#fy').onchange=()=>{loadYear();loadAdj()}; $('#lv_open').onclick=()=>{$('#balbox').innerHTML='';$('#ldur').value='full';$('#lt').disabled=false;$('#lo').checked=false;wfhMode();$('#leaveDlg').showModal();prev()};
+  $('#lf').addEventListener('change',()=>{if($('#ldur').value=='half')$('#lt').value=$('#lf').value});
+  $('#bal').onclick=safe(async()=>{const b=await j('/api/leave-balance?employee='+encodeURIComponent($('#le').value));
+   $('#balbox').innerHTML=`<div class="note">${b.joined_known?`Leave credits from <b>${esc(b.eligible_from)}</b>${b.eligible?'':' (not eligible yet)'}`:'<b>Joining date not set</b>: the 3-month rule cannot be checked. Set it in Employees.'}<br>FY ${esc(b.fy)}: ${lvPill('Informed',` ${b.informed.left} left`)} (credited ${b.informed.credited}, used ${b.informed.used}) · ${lvPill('Adhoc',` ${b.adhoc.left} left`)} (credited ${b.adhoc.credited}, used ${b.adhoc.used})${b.next_credit?`<br>Next credit on ${esc(fmtDay(b.next_credit.date))}: ${b.next_credit.informed} Informed${b.next_credit.adhoc?' + '+b.next_credit.adhoc+' Adhoc':''}`:''}</div>`});
+  const isWfh=()=>$('#ly').value=='WFH';
+  const wfhMode=()=>{const w=isWfh();$('#ldur').disabled=w;if(w){$('#ldur').value='full';$('#lt').disabled=false}$('#lo').closest('label').style.display=w?'none':''};
+  $('#ly').addEventListener('change',wfhMode);
+  const prev=async()=>{const box=$('#lprev');
+   if(isWfh()){box.innerHTML=`<div class="note ok"><b>Work from home</b> from ${esc(fmtDay($('#lf').value))}${$('#lt').value>$('#lf').value?' to '+esc(fmtDay($('#lt').value)):''}: approved straight away, no leave balance used. Each working day is paid at 0.8 of a day, whether or not they punch.</div>`;return}
+   if($('#lo').checked){const t=$('#ly').value,h=$('#ldur').value=='half';box.innerHTML=`<div class="note ok"><b>Exception: no salary cut.</b> Recorded as ${lvPill(t)} leave${h?' (half day)':''} exactly as entered and paid in full: no balance check, no 1.5× / 2× cut. It uses ${t} credit if the person has some (none before their leave starts). Saved with your name.</div>`;return}
+   try{const p=await j('/api/leave-preview?'+new URLSearchParams({employee:$('#le').value,type:$('#ly').value,start_date:$('#lf').value,end_date:($('#ldur').value=='half')?$('#lf').value:$('#lt').value,half:($('#ldur').value=='half')}));
+    const parts=[['Informed',p.informed_days],['Adhoc',p.adhoc_days]].filter(x=>x[1]).map(x=>lvPill(x[0],' '+x[1]));
+    box.innerHTML=`<div class="note ${p.needs_consent?'':'ok'}">${p.working_days} working day(s): ${parts.join(' ')||'—'}${p.excess_days?` · <b>${p.excess_days}</b> beyond balance`:''}${p.deduction&&p.salary_known?` (₹ ${money(p.deduction)} cut)`:''}${p.warnings.map(w=>`<br>• ${esc(w)}`).join('')}</div>`}catch(e){box.innerHTML=`<div class="note">${esc(e.message)}</div>`}};
+  ['#le','#lf','#lt','#ly','#lo','#ldur'].forEach(k=>$(k).addEventListener('change',prev));
+  $('#ldur').addEventListener('change',()=>{const h=$('#ldur').value=='half';$('#lt').disabled=h;if(h)$('#lt').value=$('#lf').value});
+  $('#le').addEventListener('change',()=>$('#balbox').innerHTML='');
+  $('#s').onclick=safe(async()=>{if(isWfh()){await post('/api/wfh',{device_user_id:$('#le').value,start_date:$('#lf').value,end_date:$('#lt').value||$('#lf').value,reason:$('#ln').value});$('#leaveDlg').close();toast('Work from home recorded');return}
+   await post('/api/leaves',{device_user_id:$('#le').value,start_date:$('#lf').value,end_date:($('#ldur').value=='half')?$('#lf').value:$('#lt').value,type:$('#ly').value,note:$('#ln').value,override:$('#lo').checked,half:($('#ldur').value=='half')});$('#leaveDlg').close();toast('Leave saved');load();loadYear()}); load(); loadYear(); loadAdj();
+
+ } else if(tab=='wfh'){
+  m.innerHTML=card('',`<div class="tb">${fld('Month',`<input type="month" id="mo" value="${today().slice(0,7)}">`)}<label class="chk"><input type="checkbox" id="pendonly">Pending only</label><p class="hint" style="flex:1;align-self:center;margin-left:8px">Working from home is not allowed by default. Employees request it in the phone app (or HR records it in Leave → Record leave); a team lead (own team), HR, management or admin approves it. On approved days they can check in from anywhere; a day worked from home (or not punched) is paid at 0.8, a day they came to the office is paid in full. Delete removes a request whatever its status.</p></div><div id="t"></div>`);
+  const load=async()=>{let l=await j('/api/wfh?month='+$('#mo').value);if($('#pendonly').checked)l=l.filter(x=>x.status=='pending');listCache=l;
+   $('#t').innerHTML=tbl([['name','Employee',x=>person(x.name,x.department)],['start_date','From',x=>esc(fmtDay(x.start_date))],['end_date','To',x=>esc(fmtDay(x.end_date))],['reason','Reason',x=>`<span class="muted">${esc(x.reason)}</span>`],['status','Status',x=>pill(x.status,STK[x.status])],['applied_at','Requested',x=>`<span class="muted">${esc(x.applied_at.slice(0,16))}</span>`],['decided_by','Decided by',x=>`<span class="muted">${esc(x.decided_by)}</span>`],
+    ['x','',x=>`<div class="acts">${x.status=='pending'?`<button class="sm pri" onclick="decideWfh(${listCache.indexOf(x)},'approve')">Approve</button><button class="sm" onclick="decideWfh(${listCache.indexOf(x)},'reject')">Reject</button>`:''}<button class="sm" onclick="delWfh(${listCache.indexOf(x)})">Delete</button></div>`]],l,{empty:'No work-from-home requests this month'})};
+  WFHRELOAD=load;
+  $('#mo').onchange=load; $('#pendonly').onchange=load; load();
+
+ } else if(tab=='import'){
+  m.innerHTML=card('',`<div class="steps">
+    <div class="step"><b><i>1</i>What are you importing?</b><select id="ik"><option value="shifts">Shifts</option><option value="employees">Employees</option><option value="profiles">Employee details (personal &amp; bank)</option><option value="holidays">Holidays</option><option value="leaves">Leave</option><option value="punches">Punches (attendance history)</option></select><a href="#" id="itpl" class="small">${I('down')} Download a sample file</a></div>
+    <div class="step"><b><i>2</i>Choose the file</b><input type="file" id="if" accept=".csv,.xlsx,.txt" style="height:auto;padding:8px"><label class="chk" title="For the InActive / resigned employee list: keeps their records but hides them from reports"><input type="checkbox" id="iina">These are resigned staff</label></div>
+    <div class="step"><b><i>3</i>Check, then import</b><label class="chk"><input type="checkbox" id="idry" checked>Preview only (saves nothing)</label><button class="pri" id="ib">${I('upload')}Run</button></div>
+   </div><div class="cb" style="padding-top:0"><p class="hint">Excel (.xlsx) or CSV. Column names are matched automatically ("Emp Code", "Card No" and "ID" all work). Best order: <b>Shifts → Employees → Holidays → Leave → Punches</b>.<br><b>Employee details</b> fills in personal and bank details (for example the Google Form sheet) for people already in Employees. It never changes department, shift or salary, and fills mobile, father's name and joining date only where they are still empty.</p></div><div id="t"></div>`);
+  $('#itpl').onclick=e=>{e.currentTarget.href='/api/import/'+$('#ik').value+'/template.csv'};
+  $('#ib').onclick=safe(async()=>{const f=$('#if').files[0]; if(!f)throw new Error('Choose a file first');
+   const dry=$('#idry').checked; if(!dry&&!await confirmBox('Import for real?','This writes '+f.name+' into the database.','Import',false))return;
+   const fd=new FormData(); fd.append('file',f); $('#ib').disabled=true;
+   try{const r=await j(`/api/import/${$('#ik').value}?dry_run=${dry}&inactive=${$('#iina').checked&&$('#ik').value=='employees'}`,{method:'POST',body:fd});
+    $('#t').innerHTML=`<div class="cb"><div class="note ${r.errors.length?'':'ok'}">${dry?'<b>Preview, nothing saved:</b> ':'<b>Imported:</b> '}${r.rows} rows read · ${r.created} new · ${r.updated} updated · ${r.skipped} skipped${r.errors.length?' · '+r.errors.length+' problems':''}${dry&&!r.errors.length?'<br>Looks good. Untick "Preview only" and press Run to import.':''}</div></div>`+(r.errors.length?tbl([['row','Row in file'],['message','Problem']],r.errors):'');
+   }finally{$('#ib').disabled=false}});
+
+ } else if(tab=='users'){
+  m.innerHTML=card('',`<div class="tb"><p class="hint" style="flex:1;align-self:center"><b>Admin</b> and <b>Management</b> can do everything. <b>HR</b> does the day-to-day work, and you can untick abilities per person. <b>Team leads</b> see only their department and can change shifts and fix punches for it, plus any extras you tick.</p><button class="pri" id="uadd">${I('plus')}Add user</button></div><div id="t"></div>`)+
+   formDlg('userDlg','Add user',`<div class="fg">${fld('Username',`<input id="un" placeholder="e.g. priya">`)}${fld('Display name',`<input id="ud" placeholder="e.g. Priya Shah">`)}${fld('Password',`<input id="up" type="password" placeholder="at least 8 characters">`)}${fld('Role',`<select id="ur"><option value="manager">Team lead (own team)</option><option value="hr">HR</option><option value="management">Management (full admin)</option><option value="admin">Admin (everything)</option></select>`)}${fld('Department (team leads)',`<input id="ut" placeholder="exactly as in Employees">`)}${fld('E-mail (late-arrival alerts)',`<input id="uem" type="email" placeholder="e.g. lead@madarwala.com">`)}<label class="chk" style="align-self:end"><input type="checkbox" id="ua" checked>Active</label></div><div style="margin-top:14px" id="permbox"></div>`,'s','Save user');
+  const drawPerms=(sel)=>{const r=$('#ur').value; const list=r=='hr'?Object.keys(PL):r=='manager'?MG:[];
+   $('#permbox').innerHTML=list.length?`<div class="f"><span>${r=='hr'?'HR abilities':'Extra abilities (for their own team)'}</span><div class="perm">${list.map(k=>`<label class="chk" style="height:30px"><input type="checkbox" class="pm" value="${k}" ${sel.includes(k)?'checked':''}>${PL[k]}</label>`).join('')}</div></div>`:'<p class="hint">Admin and Management always have every ability.</p>'};
+  $('#ur').onchange=()=>drawPerms($('#ur').value=='hr'?HRD:[]); drawPerms([]);
+  $('#uadd').onclick=()=>{['un','ud','up','ut','uem'].forEach(k=>$('#'+k).value='');$('#un').readOnly=false;$('#up').placeholder='at least 8 characters';$('#ur').value='manager';$('#ua').checked=true;$('#ur').onchange();$('#userDlg .dt').textContent='Add user';$('#userDlg').showModal()};
+  const us=await j('/api/users'); listCache=us;
+  $('#t').innerHTML=tbl([['username','User',r=>person(r.display_name||r.username,r.username)],['role','Role',r=>pill((ROLE[r.role]||[r.role])[0],(ROLE[r.role]||[])[1])],['department','Team',r=>esc(r.role=='manager'?r.department:'')],['permissions','Abilities',r=>`<span class="muted small">${esc(r.role=='hr'?(r.permissions=='*'||!r.permissions?'all HR abilities':r.permissions.split(',').map(k=>PL[k]||k).join(', ')):r.role=='manager'?(r.permissions?'team basics + '+r.permissions.split(',').map(k=>PL[k]||k).join(', '):'team basics'):'everything')}</span>`],['active','Status',r=>r.active?pill('Active','ok'):pill('Disabled','mute')],['x','',r=>`<div class="acts"><button class="sm" onclick="editUser(${listCache.indexOf(r)})">Edit</button><button class="sm" onclick="delUser(${listCache.indexOf(r)})">Delete</button></div>`]],us);
+  $('#s').onclick=safe(async()=>{const perms=$$('.pm:checked').map(c=>c.value).join(',');await post('/api/users',{username:$('#un').value,display_name:$('#ud').value,password:$('#up').value,role:$('#ur').value,department:$('#ut').value,email:$('#uem').value,active:$('#ua').checked,permissions:$('#ur').value=='hr'&&perms==HRD.join(',')?'*':perms});$('#userDlg').close();toast('User saved');render()});
+
+ } else if(tab=='backups'){
+  const [b,ML]=await Promise.all([j('/api/backups'),j('/api/mail')]), L=b.last||{}, mb=n=>(n/1024/1024).toFixed(n>1048576?1:2)+' MB';
+  const setup=[!b.encrypted&&'<b>BACKUP_PASSWORD</b> is not set, so the backup files are not password protected',!b.email_configured&&'email is not set up yet (<b>SMTP_HOST</b>, <b>SMTP_USER</b>, <b>SMTP_PASSWORD</b>, <b>BACKUP_EMAIL_TO</b> in the server\'s .env)'].filter(Boolean);
+  m.innerHTML=`<div class="kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+    <div class="kpi" style="--c:${L.error?'#dc2626':'#16a34a'};--l:${L.error?'#fee2e2':'#dcfce7'};cursor:default"><div class="ic">${I(L.error?'x':'check')}</div><div style="min-width:0"><span>Last backup</span><b style="font-size:20px">${L.at?esc(fmtDay(L.date)):'Not yet'}</b><small>${L.at?esc(L.at.slice(11,16))+' · '+(L.error?'failed':'OK'):'runs tonight'}</small></div></div>
+    <div class="kpi" style="--c:#6366f1;--l:#eef2ff;cursor:default"><div class="ic">${I('wallet')}</div><div style="min-width:0"><span>Emailed to</span><b style="font-size:17px;overflow:hidden;text-overflow:ellipsis">${esc(L.emailed_to||b.email_to||'—')}</b><small>${b.email_configured?'every night':'not set up'}</small></div></div>
+    <div class="kpi" style="--c:#d97706;--l:#fef3c7;cursor:default"><div class="ic">${I('clock')}</div><div><span>Schedule</span><b style="font-size:20px">${b.hour<0?'Off':String(b.hour).padStart(2,'0')+':00 nightly'}</b><small>last ${b.keep_days} days kept on the server</small></div></div></div>
+   ${L.error?`<div class="banner" style="background:#fef2f2;border-color:#fecaca;color:#7f1d1d;cursor:default">${I('alert')}<div><b>The last backup had a problem:</b> ${esc(L.error)}</div></div>`:''}
+   ${setup.length?`<div class="banner" style="cursor:default">${I('alert')}<div>${setup.join('; and ')}. See DEPLOY.md.</div></div>`:''}`+
+   card('Backup files',`<div class="cb" style="padding-bottom:0"><p class="hint">Each file holds the whole database and the employee documents (selfie photos stay on the server). ${b.encrypted?'Files are password protected: open them with 7-Zip or WinRAR using the backup password.':''}</p></div>`+
+    tbl([['file','File',x=>`<b>${esc(x.file)}</b>`],['size','Size',x=>mb(x.size),'num'],['x','',x=>`<div class="acts"><a class="btn sm" href="/api/backups/${encodeURIComponent(x.file)}">${I('down')}Download</a></div>`]],b.files,{empty:'No backups yet: the first one runs tonight, or press Back up now'}),
+    `<button class="pri" id="bknow">${I('down')}Back up now</button>`)+
+   card('E-mail and weekly report',`<div class="cb"><div class="note ${ML.configured?'ok':''}">${ML.configured?`E-mail is set up: sending as <b>${esc(ML.sender)}</b> through ${esc(ML.host)}:${ML.port}.`:'E-mail is not set up yet: fill in SMTP_HOST, SMTP_PORT, SMTP_USER and SMTP_PASSWORD in the server\'s .env and restart.'} Late-arrival alerts and the weekly report go to <b>${esc(ML.hr_email)}</b>.</div>
+     <p class="hint" style="margin:12px 0">Every Monday from ${String(ML.weekly.hour).padStart(2,'0')}:00 HR gets an Excel report of the month so far (summary, late arrivals, leave and the full time card). On the first Monday of a month it covers the whole previous month instead. Next report covers <b>${esc(fmtDay(ML.weekly.next_from))} to ${esc(fmtDay(ML.weekly.next_to))}</b>.${ML.weekly.last.at?` Last sent ${esc(ML.weekly.last.at.slice(0,16))}${ML.weekly.last.error?`: <span style="color:var(--bad)">${esc(ML.weekly.last.error)}</span>`:' to '+esc(ML.weekly.last.sent_to)}.`:''}</p>
+     <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="mtest">${I('check')}Send test e-mail</button><button id="wnow">${I('down')}Send weekly report now</button><a class="btn" href="/api/weekly-report.xlsx">${I('down')}Download the report</a></div></div>`);
+  $('#mtest').onclick=safe(async()=>{$('#mtest').disabled=true;try{const r=await post('/api/mail/test',{});toast('Test e-mail sent to '+r.sent_to+': check the inbox')}finally{$('#mtest').disabled=false}});
+  $('#wnow').onclick=safe(async()=>{$('#wnow').disabled=true;try{const r=await post('/api/weekly-report/run',{});if(r.error)toast('Report not sent: '+r.error,'bad');else toast('Weekly report e-mailed to '+r.sent_to)}finally{render()}});
+  $('#bknow').onclick=safe(async()=>{$('#bknow').disabled=true;try{const r=await post('/api/backups/run',{});if(r.error)toast('Backup saved, but: '+r.error,'bad');else toast(r.emailed_to?'Backup made and emailed to '+r.emailed_to:'Backup made')}finally{render()}});
+
+ } else if(tab=='audit'){
+  const ago=n=>{const d=new Date();d.setDate(d.getDate()-n);return d.toLocaleDateString('en-CA')};
+  m.innerHTML=card('',`<div class="tb">${fld('From',`<input type="date" id="af" value="${ago(30)}">`)}${fld('To',`<input type="date" id="at" value="${today()}">`)}${fld('User or action',`<input id="aq" placeholder="e.g. priya, leaves, payroll" style="width:220px">`)}
+    <div style="display:flex;gap:6px;align-self:flex-end">${[['7 days',7],['30 days',30],['1 year',365],['All',0]].map(([l,n])=>`<button class="sm" onclick="auditRange(${n})">${l}</button>`).join('')}</div><div class="sp"></div>${dl('acsv','CSV')}</div>
+    <div class="cb" style="padding:10px 18px"><p class="hint" id="anote">Who changed what, and whether it worked. Request contents such as passwords are never logged.</p></div><div id="t"></div>`);
+  let timer; const qs=()=>new URLSearchParams({date_from:$('#af').value,date_to:$('#at').value,q:$('#aq').value,limit:5000});
+  const load=async()=>{const a=await j('/api/audit?'+qs());
+   $('#anote').textContent=`${a.length}${a.length==5000?'+':''} ${a.length==1?'entry':'entries'}${a.length==5000?' (showing the newest 5000: narrow the dates to see older ones)':''}. Who changed what, and whether it worked; request contents such as passwords are never logged.`;
+   $('#t').innerHTML=tbl([['ts','Time',r=>`<span class="muted">${esc(r.ts)}</span>`],['user','User',r=>`<b>${esc(r.user)}</b>`],['action','Action',r=>`<span class="code">${esc(r.action)}</span>`],['status','Result',r=>+r.status<400?pill(r.status,'ok'):pill(r.status,'bad')]],a,{empty:'Nothing logged in this period'})};
+  AUDITLOAD=load; $('#af').onchange=load; $('#at').onchange=load; $('#aq').oninput=()=>{clearTimeout(timer);timer=setTimeout(load,300)};
+  $('#acsv').onclick=safe(async e=>{e.preventDefault();const a=await j('/api/audit?'+qs());const cell=v=>{v=String(v??'');if(/^[=+\-@]/.test(v))v="'"+v;return '"'+v.replace(/"/g,'""')+'"'};
+   const csv='time,user,action,result\n'+a.map(r=>[r.ts,r.user,r.action,r.status].map(cell).join(',')).join('\n');
+   const u=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));const x=document.createElement('a');x.href=u;x.download=`audit-${$('#af').value||'start'}-to-${$('#at').value||'now'}.csv`;x.click();URL.revokeObjectURL(u)});
+  load();
+
+ } else if(tab=='devices'){
+  listCache=devs; const url='http://'+location.hostname;
+  m.innerHTML=`<div class="devs">${devs.map((d,i)=>`<div class="dev"><h4><span class="dot ${d.online?'':'off'}"></span>${esc(d.name||d.dev_id)}<span style="margin-left:auto">${d.online?pill('Online','ok'):pill('Offline','mute')}</span></h4>
+    <dl><dt>Location</dt><dd>${esc(d.location||'—')}</dd><dt>Device ID</dt><dd><span class="code">${esc(d.dev_id)}</span></dd><dt>Model</dt><dd>${esc(d.model||'—')}${d.firmware?` <span class="muted">${esc(d.firmware)}</span>`:''}</dd><dt>Last seen</dt><dd>${esc(d.last_seen||'never')}</dd></dl>
+    <button class="sm" onclick="renameDev(${i})">${I('edit')}Rename</button></div>`).join('')}</div>
+   ${card('Connect a fingerprint machine',`<div class="cb"><ol style="margin:0;padding-left:18px;line-height:1.9"><li>On the machine open <b>Menu → Comm. → Webserver</b> (or Cloud server).</li><li>Set the server mode to <b>FkWeb</b> and the Webserver URL to <span class="code">${esc(url)}</span>. Use plain <b>http</b>, not https.</li><li>Save and restart the machine. It appears here by itself within a minute. Online means it was heard from in the last 90 seconds.</li></ol></div>`)}`;
+  if(!devs.length)m.insertAdjacentHTML('afterbegin',card('',emptyBox('No machine has connected yet. Follow the steps below.')));
+
+ } else if(tab=='emp'){
+  listCache=emps; const depts=[...new Set(emps.map(e=>e.department).filter(Boolean))].sort();
+  const canDocs=ME.role!='manager';   // HR and above: documents, personal and bank details
+  const pfld=([f,label,inp])=>fld(label,inp=='date'?`<input type="date" id="p_${f}">`:Array.isArray(inp)?`<select id="p_${f}"><option value="">—</option>${inp.map(o=>`<option>${o}</option>`).join('')}</select>`:inp=='area'?`<textarea id="p_${f}" rows="2"></textarea>`:`<input id="p_${f}" ${inp||''}>`,inp=='area');
+  [MS,DOCT]=await Promise.all([j('/api/masters'),canDocs?j('/api/document-types'):[]]);
+  m.innerHTML=card('',`<div class="tb">${fld('Search',`<input id="q" placeholder="Name, ID, department…" style="width:240px">`)}${fld('Department',`<select id="qd"><option value="">All</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select>`)}<label class="chk"><input type="checkbox" id="qr">Show resigned</label><div class="sp"></div><button class="pri" id="eadd">${I('plus')}Add employee</button></div>
+   <div class="tb" style="background:#fafbfd">${fld('Shift for the ticked people',shiftSel('bs'))}<button id="bb">Assign shift</button><span class="hint" style="align-self:center" id="ecount"></span></div><div id="t"></div>`)+
+   formDlg('empDlg','Add employee',`<div class="fg">${fld('Employee / device ID',`<div style="display:flex;gap:6px"><input id="i" placeholder="same as on the machine" style="flex:1;min-width:0"><button type="button" class="sm" id="chid" style="display:none">Change ID</button></div>`)}${fld('Full name',`<input id="n">`)}${fld('Mobile',`<input id="mb" inputmode="tel">`)}${fld('Department',`<select id="dp"></select>`)}${fld('Designation',`<select id="dg"></select>`)}${fld('Branch',`<input id="br">`)}${fld('Shift',shiftSel('es'))}${canDocs?fld('Monthly salary',`<input id="sal" type="number" min="0">`):''}${fld('Joining date',`<input type="date" id="jd">`)}
+     <label class="chk" style="grid-column:1/-1"><input type="checkbox" id="rmt">Can check in from anywhere with the phone app (work from home / field work)</label>
+     <label class="chk"><input type="checkbox" id="ac" checked>Active</label><div id="lwBox" style="display:none">${fld('Last working day',`<input type="date" id="lw">`)}</div>
+     ${canDocs?`<div class="fsec">Personal details</div>${fld("Father's / husband's name",`<input id="fn">`)}${PF.filter(f=>f[3]=='p').map(pfld).join('')}
+     <div class="fsec">Bank details<small>for salary transfer</small></div>${PF.filter(f=>f[3]=='b').map(pfld).join('')}`:''}</div>
+    ${canDocs?`<div class="f" style="margin-top:16px"><span>Documents</span><div class="perm" style="display:block;padding:12px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select id="dtp">${DOCT.map(t=>`<option>${esc(t)}</option>`).join('')}</select><input type="file" id="dfile" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx" style="height:auto;padding:6px;flex:1;min-width:180px"><button type="button" class="sm" id="dadd">${I('upload')}Add</button></div><div id="dlist" style="margin-top:10px"></div><p class="hint" style="margin-top:6px">PDF, photo or Word file, up to 10 MB each.</p></div></div>`:''}
+    <p class="hint" style="margin-top:12px">IDs ignore leading zeros (00217315 = 217315). Set an app PIN from the list so the person can use the phone app.</p>
+    ${canDocs?`<div id="delBox" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:12px;align-items:center;justify-content:space-between"><span class="hint">Someone who left: untick <b>Active</b> instead, so their attendance and payroll history stays.</span><button type="button" class="sm danger" id="edel">Delete employee</button></div>`:''}`,'s','Save employee');
+  const opts=(sel,list,kind,val)=>{const names=list.map(x=>x.name);if(val&&!names.includes(val))names.push(val);$(sel).innerHTML=`<option value="">—</option>${names.map(n=>`<option ${n==val?'selected':''}>${esc(n)}</option>`).join('')}<option value="__new">+ Add new ${kind}…</option>`};
+  const fillLists=(d='',g='')=>{opts('#dp',MS.departments,'department',d);opts('#dg',MS.designations,'designation',g)};
+  for(const [sel,kind] of [['#dp','department'],['#dg','designation']])$(sel).onchange=safe(async e=>{if(e.target.value!='__new')return;const v=await ask({title:'New '+kind,fields:[{label:'Name'}],ok:'Add'});e.target.value='';if(!v||!v[0].trim())return;
+   await post('/api/masters/'+kind,{name:v[0].trim()});MS=await j('/api/masters');fillLists(kind=='department'?v[0].trim():$('#dp').value,kind=='designation'?v[0].trim():$('#dg').value)});
+  $('#ac').onchange=()=>$('#lwBox').style.display=$('#ac').checked?'none':'';
+  $('#chid').onclick=safe(async()=>{const cur=$('#i').value;
+   const v=await ask({title:'Change employee ID',text:`Punches, leave, shifts and documents of ID ${cur} move to the new ID. Change it on the attendance machine too, or new punches will still come in under ${cur}. The person signs in to the phone app again with the new ID.`,fields:[{label:'New employee ID',value:cur}],ok:'Change ID'});
+   if(!v||!v[0].trim()||v[0].trim()==cur)return;
+   const r=await post('/api/employees/'+encodeURIComponent(cur)+'/change-id',{new_id:v[0].trim()});
+   toast('ID changed to '+r.device_user_id);$('#empDlg').close();render()});
+  if(canDocs)$('#edel').onclick=safe(async()=>{const uid=$('#i').value,nm=$('#n').value;
+   const v=await ask({title:'Delete '+nm+'?',text:`This permanently deletes ${nm} (ID ${uid}) with all their punches, leave, shifts, loans, payroll adjustments and documents. It cannot be undone (only the nightly backup has a copy). Type the employee ID to confirm.`,fields:[{label:'Employee ID',ph:uid}],ok:'Delete for good',danger:true});
+   if(v===null)return;if(db_id(v[0])!==db_id(uid))throw new Error('The ID did not match, nothing was deleted');
+   await post('/api/employees/'+encodeURIComponent(uid)+'/erase',{});toast(nm+' deleted');$('#empDlg').close();render()});
+  PENDING=[];
+  const drawDocs=async()=>{if(!canDocs)return;const uid=$('#i').readOnly?$('#i').value:'';const have=uid?await j('/api/employees/'+encodeURIComponent(uid)+'/documents'):[];
+   $('#dlist').innerHTML=have.map(d=>`<div class="who" style="padding:5px 0">${I('file')}<div style="flex:1;min-width:0"><a target="_blank" href="/api/documents/${d.id}">${esc(d.filename)}</a><small>${esc(d.doc_type)} · ${Math.ceil(d.size/1024)} KB · ${esc(d.uploaded_at.slice(0,10))} by ${esc(d.uploaded_by)}</small></div><button type="button" class="sm" onclick="delDoc(${d.id})">Remove</button></div>`).join('')+
+    PENDING.map((p,i)=>`<div class="who" style="padding:5px 0">${I('file')}<div style="flex:1"><b>${esc(p.file.name)}</b><small>${esc(p.type)} · uploads when you save</small></div><button type="button" class="sm" onclick="PENDING.splice(${i},1);DRAWDOCS()">Remove</button></div>`).join('')||'<p class="hint">No documents yet.</p>'};
+  DRAWDOCS=drawDocs;
+  if(canDocs)$('#dadd').onclick=safe(async()=>{const f=$('#dfile').files[0];if(!f)throw new Error('Choose a file first');if(f.size>10*1024*1024)throw new Error('File is larger than 10 MB');
+   if($('#i').readOnly){await upDoc($('#i').value,f,$('#dtp').value);toast('Document uploaded')}else PENDING.push({file:f,type:$('#dtp').value});$('#dfile').value='';drawDocs()});
+  EMPFORM=(e)=>{const x=e||{};if(canDocs)for(const [f] of PF){const el=$('#p_'+f),v=x[f]||'';if(el.tagName=='SELECT'&&v&&![...el.options].some(o=>o.value==v))el.add(new Option(v,v));
+     if(el.tagName=='INPUT'&&PF.find(p=>p[0]==f)[2]=='date'){const bad=v&&!/^\d{4}-\d\d-\d\d$/.test(v);el.type=bad?'text':'date';el.title=bad?'Could not read this date from the import: pick or type the right date (DD/MM/YYYY)':''}el.value=v}
+   $('#i').value=x.device_user_id||'';$('#i').readOnly=!!e;$('#chid').style.display=e?'':'none';if($('#delBox'))$('#delBox').style.display=e?'flex':'none';$('#n').value=x.name||'';fillLists(x.department||'',x.designation||'');$('#br').value=x.branch||'';$('#mb').value=x.mobile||'';$('#fn').value=x.father_name||'';
+   $('#ac').checked=e?!!x.active:true;$('#lw').value=x.left_on||'';$('#ac').onchange();$('#rmt').checked=!!x.remote_ok;$('#es').value=x.shift_id??'';if(canDocs)$('#sal').value=x.salary||'';$('#jd').value=x.joined||'';PENDING=[];
+   $('#empDlg .dt').textContent=e?'Edit '+x.name:'Add employee';$('#empDlg').showModal();drawDocs();if(!e)$('#i').focus()};
+  const draw=()=>{const q=$('#q').value.toLowerCase(), dd=$('#qd').value, rs=$('#qr').checked;
+   const rows=emps.filter(e=>(rs||e.active)&&(!dd||e.department==dd)&&(!q||[e.name,e.device_user_id,e.department,e.designation,e.branch,e.mobile].join(' ').toLowerCase().includes(q)));
+   $('#ecount').textContent=`${rows.length} of ${emps.length} employees`;
+   $('#t').innerHTML=tbl([['sel','<input type="checkbox" id="all">',r=>`<input type="checkbox" class="sel" value="${esc(r.device_user_id)}">`],['name','Employee',r=>person(r.name,'ID '+r.device_user_id)],['department','Department',r=>`${esc(r.department)}${r.designation?`<div class="small muted">${esc(r.designation)}</div>`:''}`],['branch','Branch'],['shift','Shift',r=>(r.shift?esc(r.shift):'<span class="muted">Flexible</span>')+(r.remote_ok?' '+pill('Remote','sky'):'')],['salary','Salary',r=>r.salary!=null&&r.salary!==undefined?money(r.salary):'','num'],['joined','Joined',r=>`<span class="muted">${esc(r.joined)}</span>`],['documents','Docs',r=>r.documents?pill(r.documents,'brand'):''],['active','Status',r=>r.active?pill('Active','ok'):pill(r.left_on?'Left '+fmtDay(r.left_on):'Resigned','mute')],
+    ['x','',r=>`<div class="acts"><button class="sm" onclick="setPin(${listCache.indexOf(r)})">${r.pin_hash?'Change PIN':'Set PIN'}</button><button class="sm" onclick="editEmp(${listCache.indexOf(r)})">Edit</button></div>`]],rows,{empty:emps.length?'Nobody matches the search':'No employees yet. Add them here, or bring them in from Import data.'});
+   const all=$('#all'); if(all)all.onclick=e=>$$('.sel').forEach(c=>c.checked=e.target.checked)};
+  $('#q').oninput=draw; $('#qd').onchange=draw; $('#qr').onchange=draw; draw();
+  $('#eadd').onclick=()=>EMPFORM(null);
+  $('#bb').onclick=safe(async()=>{const ids=$$('.sel:checked').map(c=>c.value);if(!ids.length)throw new Error('Tick at least one employee in the list');
+   const r=await post('/api/employees/bulk-shift',{ids,shift_id:$('#bs').value?+$('#bs').value:null});toast(r.updated+' employee'+(r.updated==1?'':'s')+' updated');render()});
+  $('#s').onclick=safe(async()=>{if(!$('#ac').checked&&!$('#lw').value)throw new Error('Enter the last working day of the person who left');
+   await post('/api/employees',{device_user_id:$('#i').value,name:$('#n').value,department:$('#dp').value.replace('__new',''),designation:$('#dg').value.replace('__new',''),branch:$('#br').value,mobile:$('#mb').value,...(canDocs?{father_name:$('#fn').value,...Object.fromEntries(PF.map(([f])=>[f,$('#p_'+f).value]))}:{}),active:$('#ac').checked,left_on:$('#ac').checked?'':$('#lw').value,remote_ok:$('#rmt').checked,shift_id:$('#es').value?+$('#es').value:null,...(canDocs?{salary:+($('#sal').value||0)}:{}),joined:$('#jd').value});
+   for(const p of PENDING)await upDoc($('#i').value,p.file,p.type);
+   $('#empDlg').close();toast('Employee saved'+(PENDING.length?' with '+PENDING.length+' document'+(PENDING.length>1?'s':''):''));PENDING=[];render()});
+
+ } else if(tab=='masters'){
+  const ms=await j('/api/masters');
+  const block=(kind,list)=>card(kind=='department'?'Departments':'Designations',`<div class="tb">${fld('New '+kind,`<input id="mn_${kind}" placeholder="${kind=='department'?'e.g. Accounts':'e.g. Executive'}">`)}<button class="pri" onclick="addMaster('${kind}')">${I('plus')}Add</button></div>`+
+   tbl([['name','Name',r=>`<b>${esc(r.name)}</b>`],['employees','Employees',r=>pill(r.employees,r.employees?'brand':'mute')],['x','',r=>`<div class="acts"><button class="sm" onclick="renMaster('${kind}',${list.indexOf(r)})">Rename</button><button class="sm" onclick="delMaster('${kind}',${list.indexOf(r)})">Delete</button></div>`]],list,{empty:'None yet'}));
+  MS=ms; m.innerHTML=`<p class="hint" style="margin-bottom:14px">These lists appear as drop-downs in the employee form. Renaming one also updates everyone who has it. Values typed before the lists existed are included automatically.</p><div class="g2e">${block('department',ms.departments)}${block('designation',ms.designations)}</div>`;
+
+ } else if(tab=='roster'){
+  const mon=d=>{const x=new Date(d+'T00:00');x.setDate(x.getDate()-((x.getDay()+6)%7));return x.toLocaleDateString('en-CA')};
+  RWEEK=RWEEK||mon(today()); RMONTH=RMONTH||today().slice(0,7);
+  const mdays=m0=>new Date(+m0.slice(0,4),+m0.slice(5,7),0).getDate();
+  const g=await j(RMODE=='month'?`/api/roster?start=${RMONTH}-01&days=${mdays(RMONTH)}`:'/api/roster?start='+RWEEK); const depts=[...new Set(g.rows.map(r=>r.department).filter(Boolean))].sort();
+  const shName=id=>(shifts.find(s=>String(s.id)==id)||{name:'?'}).name;
+  const shOpt=v=>`<option value="" ${v==''?'selected':''}>Normal</option><option value="off" ${v=='off'?'selected':''}>Off</option>${v.includes(',')?`<option value="${esc(v)}" selected>${esc(v.split(',').map(shName).join(' + '))}</option>`:''}${shifts.map(s=>`<option value="${s.id}" ${String(s.id)==v?'selected':''}>${esc(s.name)}</option>`).join('')}<option value="__multi">Several shifts…</option>`;
+  const shift0=r=>r.shift||'Flexible';
+  const allOpt=`<option value="">Set all days…</option><option value="normal">Normal (clear)</option><option value="off">Off</option>${shifts.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}`;
+  m.innerHTML=card('',`<div class="tb">${fld('View',`<select id="rmode"><option value="week" ${RMODE=='week'?'selected':''}>Week</option><option value="month" ${RMODE=='month'?'selected':''}>Month</option></select>`)}${RMODE=='month'?`<button id="rprev">‹ Previous month</button>${fld('Month',`<input type="month" id="rw" value="${RMONTH}">`)}<button id="rnext">Next month ›</button>`:`<button id="rprev">‹ Previous week</button>${fld('Week starting',`<input type="date" id="rw" value="${RWEEK}">`)}<button id="rnext">Next week ›</button>`}${fld('Department',`<select id="rdp"><option value="">All</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select>`)}<div class="sp"></div>${dl('rxlsx','Excel')}${RMODE=='week'?`<button id="rcopy">${I('swap')}Copy previous week here</button>`:''}</div>
+   <div class="cb" style="padding:10px 18px"><p class="hint">Pick a shift for a day to override the person's normal shift (<b>Normal</b> = their usual shift and weekly off). <b>Off</b> makes it a day off. <b>Several shifts…</b> gives one day two or more shifts (for example 10 AM - 2 PM and 7 PM - 9 PM): it counts as one working day, late is checked against the first shift, early leaving and overtime against the last, the time between shifts is not counted as worked, and under half the scheduled hours is a half day. Changes save immediately. <b>Set all days…</b> under a name gives that person the same shift on every day shown (switch View to Month for the whole month); their weekly off days are left as they are.</p></div>
+   ${g.rows.length?`<div class="tw"><table class="sheet roster ${RMODE}"><thead><tr><th>Employee</th>${g.dates.map(d=>`<th>${esc(new Date(d+'T00:00').toLocaleDateString(undefined,{weekday:'short',day:'numeric'}))}</th>`).join('')}</tr></thead><tbody>${g.rows.map(r=>`<tr data-d="${esc(r.department)}"><td><b>${esc(r.name)}</b><div class="small muted">${esc(shift0(r))}</div><select class="rall" data-u="${esc(r.device_user_id)}" data-n="${esc(r.name)}">${allOpt}</select></td>${g.dates.map(d=>`<td><select class="rc ${r.cells[d]=='off'?'off':r.cells[d]?'set':''}" data-u="${esc(r.device_user_id)}" data-day="${d}" data-v="${esc(r.cells[d]||'')}" title="${esc((r.cells[d]||'').split(',').filter(x=>x&&x!='off').map(shName).join(' + '))}">${shOpt(r.cells[d]||'')}</select></td>`).join('')}</tr>`).join('')}</tbody></table></div>`:emptyBox('No employees yet')}`)+
+   formDlg('msDlg','Several shifts on one day',`<p class="hint" id="mswho" style="margin-top:0"></p><div id="mslist" class="perm" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;padding:12px"></div>`,'msok','Save');
+  const shiftW=n=>{const x=new Date(RWEEK+'T00:00');x.setDate(x.getDate()+n);RWEEK=x.toLocaleDateString('en-CA');render()};
+  const shiftM=n=>{const x=new Date(+RMONTH.slice(0,4),+RMONTH.slice(5,7)-1+n,1);RMONTH=x.toLocaleDateString('en-CA').slice(0,7);render()};
+  $('#rmode').onchange=e=>{RMODE=e.target.value;if(RMODE=='month')RMONTH=RWEEK.slice(0,7);else RWEEK=mon(RMONTH==today().slice(0,7)?today():RMONTH+'-01');render()};
+  if(RMODE=='month'){$('#rprev').onclick=()=>shiftM(-1);$('#rnext').onclick=()=>shiftM(1);$('#rw').onchange=e=>{if(e.target.value){RMONTH=e.target.value;render()}}}
+  else{$('#rprev').onclick=()=>shiftW(-7); $('#rnext').onclick=()=>shiftW(7); $('#rw').onchange=e=>{RWEEK=mon(e.target.value);render()}}
+  $('#rxlsx').onclick=e=>{e.currentTarget.href=`/api/roster.xlsx?start=${g.dates[0]}&days=${g.dates.length}&department=${encodeURIComponent($('#rdp').value)}`};
+  $$('.rall').forEach(sl=>sl.onchange=safe(async()=>{const v=sl.value;if(!v)return;
+   const label=v=='normal'?'back to Normal':v=='off'?'Off':shName(v),span=RMODE=='month'?'every day of '+new Date(RMONTH+'-01T00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'}):'every day of this week';
+   if(!await confirmBox(`${sl.dataset.n}: ${label}`,`Sets ${span}${v=='normal'?'':', except their weekly off days'}.`,'Apply',false)){sl.value='';return}
+   const r=await post('/api/roster/range',{device_user_id:sl.dataset.u,start:g.dates[0],end:g.dates[g.dates.length-1],value:v=='normal'?'':v});
+   toast(`${sl.dataset.n}: ${r.days} days set`);render()}));
+  $('#rdp').onchange=e=>$$('table.roster tbody tr').forEach(tr=>tr.style.display=!e.target.value||tr.dataset.d==e.target.value?'':'none');
+  let MS_CELL=null;
+  $$('.rc').forEach(sl=>sl.onchange=safe(async()=>{
+   if(sl.value=='__multi'){MS_CELL=sl;const cur=sl.dataset.v.split(','),who=sl.closest('tr').querySelector('b').textContent;sl.value=sl.dataset.v;
+    $('#mswho').textContent=`${who} · ${fmtDay(sl.dataset.day)}: tick every shift they work that day (up to 4).`;
+    $('#mslist').innerHTML=shifts.map(s=>`<label class="chk"><input type="checkbox" value="${s.id}" ${cur.includes(String(s.id))?'checked':''}>${esc(s.name)}<span class="muted small" style="margin-left:6px">${esc(s.start)}-${esc(s.end)}</span></label>`).join('');
+    $('#msDlg').showModal();return}
+   await post('/api/roster',{device_user_id:sl.dataset.u,date:sl.dataset.day,value:sl.value});sl.dataset.v=sl.value;sl.className='rc '+(sl.value=='off'?'off':sl.value?'set':'');toast('Roster saved')}));
+  if($('#msok'))$('#msok').onclick=safe(async()=>{const ids=$$('#mslist input:checked').map(c=>c.value);if(!ids.length)throw new Error('Tick at least one shift');
+   await post('/api/roster',{device_user_id:MS_CELL.dataset.u,date:MS_CELL.dataset.day,value:ids.join(',')});$('#msDlg').close();toast(ids.length>1?ids.length+' shifts saved for the day':'Roster saved');render()});
+  if($('#rcopy'))$('#rcopy').onclick=safe(async()=>{const x=new Date(RWEEK+'T00:00');x.setDate(x.getDate()-7);const from=x.toLocaleDateString('en-CA');
+   if(!await confirmBox('Copy the week of '+fmtDay(from)+'?','Its roster replaces this week’s for everyone listed.','Copy',false))return;const r=await post('/api/roster/copy',{from_start:from,to_start:RWEEK});toast(r.copied+' roster days copied');render()});
+
+ } else if(tab=='loans'){
+  const ls=await j('/api/loans'); listCache=ls;
+  const act=ls.filter(x=>x.status=='Active'), out=act.reduce((a,x)=>a+x.outstanding,0), emiSum=act.reduce((a,x)=>a+Math.min(x.emi,x.outstanding),0);
+  m.innerHTML=`<div class="kpis" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+    <div class="kpi" style="--c:#6366f1;--l:#eef2ff;cursor:default"><div class="ic">${I('bank')}</div><div><span>Active loans &amp; advances</span><b>${act.length}</b><small>${ls.length} in total</small></div></div>
+    <div class="kpi" style="--c:#d97706;--l:#fef3c7;cursor:default"><div class="ic">${I('wallet')}</div><div><span>Still to recover</span><b>₹ ${money(out)}</b><small>across all employees</small></div></div>
+    <div class="kpi" style="--c:#16a34a;--l:#dcfce7;cursor:default"><div class="ic">${I('down')}</div><div><span>Recovered each month</span><b>₹ ${money(emiSum)}</b><small>EMIs deducted from salary</small></div></div></div>`+
+   card('',`<div class="tb"><p class="hint" style="flex:1;align-self:center">Enter the amount and the number of months: the monthly instalment (EMI) is worked out for you and deducted from salary from the first deduction month. Instalments become final when that month's payroll is published.</p><button class="pri" id="ladd">${I('plus')}New loan / advance</button></div><div id="t"></div>`)+
+   formDlg('loanDlg','New loan or advance',`<div class="fg">${fld('Employee',empSel('ln_e'),1)}${fld('Type',`<select id="ln_k"><option>Loan</option><option>Advance</option></select>`)}${fld('Amount (₹)',`<input id="ln_a" type="number" min="1" placeholder="e.g. 50000">`)}${fld('Repay in (months)',`<input id="ln_m" type="number" min="1" max="120" value="5">`)}${fld('First deduction month',`<input id="ln_s" type="month" value="${(()=>{const x=new Date();x.setMonth(x.getMonth()+1);return x.toLocaleDateString('en-CA').slice(0,7)})()}">`)}${fld('Note',`<input id="ln_n" placeholder="Optional, e.g. bike purchase">`,1)}</div><div class="note" id="ln_calc" style="margin-top:14px"></div>`,'ln_b','Save')+
+   formDlg('loanEdit','Edit loan',`<div class="fg"><input type="hidden" id="le_id">${fld('Type',`<select id="le_k"><option>Loan</option><option>Advance</option></select>`)}${fld('Amount (₹)',`<input id="le_a" type="number" min="1">`)}${fld('Monthly EMI (₹)',`<input id="le_m" type="number" min="1">`)}${fld('First deduction month',`<input id="le_s" type="month">`)}${fld('Note',`<input id="le_n" placeholder="Optional">`,1)}</div><div class="note" id="le_calc" style="margin-top:14px"></div>`,'le_b','Save changes');
+  $('#t').innerHTML=tbl([['name','Employee',x=>person(x.name,'ID '+x.device_user_id)],['kind','Type',x=>pill(x.kind,x.kind=='Loan'?'brand':'sky')],['amount','Amount',x=>money(x.amount),'num'],['emi','EMI',x=>`<b>${money(x.emi)}</b>`,'num'],['start_month','From',x=>esc(x.start_month)],['repaid','Repaid',x=>money(x.repaid),'num'],['outstanding','Outstanding',x=>`<b>${money(x.outstanding)}</b>`,'num'],['status','Status',x=>pill(x.status+(x.status=='Active'&&x.months_left?` · ${x.months_left} mo left`:''),x.status=='Active'?'warn':x.status=='Repaid'?'ok':'mute')],
+   ['x','',x=>`<div class="acts"><button class="sm" onclick="ledger('${esc(x.device_user_id)}','${esc(x.name).replace(/'/g,'')}')">Ledger</button>${x.status=='Active'?`<button class="sm" onclick="editLoan(${listCache.indexOf(x)})">Edit</button><button class="sm" onclick="repay(${listCache.indexOf(x)})">Repayment</button><button class="sm" onclick="closeLoan(${listCache.indexOf(x)})">Close</button>`:''}${x.repaid?'':`<button class="sm" onclick="delLoan(${listCache.indexOf(x)})">Delete</button>`}</div>`]],ls,{empty:'No loans or advances yet'});
+  const calc=()=>{const a=+$('#ln_a').value,n=+$('#ln_m').value;$('#ln_calc').innerHTML=a>0&&n>0?`EMI <b>₹ ${money(Math.ceil(a/n*100)/100)}</b> per month × ${n} month${n>1?'s':''}, deducted from ${esc($('#ln_s').value)} salary onwards.`:'Enter the amount and number of months.'};
+  ['#ln_a','#ln_m','#ln_s'].forEach(k=>$(k).oninput=calc); $('#ln_k').onchange=()=>{if($('#ln_k').value=='Advance')$('#ln_m').value=1;calc()}; calc();
+  $('#ladd').onclick=()=>$('#loanDlg').showModal();
+  const ecalc=()=>{const x=listCache.find(l=>l.id==+$('#le_id').value)||{repaid:0},a=+$('#le_a').value,m=+$('#le_m').value,left=a-x.repaid;
+   $('#le_calc').innerHTML=a>0&&m>0?`₹ ${money(x.repaid)} repaid so far · ₹ ${money(Math.max(left,0))} outstanding → about <b>${Math.max(Math.ceil(left/m),0)} more month${Math.ceil(left/m)==1?'':'s'}</b> of ₹ ${money(m)}.`:'Enter the amount and the monthly EMI.'};
+  ['#le_a','#le_m'].forEach(k=>$(k).oninput=ecalc);
+  EDITLOAN=i=>{const x=listCache[i];$('#le_id').value=x.id;$('#le_k').value=x.kind;$('#le_a').value=x.amount;$('#le_m').value=x.emi;$('#le_s').value=x.start_month;$('#le_n').value=x.note||'';
+   $('#loanEdit .dt').textContent='Edit '+x.kind.toLowerCase()+' · '+x.name;ecalc();$('#loanEdit').showModal()};
+  $('#le_b').onclick=safe(async()=>{await post(`/api/loans/${$('#le_id').value}/edit`,{kind:$('#le_k').value,amount:+$('#le_a').value,emi:+$('#le_m').value,start_month:$('#le_s').value,note:$('#le_n').value});$('#loanEdit').close();toast('Loan updated');render()});
+  $('#ln_b').onclick=safe(async()=>{const r=await post('/api/loans',{device_user_id:$('#ln_e').value,kind:$('#ln_k').value,amount:+$('#ln_a').value,months:+$('#ln_m').value,start_month:$('#ln_s').value,note:$('#ln_n').value});$('#loanDlg').close();toast('Saved: EMI ₹ '+money(r.emi));render()});
+
+ } else {
+  m.innerHTML=card('',`<div class="tb"><p class="hint" style="flex:1;align-self:center">Phone check-ins must be within the radius of an office, or of the person's own <b>home</b> site (work from home; marked WFH in reports). People marked "can check in from anywhere" in Employees are never blocked. With no sites, locations are recorded but never blocked. Tip: stand at the place, open this page on your phone and tap <b>Use my location</b>.</p><button class="pri" id="sadd">${I('plus')}Add site</button></div><div id="t"></div>`)+
+   formDlg('siteDlg','Add a GPS site',`<div class="fg">${fld('Type',`<select id="sk"><option value="office">Office (everyone)</option><option value="home">Employee's home (work from home)</option></select>`)}<div id="skE" style="display:none">${fld('Employee',empSel('su'))}</div>${fld('Site name',`<input id="sn" placeholder="e.g. Mumbai Office">`,1)}${fld('Latitude',`<input id="la">`)}${fld('Longitude',`<input id="lo">`)}${fld('Radius (metres)',`<input id="ra" type="number" value="150">`)}<button type="button" id="gps" style="align-self:end">${I('pin')}Use my location</button></div>`,'s','Add site');
+  const load=async()=>{const st=await j('/api/sites');listCache=st;$('#t').innerHTML=tbl([['name','Site',r=>`<b>${esc(r.name)}</b>`],['kind','Type',r=>r.kind=='home'?pill('Home · '+r.employee,'sky'):pill('Office','brand')],['lat','Location',r=>`<a target="_blank" rel="noopener" href="https://maps.google.com/?q=${+r.lat},${+r.lng}">${(+r.lat).toFixed(5)}, ${(+r.lng).toFixed(5)}</a>`],['radius_m','Radius',r=>pill(r.radius_m+' m','brand')],['id','',r=>`<div class="acts"><button class="sm" onclick="delSite(${r.id})">Remove</button></div>`]],st,{empty:'No sites yet: phone check-ins are allowed anywhere'})};
+  $('#sadd').onclick=()=>$('#siteDlg').showModal(); $('#sk').onchange=()=>$('#skE').style.display=$('#sk').value=='home'?'':'none';
+  $('#gps').onclick=()=>navigator.geolocation.getCurrentPosition(p=>{$('#la').value=p.coords.latitude.toFixed(6);$('#lo').value=p.coords.longitude.toFixed(6)},e=>toast('Location unavailable: '+e.message,'bad'));
+  $('#s').onclick=safe(async()=>{await post('/api/sites',{name:$('#sn').value,lat:+$('#la').value,lng:+$('#lo').value,radius_m:+$('#ra').value,kind:$('#sk').value,device_user_id:$('#sk').value=='home'?$('#su').value:''});$('#siteDlg').close();toast('Site added');load()}); load();
+ }
+ }catch(e){m.innerHTML=card('',`<div class="empty">${I('alert')}<p><b>Could not load this page.</b><br>${esc(e.message)}</p></div>`)}
+}
+// row actions use list indexes (never put text in inline handlers)
+function editUser(i){const u=listCache[i];$('#un').value=u.username;$('#un').readOnly=true;$('#ud').value=u.display_name;$('#up').value='';$('#up').placeholder='leave empty to keep';$('#ur').value=u.role;$('#ut').value=u.department;$('#uem').value=u.email||'';$('#ua').checked=!!u.active;$('#ur').onchange();const sel=(u.permissions&&u.permissions!='*')?u.permissions.split(','):(u.role=='hr'?HRD:[]);$$('.pm').forEach(c=>c.checked=sel.includes(c.value));$('#userDlg .dt').textContent='Edit '+u.username;$('#userDlg').showModal()}
+const delUser=safe(async i=>{if(await confirmBox('Delete user '+listCache[i].username+'?','They will no longer be able to sign in.','Delete')){await j('/api/users/'+encodeURIComponent(listCache[i].username),{method:'DELETE'});toast('User deleted');render()}});
+const delAdj=safe(async i=>{await j('/api/payroll/adjustments/'+listCache[i].id,{method:'DELETE'});toast('Adjustment removed');render()});
+const delShiftChange=safe(async i=>{if(await confirmBox('Remove this shift change?','The person goes back to their normal shift on those dates.','Remove')){await j('/api/shift-changes/'+listCache[i].id,{method:'DELETE'});toast('Shift change removed');render()}});
+function editEmp(i){EMPFORM(listCache[i])}
+const upDoc=async(uid,file,type)=>{const fd=new FormData();fd.append('file',file);fd.append('doc_type',type);return j('/api/employees/'+encodeURIComponent(uid)+'/documents',{method:'POST',body:fd})};
+const delDoc=safe(async id=>{if(await confirmBox('Remove this document?','The file is deleted permanently.','Remove')){await j('/api/documents/'+id,{method:'DELETE'});toast('Document removed');DRAWDOCS()}});
+const addMaster=safe(async kind=>{const v=$('#mn_'+kind).value.trim();if(!v)throw new Error('Type a name');await post('/api/masters/'+kind,{name:v});toast('Added');render()});
+const renMaster=safe(async(kind,i)=>{const r=MS[kind+'s'][i];const v=await ask({title:'Rename '+r.name,text:r.employees?`${r.employees} employee(s) will be updated too.`:'',fields:[{label:'New name',value:r.name}],ok:'Rename'});if(!v||!v[0].trim())return;await post('/api/masters/'+kind,{name:r.name,new_name:v[0].trim()});toast('Renamed');render()});
+const delMaster=safe(async(kind,i)=>{const r=MS[kind+'s'][i];if(await confirmBox('Delete '+r.name+'?','','Delete')){await j('/api/masters/'+kind+'/'+encodeURIComponent(r.name),{method:'DELETE'});toast('Deleted');render()}});
+const ledger=safe(async(uid,name)=>{const l=await j('/api/loans/ledger/'+encodeURIComponent(uid));const d=$('#dlg');d.className='';
+ d.innerHTML=`<div class="dh"><h3>Loan ledger · ${esc(name)}</h3><p>Every loan or advance given and every repayment, with the balance still owed.</p></div><div class="db" style="padding:0">${tbl([['date','Date'],['entry','Entry'],['debit','Given',x=>x.debit?money(x.debit):'','num'],['credit','Repaid',x=>x.credit?money(x.credit):'','num'],['balance','Balance',x=>`<b>${money(x.balance)}</b>`,'num']],l,{empty:'Nothing yet'})}</div><div class="df"><button type="button" onclick="this.closest('dialog').close()">Close</button></div>`;
+ d.onclose=()=>{d.className='sm'};d.showModal()});
+const repay=safe(async i=>{const x=listCache[i];const v=await ask({title:'Record a repayment',text:`${x.name} · outstanding ₹ ${money(x.outstanding)}. For money paid back outside salary (cash, bank transfer); later EMIs shrink.`,fields:[{label:'Amount',type:'number'},{label:'Month',type:'month',value:today().slice(0,7)},{label:'Note',ph:'e.g. cash'}],ok:'Save'});if(!v)return;await post(`/api/loans/${x.id}/repay`,{amount:+v[0],month:v[1],note:v[2]});toast('Repayment recorded');render()});
+const closeLoan=safe(async i=>{const x=listCache[i];if(await confirmBox('Close this '+x.kind.toLowerCase()+'?',`Stops the EMI. ₹ ${money(x.outstanding)} outstanding will no longer be deducted.`,'Close')){await post(`/api/loans/${x.id}/close`,{});toast('Closed');render()}});
+let EDITLOAN=()=>{};
+const editLoan=i=>EDITLOAN(i);
+const delLoan=safe(async i=>{const x=listCache[i];if(await confirmBox('Delete this '+x.kind.toLowerCase()+'?','Use this only for a mistake: nothing has been repaid yet.','Delete')){await j('/api/loans/'+x.id,{method:'DELETE'});toast('Deleted');render()}});
+function editShift(i){const s=listCache[i];$('#sid').value=s.id;$('#sn').value=s.name;$('#ss').value=s.start;$('#se').value=s.end;$('#sg').value=s.grace_min;$('#sh').value=s.half_day_hours;$('#so').value=s.ot_after_min;$('#sw').value=s.weekly_off;$('#sb1').value=s.break_start||'';$('#sb2').value=s.break_end||'';$('#shiftDlg .dt').textContent='Edit shift';$('#shiftDlg').showModal()}
+const delShift=safe(async id=>{if(await confirmBox('Delete this shift?','Its employees become flexible (never late, no overtime).','Delete')){await j('/api/shifts/'+id,{method:'DELETE'});toast('Shift deleted');render()}});
+const delHoliday=safe(async i=>{if(await confirmBox('Delete '+listCache[i].name+'?','','Delete')){await j('/api/holidays/'+listCache[i].date,{method:'DELETE'});toast('Holiday deleted');render()}});
+let WFHRELOAD=()=>{};
+const delWfh=safe(async i=>{const x=listCache[i];if(!await confirmBox('Delete this work-from-home request?',`${x.name}, ${fmtDay(x.start_date)}${x.end_date!=x.start_date?' to '+fmtDay(x.end_date):''} (${x.status}). Those days stop counting as work from home.`,'Delete'))return;
+ await j('/api/wfh/'+x.id,{method:'DELETE'});toast('Request deleted');WFHRELOAD()});
+const decideWfh=safe(async(i,act)=>{await post(`/api/wfh/${listCache[i].id}/${act}`,{});toast(act=='approve'?'Work from home approved':'Request rejected');render()});
+const showConsent=safe(async id=>{const k=await j('/api/leave-consents/'+id);const d=$('#dlg');
+ d.innerHTML=`<div class="dh"><h3>Signed leave consent</h3><p>${esc(k.name)} · ID ${esc(k.device_user_id)}</p></div><div class="db"><div class="note" style="line-height:1.6">${esc(k.text)}</div>
+  <dl style="display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px;margin:14px 0 0"><dt class="muted">Signed as</dt><dd style="margin:0"><b>${esc(k.typed_name)}</b></dd><dt class="muted">Signed at</dt><dd style="margin:0">${esc(k.at)}</dd><dt class="muted">IP address</dt><dd style="margin:0">${esc(k.ip)}</dd><dt class="muted">Device</dt><dd style="margin:0" class="small muted">${esc(k.user_agent)}</dd></dl></div>
+  <div class="df"><a class="btn" target="_blank" href="/api/leave-consents/${id}/pdf">${I('down')}PDF</a><button type="button" class="pri" onclick="this.closest('dialog').close()">Close</button></div>`;d.showModal()});
+const decideLeave=safe(async(i,act)=>{await post(`/api/leaves/${listCache[i].id}/${act}`,{});toast(act=='approve'?'Leave approved':'Leave rejected');render()});
+const delLvAdj=safe(async i=>{const x=ADJCACHE[i];if(await confirmBox('Remove this adjustment?',`${x.name}: ${x.reason}`,'Remove')){await j('/api/leave-adjustments/'+x.id,{method:'DELETE'});toast('Adjustment removed');ADJRELOAD()}});
+const delLeave=safe(async i=>{if(await confirmBox('Delete this leave?','','Delete')){await j('/api/leaves/'+listCache[i].id,{method:'DELETE'});toast('Leave deleted');render()}});
+const delSite=safe(async id=>{if(await confirmBox('Remove this site?','Phone check-ins there will no longer match it.','Remove')){await j('/api/sites/'+id,{method:'DELETE'});toast('Site removed');render()}});
+const setPin=safe(async i=>{const e=listCache[i];const v=await ask({title:'App PIN for '+e.name,text:'They sign in to the phone app with ID '+e.device_user_id+' and this PIN.',fields:[{label:'New PIN (4 to 8 digits)',type:'password',attrs:'inputmode="numeric" autocomplete="new-password" maxlength=8'}],ok:'Save PIN'});if(!v||!v[0])return;await post(`/api/employees/${encodeURIComponent(e.device_user_id)}/pin`,{pin:v[0]});toast('PIN saved');render()});
+const renameDev=safe(async i=>{const d=listCache[i];const v=await ask({title:'Rename machine',fields:[{label:'Name',value:d.name,ph:'e.g. Mumbai Office'},{label:'Location',value:d.location}]});if(!v)return;await post(`/api/devices/${encodeURIComponent(d.dev_id)}/info`,{name:v[0],location:v[1]});toast('Saved');render()});
+
+/* ---------- navigation, live feed, start ---------- */
+let VIS=()=>true;
+function route(){let t=location.hash.slice(1)||'live'; if(!PAGES[t]||!VIS(t))t='live'; tab=t; document.body.classList.remove('nav-open'); render()}
+$$('#nav a').forEach(a=>a.onclick=()=>{if(location.hash.slice(1)==a.dataset.t)route();else location.hash=a.dataset.t});
+window.onhashchange=route;
+$('#menuBtn').onclick=()=>document.body.classList.toggle('nav-open');
+$('#today').textContent=new Date().toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+function connect(){
+ const ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/ws'), c=$('#conn');
+ ws.onopen=()=>{c.className='live on';ws.send('hi')}; ws.onclose=()=>{c.className='live off';setTimeout(connect,3000)};
+ ws.onmessage=e=>{const p=JSON.parse(e.data); toast(`${p.name} punched at ${String(p.ts).slice(11,16)}${p.flag=='outside_geofence'?' (outside area)':''}`,'info'); if(tab=='live'&&!document.querySelector('dialog[open]'))setTimeout(render,400)};
+}
+setInterval(()=>{if(tab=='live'&&!document.hidden&&!document.querySelector('dialog[open]'))render()},60000);
+const NEED={loans:'payroll',masters:'employees',emp:'employees',shifts:'shifts',holidays:'holidays',leave:'leave',import:'import',sites:'sites'};
+function visibleTab(t,me){
+ const r=me.role; if(r=='admin'||r=='management')return true;
+ const raw=(me.permissions&&me.permissions!='*')?me.permissions.split(','):[];
+ const eff=r=='hr'?((!me.permissions||me.permissions=='*')?HRD:raw):raw, has=k=>eff.includes(k);
+ if(t=='users'||t=='audit'||t=='backups')return false;
+ if(t=='devices')return true;
+ if(t=='shiftchange'||t=='roster')return r=='manager'||has('shifts');
+ if(t=='wfh')return r=='manager'||has('leave');
+ return NEED[t]?has(NEED[t]):true;
+}
+(async()=>{try{const me=await j('/api/auth/me'); ME=me;
+  const name=me.open_mode?'Open mode':(me.display_name||me.username);
+  $('#who').textContent=name; $('#meAv').textContent=name.trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+  $('#whoRole').textContent=me.open_mode?'no login set up':((ROLE[me.role]||[me.role])[0]+(me.role=='manager'&&me.department?' · '+me.department:''));
+  if(me.company){$('#co').textContent=me.company;$('#co').title=me.company}
+  VIS=t=>visibleTab(t,me);
+  $$('#nav a[data-t]').forEach(a=>{if(!VIS(a.dataset.t))a.style.display='none'});
+  $$('#nav .grp').forEach(g=>{let n=g.nextElementSibling,any=false;while(n&&!n.classList.contains('grp')){if(n.style.display!='none')any=true;n=n.nextElementSibling}if(!any)g.style.display='none'});
+  if(me.open_mode){$('#out').style.display=$('#pw').style.display='none'}
+  $('#out').onclick=async()=>{await fetch('/api/auth/logout',{method:'POST',headers:{'X-Requested-With':'fetch'}});location.href='/login'};
+  $('#pw').onclick=safe(async()=>{const v=await ask({title:'Change your password',fields:[{label:'Current password',type:'password',attrs:'autocomplete="current-password"'},{label:'New password (at least 8 characters)',type:'password',attrs:'autocomplete="new-password"'}],ok:'Change password'});if(!v||!v[0]||!v[1])return;await post('/api/auth/password',{old_password:v[0],new_password:v[1]});toast('Password changed')});
+  if(['hr','admin','management'].includes(me.role))connect(); else $('#conn').style.display='none';
+  route();
+ }catch(e){}})();
+</script></body></html>

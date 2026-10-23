@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<link rel="manifest" href="/m/manifest.webmanifest"><link rel="apple-touch-icon" href="/m/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<title>Attendance</title>
+<style>
+ /* Same look as the Android app: white bars, indigo accent, cards on a light grey page */
+ :root{--accent:#4f46e5;--accent-l:#6366f1;--accent-d:#3730a3;--soft:#eef2ff;--ink:#1f2937;--muted:#6b7280;--line:#e5e7eb;--page:#f5f6fa;
+  --good:#16a34a;--good-l:#dcfce7;--bad:#dc2626;--bad-l:#fee2e2;--late:#b45309;--late-l:#fef3c7;--inf:#ffeb9c;--adh:#ffc7ce}
+ *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+ body{margin:0;font:16px/1.45 Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Arial,sans-serif;background:#fff;color:var(--ink);-webkit-font-smoothing:antialiased;min-height:100vh}
+ .app{max-width:480px;margin:0 auto;min-height:100vh;background:#fff;position:relative}
+ .hide{display:none!important}
+ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+ button{font:inherit;cursor:pointer}
+ input,select,textarea{font:inherit;font-size:16px;color:inherit}
+ /* bars */
+ .bar{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:4px;height:calc(60px + env(safe-area-inset-top));padding:env(safe-area-inset-top) 6px 0}
+ .bar h1{margin:0 0 0 10px;font-size:21px;font-weight:700}
+ .back{width:44px;height:44px;border:0;background:none;border-radius:50%;display:grid;place-items:center;color:var(--ink)}
+ .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;max-width:480px;margin:0 auto;background:#fff;border-top:1px solid var(--line);display:flex;padding:8px 6px calc(8px + env(safe-area-inset-bottom))}
+ .tabs button{flex:1;border:0;background:none;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12.5px;padding:2px 0}
+ .tabs button i{display:grid;place-items:center;width:64px;height:32px;border-radius:16px}
+ .tabs button.on{color:var(--accent);font-weight:600}.tabs button.on i{background:var(--soft)}
+ .page{padding-bottom:calc(96px + env(safe-area-inset-bottom))}.page.inner{padding-bottom:calc(30px + env(safe-area-inset-bottom))}
+ .grey{background:var(--page);min-height:100vh}
+ /* building blocks */
+ .card{background:#fff;border-radius:20px;margin:0 16px 14px;padding:18px}
+ .card.shadow{box-shadow:0 1px 3px rgba(17,24,39,.06),0 6px 18px rgba(17,24,39,.05);border-radius:24px}
+ .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:52px;border:0;border-radius:14px;background:var(--accent);color:#fff;font-size:17px;font-weight:600}
+ .btn.dark{background:var(--ink)}.btn.big{height:58px;border-radius:16px}.btn:disabled{background:#e5e7eb;color:#9ca3af}
+ .btn.outline{background:#fff;color:var(--bad);border:1px solid #fca5a5}
+ .muted{color:var(--muted)}.small{font-size:13px}.center{text-align:center}
+ .pill{display:inline-block;font-size:12.5px;font-weight:600;padding:4px 11px;border-radius:30px;white-space:nowrap}
+ .p-inf{background:var(--inf);color:var(--ink)}.p-adh{background:var(--adh);color:var(--ink)}.p-ok{background:var(--good-l);color:var(--good)}
+ .p-bad{background:var(--bad-l);color:var(--bad)}.p-wait{background:var(--late-l);color:var(--late)}.p-grey{background:#f1f5f9;color:var(--muted)}.p-in{background:#e0f2fe;color:#0369a1}
+ .field{display:block;margin:0 0 14px}.field>span{display:block;font-size:13px;color:var(--muted);margin:0 0 6px}
+ .field input,.field select,.field textarea{width:100%;min-height:54px;padding:14px;border:1px solid #9ca3af;border-radius:12px;background:#fff;outline:none}
+ .field textarea{min-height:96px;resize:vertical}
+ .field input:focus,.field select:focus,.field textarea:focus{border:2px solid var(--accent);padding:13px}
+ .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.row>*{min-width:0}
+ .msg{padding:12px 14px;border-radius:12px;font-size:14.5px;margin:0 0 14px}.msg.err{background:var(--bad-l);color:#991b1b}.msg.ok{background:var(--good-l);color:#166534}.msg.info{background:var(--soft);color:var(--accent-d)}
+ .toast{position:fixed;left:50%;bottom:calc(100px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#323232;color:#fff;padding:13px 18px;border-radius:8px;font-size:15px;max-width:calc(100% - 32px);z-index:50;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+ /* login */
+ .login{padding:calc(64px + env(safe-area-inset-top)) 24px 24px}
+ .logo{width:84px;height:84px;border-radius:24px;background:linear-gradient(135deg,var(--accent-l),var(--accent-d));display:grid;place-items:center;color:#fff;margin:0 auto 18px}
+ .logo svg{width:46px;height:46px;stroke-width:1.7}
+ .login h2{margin:0;text-align:center;font-size:24px}.login .co{text-align:center;color:var(--muted);font-size:14px;margin:2px 0 32px}
+ /* home */
+ .hello{display:flex;align-items:center;padding:calc(20px + env(safe-area-inset-top)) 20px 12px}
+ .hello .g{color:var(--muted);font-size:15px}.hello .n{font-size:24px;font-weight:700;line-height:1.2}
+ .avatar{width:48px;height:48px;border-radius:50%;background:var(--soft);color:var(--accent);display:grid;place-items:center;font-weight:700;font-size:17px;flex:none;border:0}
+ .today{display:flex;align-items:flex-end}.today .d{flex:1}.today .clock{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums}
+ .times{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0}
+ .times div{background:var(--page);border-radius:14px;padding:12px}.times span{display:block;color:var(--muted);font-size:12px}.times b{font-size:22px;font-variant-numeric:tabular-nums}
+ .note{color:var(--muted);font-size:12px;text-align:center;margin:10px 0 0}
+ .late{font-size:13px;font-weight:600;text-align:center;margin:6px 0 0}
+ .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:0 16px}
+ .stats div{background:#fff;border-radius:16px;padding:12px 4px;text-align:center}.stats b{display:block;font-size:22px}.stats span{color:var(--muted);font-size:11px}
+ .label{color:var(--muted);font-size:13px;font-weight:600;margin:20px 20px 8px}
+ .list{background:#fff;border-radius:20px;margin:0 16px;overflow:hidden}
+ .act{display:flex;align-items:center;gap:14px;padding:14px 16px;width:100%;border:0;background:none;text-align:left;color:inherit}
+ .act{position:relative}.act+.act::before{content:"";position:absolute;top:0;left:74px;right:0;border-top:1px solid var(--line)}
+ .act i{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;flex:none}
+ .act b{display:block;font-size:16px;font-weight:600}.act small{color:var(--muted);font-size:13px}.act .go{margin-left:auto;color:var(--muted)}
+ /* camera sheet */
+ .sheet{position:fixed;inset:0;z-index:40;background:rgba(17,24,39,.55);display:flex;align-items:flex-end;justify-content:center}
+ .sheet .in{background:#fff;width:100%;max-width:480px;border-radius:24px 24px 0 0;padding:18px 18px calc(18px + env(safe-area-inset-bottom))}
+ .sheet h3{margin:0 0 12px;font-size:19px}
+ .cam{position:relative;border-radius:16px;overflow:hidden;background:#111827;aspect-ratio:3/4;max-height:52vh;margin:0 auto 14px}
+ .cam video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block}
+ .cam::after{content:"";position:absolute;left:50%;top:48%;width:58%;aspect-ratio:3/4;transform:translate(-50%,-50%);border:2px dashed rgba(255,255,255,.6);border-radius:50%;pointer-events:none}
+ .pick{display:flex;align-items:center;justify-content:center;gap:10px;height:110px;border:2px dashed #c7d2fe;border-radius:16px;background:#f8faff;color:var(--accent);font-weight:600;margin:0 0 14px;cursor:pointer}
+ .pick.done{border-style:solid;background:var(--good-l);border-color:#bbf7d0;color:#166534}
+ .linkbtn{border:0;background:none;color:var(--muted);width:100%;padding:12px;font-size:15px}
+ /* attendance */
+ .month{display:flex;align-items:center;padding:10px 8px}.month h2{flex:1;text-align:center;margin:0;color:var(--accent);font-size:22px;font-weight:600}
+ .month button{width:44px;height:44px;border:0;background:none;color:var(--muted);border-radius:50%}.month svg{width:28px;height:28px}
+ .sum{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:0 12px 10px}.sum div{background:var(--page);border-radius:12px;padding:10px 2px;text-align:center}.sum b{display:block;font-size:20px}.sum span{color:var(--muted);font-size:12px}
+ table.days{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+ table.days th{background:var(--soft);font-weight:600;padding:12px 4px;font-size:15px}
+ table.days td{text-align:center;padding:10px 4px;border-bottom:1px solid var(--line)}
+ table.days td small{display:block;color:var(--muted);font-size:12px}
+ .legend{color:var(--muted);font-size:12px;padding:16px}
+ /* leave */
+ .choice{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 6px}
+ .choice button{height:52px;border-radius:12px;border:1px solid var(--line);background:#fff;font-size:16px}
+ .choice button.on{border:2px solid var(--ink);font-weight:700}.choice button.on.i{background:var(--inf)}.choice button.on.a{background:var(--adh)}
+ .check{display:flex;align-items:center;gap:10px;margin:10px 0 14px;font-size:16px}.check input{width:22px;height:22px;accent-color:var(--accent)}
+ .plan{background:var(--page);border-radius:14px;padding:14px;margin:0 0 14px}
+ .kv{display:flex;justify-content:space-between;gap:12px;padding:5px 0}.kv span{color:var(--muted)}.kv b{font-weight:600;text-align:right}
+ .warnline{color:var(--late);font-size:13px;margin-top:4px}
+ .rings{display:flex;justify-content:space-evenly;margin:18px 0 0}.rings>div{text-align:center}
+ .ring{position:relative;display:grid;place-items:center;margin:0 auto}.ring svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}
+ .ring .v{position:relative;text-align:center}
+ .hist{background:var(--page);border-radius:14px;padding:14px;margin:0 16px 10px}
+ .hist .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+ .cancel{border:0;background:none;color:var(--bad);font-weight:600;float:right;padding:6px 0}
+ .slip{display:flex;align-items:center;padding:18px 20px;border-bottom:1px solid var(--line);cursor:pointer}.slip b{font-size:17px}
+ .profile{display:flex;align-items:center;gap:14px}.profile .avatar{width:56px;height:56px;background:linear-gradient(135deg,var(--accent-l),var(--accent-d));color:#fff;font-size:20px}
+</style></head><body><div class="app">
+
+<!-- ================================================================ login -->
+<section id="login" class="hide">
+ <div class="login">
+  <div class="logo"><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg></div>
+  <h2>Madarwala Attendance</h2><div class="co">Madarwala Tours and Travels</div>
+  <label class="field"><span>Employee ID</span><input id="eid" inputmode="numeric" autocomplete="username" autocapitalize="none"></label>
+  <label class="field"><span>PIN</span><input id="pin" type="password" inputmode="numeric" autocomplete="current-password"></label>
+  <div id="loginMsg"></div>
+  <button class="btn" id="loginBtn">Log in</button>
+  <p class="muted small center" style="margin-top:16px">Your employee ID is the one on the attendance machine. Ask HR for your PIN.</p>
+ </div>
+</section>
+
+<!-- ================================================================ home -->
+<section id="s-home" class="page grey hide">
+ <div class="hello"><div style="flex:1"><div class="g" id="greet">Hello</div><div class="n" id="hname"></div></div><button class="avatar" id="hav" data-go="settings"></button></div>
+ <div class="card shadow">
+  <div class="today"><div class="d"><div class="muted small">Today</div><b id="hdate" style="font-size:17px"></b></div><div class="clock" id="hclock"></div></div>
+  <div class="times"><div><span>Checked in</span><b id="tin" style="color:var(--good)">--:--</b></div><div><span>Checked out</span><b id="tout" style="color:var(--accent)">--:--</b></div></div>
+  <button class="btn big" id="punchBtn" disabled><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9 15c1.7 1.3 4.3 1.3 6 0"/></svg><span id="punchLbl">Check in</span></button>
+  <div class="note">A selfie and your location are recorded with each check-in and check-out.</div>
+  <div class="late" id="hlate"></div>
+ </div>
+ <div class="stats hide" id="hstats"><div><b id="st-p" style="color:var(--good)">0</b><span>Present this month</span></div><div><b id="st-l" style="color:var(--late)">0</b><span>Late this month</span></div><div><b id="st-a" style="color:var(--bad)">0</b><span>Absent this month</span></div></div>
+ <div class="label">Quick actions</div>
+ <div class="list">
+  <button class="act" data-go="attendance"><i style="background:#eef2ff;color:var(--accent)"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg></i><span><b>My attendance</b><small>Every day of the month: in, out, hours</small></span><svg class="go" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+  <button class="act" data-go="apply"><i style="background:#fef3c7;color:#d97706"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></i><span><b>Apply for leave</b><small>Informed or Adhoc, full or half day</small></span><svg class="go" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+  <button class="act" data-go="leaves"><i style="background:#f3e8ff;color:#7c3aed"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg></i><span><b>My leaves</b><small>Balance and history</small></span><svg class="go" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+  <button class="act" data-go="pay"><i style="background:#dcfce7;color:var(--good)"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M16 13h2M3 10h18"/></svg></i><span><b>Payslips</b><small>Monthly salary slips</small></span><svg class="go" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+  <button class="act" data-go="wfh"><i style="background:#cffafe;color:#0891b2"><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg></i><span><b>Work from home</b><small>Ask for a day at home</small></span><svg class="go" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+ </div>
+</section>
+
+<!-- ================================================================ attendance -->
+<section id="s-attendance" class="page hide">
+ <div class="bar"><h1>Attendance</h1></div>
+ <div class="month"><button id="mprev" aria-label="Previous month"><svg viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg></button><h2 id="mname"></h2><button id="mnext" aria-label="Next month"><svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button></div>
+ <div id="mbody"></div>
+</section>
+
+<!-- ================================================================ settings -->
+<section id="s-settings" class="page grey hide">
+ <div class="bar"><h1>Settings</h1></div>
+ <div class="card" style="margin-top:16px"><div class="profile"><div class="avatar" id="sav"></div><div><b style="font-size:18px" id="sname"></b><div class="muted" id="sid"></div></div></div>
+  <div style="border-top:1px solid var(--line);margin:14px 0 4px"></div>
+  <div class="kv"><span>Company</span><b>Madarwala Tours and Travels</b></div>
+  <div class="kv"><span>Privacy</span><b><a href="/privacy" target="_blank" style="color:var(--accent);text-decoration:none">Read</a></b></div></div>
+ <div class="card"><b>Reminders</b><p class="muted small" style="margin:4px 0 12px">A notification if you haven't checked in an hour after your shift starts, and 15 minutes before it ends if you haven't checked out.</p>
+  <div id="pushState"></div><button class="btn" id="pushBtn">Turn on reminders</button></div>
+ <div class="card"><b>Need help?</b><p class="muted small" style="margin:4px 0 0">For a wrong punch, a forgotten PIN or a leave question, contact HR (hr@madarwala.com).</p></div>
+ <div style="margin:4px 16px"><button class="btn outline" id="logout"><svg viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg>Log out</button></div>
+</section>
+
+<!-- ================================================================ apply for leave -->
+<section id="s-apply" class="page inner hide">
+ <div class="bar"><button class="back" data-back><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button><h1>Apply for leave</h1></div>
+ <div style="padding:20px">
+  <div class="row"><label class="field"><span>From date</span><input id="lfr" type="date"></label><label class="field"><span>To date</span><input id="lto" type="date"></label></div>
+  <div class="muted small" style="margin:0 0 6px">Leave type</div>
+  <div class="choice"><button class="i on" data-t="Informed">Informed</button><button class="a" data-t="Adhoc">Adhoc</button></div>
+  <div class="muted small">Informed: planned leave, from your Informed balance. Adhoc: emergency leave, from your Adhoc balance.</div>
+  <label class="check"><input type="checkbox" id="lhalf">Half day (one date)</label>
+  <label class="field"><span>Reason</span><textarea id="lre" maxlength="200"></textarea></label>
+  <div id="lprev"></div>
+  <div id="lcons" class="hide"><p class="small" id="lctext" style="margin:0 0 6px"></p><label class="field"><span>Type your full name to agree</span><input id="lcname" autocomplete="name"></label></div>
+  <div id="lmsg"></div>
+  <button class="btn" id="lap" disabled>Apply for leave</button>
+ </div>
+</section>
+
+<!-- ================================================================ my leaves -->
+<section id="s-leaves" class="page inner hide">
+ <div class="bar"><button class="back" data-back><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button><h1>My leaves</h1></div>
+ <div id="lbody"></div>
+</section>
+
+<!-- ================================================================ payslips -->
+<section id="s-pay" class="page inner hide">
+ <div class="bar"><button class="back" data-back><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button><h1>Payslips</h1></div>
+ <div id="pbody"></div>
+</section>
+
+<!-- ================================================================ work from home -->
+<section id="s-wfh" class="page inner hide">
+ <div class="bar"><button class="back" data-back><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button><h1>Work from home</h1></div>
+ <div style="padding:20px">
+  <div id="wtoday"></div>
+  <p class="muted" style="margin:0 0 14px;font-size:14px">Ask to work from home. Once your team lead or HR approves it, you can check in from anywhere that day (paid at 0.8 of a day).</p>
+  <div class="row"><label class="field"><span>From date</span><input id="wfr" type="date"></label><label class="field"><span>To date</span><input id="wto" type="date"></label></div>
+  <label class="field"><span>Reason</span><textarea id="wre" maxlength="200" style="min-height:72px"></textarea></label>
+  <div id="wmsg"></div>
+  <button class="btn" id="wap">Send request</button>
+ </div>
+ <div style="padding:0 20px"><b style="font-size:17px">My requests</b></div>
+ <div id="wlist"></div>
+</section>
+
+<nav class="tabs hide" id="tabs">
+ <button data-tab="home" class="on"><i><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/></svg></i>Home</button>
+ <button data-tab="attendance"><i><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg></i>Attendance</button>
+ <button data-tab="settings"><i><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></i>Settings</button>
+</nav>
+
+<!-- check-in sheet: camera preview (or the phone camera when the browser cannot show one) -->
+<div class="sheet hide" id="sheet"><div class="in">
+ <h3 id="shTitle">Check in</h3>
+ <div class="cam" id="camBox"><video id="vid" autoplay playsinline muted></video></div>
+ <input id="fileFallback" type="file" accept="image/*" capture="user" class="hide">
+ <label for="fileFallback" class="pick hide" id="pickBtn"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg><span id="pickLbl">Take a selfie</span></label>
+ <div id="shMsg"></div>
+ <button class="btn big" id="shGo" disabled>Take selfie and check in</button>
+ <button class="linkbtn" id="shCancel">Cancel</button>
+</div></div>
+<canvas id="cv" class="hide"></canvas>
+<div class="toast hide" id="toast"></div>
+</div>
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+const dmy=s=>s?`${s.slice(8,10)}/${s.slice(5,7)}/${s.slice(0,4)}`:'';
+const num=v=>Number.isInteger(+v)?String(+v):String(+v);
+const rs=v=>'₹ '+Math.round(v).toLocaleString('en-IN');
+const initials=n=>(n||'').split(' ').filter(w=>/^[A-Za-z]/.test(w)).slice(0,2).map(w=>w[0].toUpperCase()).join('')||'?';
+let token=null, me=null, pos=null, stream=null, TYPE='Informed', PLAN=null;
+try{token=localStorage.getItem('att_token')}catch(e){}
+function toast(t){const x=$('#toast');x.textContent=t;x.classList.remove('hide');clearTimeout(toast.t);toast.t=setTimeout(()=>x.classList.add('hide'),3500)}
+const msg=(el,t,c)=>{el.innerHTML=t?`<div class="msg ${c}">${esc(t)}</div>`:''};
+async function api(path,opts={}){
+  opts.headers=Object.assign({},opts.headers,token?{Authorization:'Bearer '+token}:{});
+  let r;try{r=await fetch('/api/app'+path,opts)}catch(e){throw new Error('No internet connection. Check your data or Wi-Fi and try again.')}
+  const j=await r.json().catch(()=>({}));
+  if(r.status==401&&token&&path!='/login'){logout();throw new Error('Please log in again')}
+  if(!r.ok)throw new Error(typeof j.detail=='string'?j.detail:'Something went wrong ('+r.status+')');
+  return j;
+}
+const post=(p,b)=>api(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+
+// ---------------------------------------------------------------- navigation (tabs, and inner screens with back)
+const TABS=['home','attendance','settings'];
+let SCREEN='home';
+function show(s,push=true){
+  if(!TABS.includes(s)&&push)history.pushState({s},'','#'+s);
+  if(TABS.includes(s)&&push)history.replaceState({s},'',s=='home'?'#':'#'+s);
+  SCREEN=s;$$('section').forEach(x=>x.classList.toggle('hide',x.id!='s-'+s));
+  $('#tabs').classList.toggle('hide',!TABS.includes(s));
+  $$('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab==s));window.scrollTo(0,0);
+  ({home:loadHome,attendance:loadMonth,settings:loadSettings,leaves:loadLeaves,pay:loadSlips,wfh:loadWfh,apply:resetApply})[s]?.();
+}
+window.addEventListener('popstate',e=>{if(!token)return;const s=(e.state&&e.state.s)||location.hash.slice(1)||'home';show(s,false)});
+$$('#tabs button').forEach(b=>b.onclick=()=>show(b.dataset.tab));
+document.addEventListener('click',e=>{const g=e.target.closest('[data-go]');if(g)show(g.dataset.go);if(e.target.closest('[data-back]'))history.back()});
+
+// ---------------------------------------------------------------- login
+$('#loginBtn').onclick=async()=>{const b=$('#loginBtn');b.disabled=true;
+  try{const j=await post('/login',{employee_id:$('#eid').value.trim(),pin:$('#pin').value.trim()});token=j.token;try{localStorage.setItem('att_token',token)}catch(e){}$('#pin').value='';await start()}
+  catch(e){msg($('#loginMsg'),e.message,'err')}b.disabled=false};
+let LEAVING=false;
+async function logout(){if(LEAVING)return;LEAVING=true;await pushOff().catch(()=>{});LEAVING=false;token=null;me=null;try{localStorage.removeItem('att_token')}catch(e){}
+  stopCam();$$('section').forEach(x=>x.classList.add('hide'));$('#tabs').classList.add('hide');$('#login').classList.remove('hide')}
+$('#logout').onclick=logout;
+async function start(){
+  try{me=await api('/me')}catch(e){$('#login').classList.remove('hide');return}
+  $('#login').classList.add('hide');
+  const h=location.hash.slice(1);history.replaceState({s:'home'},'','#');show('home',false);
+  if(h&&h!='home'){if(TABS.includes(h))show(h);else show(h)}
+}
+
+// ---------------------------------------------------------------- home
+function tick(){const d=new Date();$('#hclock').textContent=d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  $('#hdate').textContent=d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'short'});
+  const h=d.getHours();$('#greet').textContent=h<12?'Good morning':h<17?'Good afternoon':'Good evening'}
+tick();setInterval(tick,1000);
+async function loadHome(){
+  try{me=await api('/me')}catch(e){return}
+  $('#hname').textContent=me.name;$('#hav').textContent=initials(me.name);
+  const t=me.today.map(p=>p.ts.slice(11,16)), n=t.length;
+  $('#tin').textContent=t[0]||'--:--';$('#tin').style.color=t[0]?'var(--good)':'var(--muted)';
+  const out=n>1&&n%2==0?t[n-1]:null;$('#tout').textContent=out||'--:--';$('#tout').style.color=out?'var(--accent)':'var(--muted)';
+  $('#punchLbl').textContent=n%2==0?'Check in':'Check out';$('#punchBtn').classList.toggle('dark',n%2==1);$('#punchBtn').disabled=false;
+  api('/lates').then(l=>{$('#hlate').textContent=l.count?`Late arrivals: ${l.count} of ${l.limit} allowed (${l.period_label.toLowerCase()})`:'';$('#hlate').style.color=l.count>=l.limit?'var(--bad)':'var(--late)'}).catch(()=>{});
+  api('/attendance').then(a=>{const c=a.map(r=>r.code);$('#st-p').textContent=num(c.filter(x=>['P','P-LT','POW'].includes(x)).length+.5*c.filter(x=>x.startsWith('P/2')).length);
+   $('#st-l').textContent=c.filter(x=>x=='P-LT').length;$('#st-a').textContent=c.filter(x=>x=='A').length;$('#hstats').classList.remove('hide')}).catch(()=>{});
+}
+
+// ---------------------------------------------------------------- check in / out: selfie + location
+function stopCam(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
+function locate(){return new Promise(res=>{if(!navigator.geolocation){pos=null;return res()}
+  navigator.geolocation.getCurrentPosition(p=>{pos=p.coords;res()},()=>{pos=null;res()},{enableHighAccuracy:true,timeout:25000,maximumAge:0})})}
+async function openSheet(){
+  const out=$('#punchLbl').textContent=='Check out';$('#shTitle').textContent=out?'Check out':'Check in';
+  $('#shGo').textContent=out?'Take selfie and check out':'Take selfie and check in';$('#shGo').disabled=true;
+  $('#fileFallback').value='';$('#pickBtn').classList.remove('done');$('#pickLbl').textContent='Take a selfie';
+  $('#sheet').classList.remove('hide');msg($('#shMsg'),'Finding your location…','info');
+  try{stopCam();stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640}},audio:false});$('#vid').srcObject=stream;$('#camBox').classList.remove('hide');$('#pickBtn').classList.add('hide')}
+  catch(e){$('#camBox').classList.add('hide');$('#pickBtn').classList.remove('hide')}
+  await locate();
+  if(!pos){msg($('#shMsg'),'Could not find your location. Allow location for this site in your browser settings, turn on GPS, and try again.','err');return}
+  msg($('#shMsg'),`Location found (±${Math.round(pos.accuracy)} m). ${stream?'Look at the camera and tap the button.':'Take a selfie, then tap the button.'}`,'ok');$('#shGo').disabled=false;
+}
+function closeSheet(){stopCam();$('#sheet').classList.add('hide')}
+$('#punchBtn').onclick=openSheet;$('#shCancel').onclick=closeSheet;
+$('#fileFallback').addEventListener('change',()=>{const f=$('#fileFallback').files[0];$('#pickBtn').classList.toggle('done',!!f);$('#pickLbl').textContent=f?'Selfie ready · tap to retake':'Take a selfie'});
+function selfieBlob(){return new Promise((res,rej)=>{const cv=$('#cv'),v=$('#vid');
+  if(stream&&v.videoWidth){const s=Math.min(1,640/v.videoWidth);cv.width=v.videoWidth*s;cv.height=v.videoHeight*s;cv.getContext('2d').drawImage(v,0,0,cv.width,cv.height);cv.toBlob(b=>b?res(b):rej(new Error('Camera error')),'image/jpeg',.8)}
+  else{const f=$('#fileFallback').files[0];f?res(f):rej(new Error('Take a selfie first.'))}})}
+$('#shGo').onclick=async()=>{const b=$('#shGo');b.disabled=true;
+  try{msg($('#shMsg'),'Saving your attendance…','info');const fd=new FormData();fd.append('lat',pos.latitude);fd.append('lng',pos.longitude);fd.append('accuracy',pos.accuracy||0);
+   fd.append('selfie',await selfieBlob(),'selfie.jpg');const j=await api('/punch',{method:'POST',body:fd});
+   closeSheet();toast(`${j.type} at ${j.time.slice(11,16)}${j.site?' · '+j.site:''}${j.flag?' (outside the allowed area)':''}`);loadHome()}
+  catch(e){msg($('#shMsg'),e.message,'err');b.disabled=false}};
+document.addEventListener('visibilitychange',()=>{if(document.hidden)closeSheet()});
+
+// ---------------------------------------------------------------- attendance: the month day by day
+let MY=new Date().getFullYear(), MM=new Date().getMonth()+1;
+$('#mprev').onclick=()=>{MM--;if(!MM){MM=12;MY--}loadMonth()};$('#mnext').onclick=()=>{MM++;if(MM>12){MM=1;MY++}loadMonth()};
+const CODE_STYLE={IL:'p-inf','P/2-IL':'p-inf',AL:'p-adh','P/2-AL':'p-adh','P-LT':'p-wait',WO:'p-grey',HL:'p-grey',IN:'p-in'};
+async function loadMonth(){$('#mname').textContent=`${MONTHS[MM-1]} ${MY}`;const box=$('#mbody');box.innerHTML='<p class="muted center">Loading…</p>';
+  try{const rows=(await api(`/attendance?month=${MY}-${String(MM).padStart(2,'0')}`)).filter(r=>r.code);
+   if(!rows.length){box.innerHTML='<p class="muted center" style="padding:32px">No attendance for this month yet.</p>';return}
+   const c=rows.map(r=>r.code),cnt=(...k)=>c.filter(x=>k.includes(x)).length;
+   const present=cnt('P','P-LT','POW')+.5*c.filter(x=>x.startsWith('P/2')).length, leave=cnt('IL','AL')+.5*cnt('P/2-IL','P/2-AL');
+   box.innerHTML=`<div class="sum"><div><b style="color:var(--good)">${num(present)}</b><span>Present</span></div><div><b style="color:var(--late)">${cnt('P-LT')}</b><span>Late</span></div><div><b style="color:var(--bad)">${cnt('A')}</b><span>Absent</span></div><div><b style="color:#7c3aed">${num(leave)}</b><span>Leave</span></div></div>
+    <table class="days"><thead><tr><th>Date</th><th>In</th><th>Out</th><th>Hrs</th><th>Status</th></tr></thead><tbody>${rows.map(r=>{
+     const st=r.code=='A'?(/Adhoc/.test(r.note)?'p-adh':'p-bad'):CODE_STYLE[r.code]||'p-ok';
+     return `<tr><td><b>${r.date.slice(8,10)}/${r.date.slice(5,7)}</b><small>${esc(r.weekday.slice(0,3))}</small></td><td style="${r.code=='P-LT'?'color:var(--late)':''}">${esc(r.in||'—')}</td><td>${esc(r.out||'—')}</td><td>${esc(r.hours||'—')}</td><td><span class="pill ${st}">${esc(r.code)}</span></td></tr>`}).join('')}</tbody></table>
+    <div class="legend">P present · P-LT late · A absent · WO weekly off · HL holiday · IL Informed leave · AL Adhoc leave · P/2 half day · IN at work now</div>`}
+  catch(e){box.innerHTML=`<div class="msg err" style="margin:16px">${esc(e.message)}</div>`}}
+
+// ---------------------------------------------------------------- apply for leave
+function resetApply(){PLAN=null;$('#lmsg').innerHTML='';$('#lprev').innerHTML='';$('#lcons').classList.add('hide');$('#lap').disabled=true;planLeave()}
+$$('.choice button').forEach(b=>b.onclick=()=>{TYPE=b.dataset.t;$$('.choice button').forEach(x=>x.classList.toggle('on',x==b));planLeave()});
+$('#lhalf').onchange=()=>{$('#lto').disabled=$('#lhalf').checked;if($('#lhalf').checked)$('#lto').value=$('#lfr').value;planLeave()};
+$('#lfr').onchange=()=>{if($('#lhalf').checked||!$('#lto').value||$('#lto').value<$('#lfr').value)$('#lto').value=$('#lfr').value;planLeave()};$('#lto').onchange=planLeave;
+async function planLeave(){PLAN=null;$('#lap').disabled=true;$('#lcons').classList.add('hide');const box=$('#lprev');
+  if(!$('#lfr').value){box.innerHTML='';return}const half=$('#lhalf').checked;
+  try{const p=PLAN=await api('/leave/preview?'+new URLSearchParams({type:TYPE,start_date:$('#lfr').value,end_date:half?$('#lfr').value:($('#lto').value||$('#lfr').value),half}));
+   box.innerHTML=`<div class="plan"><div class="kv"><span>Working days</span><b>${num(p.working_days)}</b></div>${p.informed_days?`<div class="kv"><span>From Informed balance</span><b>${num(p.informed_days)}</b></div>`:''}${p.adhoc_days?`<div class="kv"><span>From Adhoc balance</span><b>${num(p.adhoc_days)}</b></div>`:''}
+    ${p.excess_days?`<div class="kv"><span>Beyond your balance</span><b>${p.excess_days} day(s)</b></div>${p.deduction?`<div class="kv"><span>Salary cut</span><b style="color:var(--bad)">${rs(p.deduction)}</b></div>`:''}`:''}${p.warnings.map(w=>`<div class="warnline">• ${esc(w)}</div>`).join('')}</div>`;
+   if(p.needs_consent){$('#lctext').textContent=p.consent_text;$('#lcons').classList.remove('hide')}
+   $('#lap').disabled=false}
+  catch(e){box.innerHTML=`<div class="msg err">${esc(e.message)}</div>`}}
+$('#lap').onclick=async()=>{const b=$('#lap');b.disabled=true;
+  try{if(PLAN.needs_consent&&!$('#lcname').value.trim())throw new Error('Type your full name to agree to the salary cut.');
+   const half=$('#lhalf').checked;await post('/leave',{type:TYPE,start_date:$('#lfr').value,end_date:half?$('#lfr').value:($('#lto').value||$('#lfr').value),half,reason:$('#lre').value,consent_name:$('#lcname').value});
+   $('#lre').value='';$('#lcname').value='';$('#lfr').value='';$('#lto').value='';toast('Leave applied. HR will approve it soon.');history.replaceState({s:'leaves'},'','#leaves');show('leaves',false)}
+  catch(e){msg($('#lmsg'),e.message,'err');b.disabled=false}};
+
+// ---------------------------------------------------------------- my leaves
+function ring(v,total,size,stroke,color,inner){const r=50-stroke/2,c=2*Math.PI*r,f=total>0?Math.min(v/total,1):0;
+  return `<div class="ring" style="width:${size}px;height:${size}px"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="${r}" stroke="#e5e7eb" stroke-width="${stroke}" fill="none"/>${f>0?`<circle cx="50" cy="50" r="${r}" stroke="${color}" stroke-width="${stroke}" fill="none" stroke-linecap="round" stroke-dasharray="${c*f} ${c}"/>`:''}</svg><div class="v">${inner}</div></div>`}
+async function loadLeaves(){const box=$('#lbody');box.innerHTML='<p class="muted center">Loading…</p>';
+  try{const [b,l]=await Promise.all([api('/leave-balance'),api('/leaves')]);
+   const I=b.informed,A=b.adhoc,left=I.left+A.left,cred=I.credited+A.credited;
+   const note=!b.eligible?`Leave starts after 3 months of work: from ${dmy(b.eligible_from)}.`:b.next_credit?`Next credit on ${dmy(b.next_credit.date)}: ${b.next_credit.informed} Informed${b.next_credit.adhoc?' + '+b.next_credit.adhoc+' Adhoc':''}`:'';
+   box.innerHTML=`<div style="padding:20px;text-align:center">${ring(left,cred,190,7,'var(--accent)',`<div class="muted" style="font-size:18px">Balance</div><div style="font-size:40px;font-weight:700">${num(left)}</div>`)}
+    <div class="rings">${[['Informed',I,'#eab308','p-inf'],['Adhoc',A,'var(--bad)','p-adh']].map(([n,o,col,cl])=>`<div>${ring(o.left,o.credited,84,9,col,`<b style="font-size:20px">${num(o.left)}</b>`)}<div style="margin-top:6px"><span class="pill ${cl}">${n}</span></div><div class="muted small">used ${num(o.used)} of ${num(o.credited)}</div></div>`).join('')}</div>
+    ${note?`<p class="muted small" style="margin:14px 0">${esc(note)}</p>`:'<div style="height:14px"></div>'}<button class="btn" data-go="apply">Apply for leave</button></div>
+    <div style="padding:0 20px 8px"><b style="font-size:17px">Leave history</b></div>
+    ${l.length?l.map(x=>{const st=x.status=='approved'?'p-ok':x.status=='rejected'?'p-bad':'p-wait';
+     return `<div class="hist"><div class="top"><span class="pill ${x.type=='Adhoc'?'p-adh':'p-inf'}">${esc(x.type)}${x.half?' · ½ day':''}</span><span class="pill ${st}">${esc(x.status[0].toUpperCase()+x.status.slice(1))}</span></div>
+      <b>${x.start_date==x.end_date?dmy(x.start_date):dmy(x.start_date)+' to '+dmy(x.end_date)}</b>${x.lop?`<div class="small" style="color:var(--bad)">Beyond balance: ${num(x.lop)}× day's salary cut</div>`:''}${x.note?`<div class="muted small">${esc(x.note)}</div>`:''}
+      ${x.status=='pending'?`<div style="overflow:hidden"><button class="cancel" data-c="${x.id}">Cancel application</button></div>`:''}</div>`}).join(''):'<p class="muted center" style="padding:24px">No leave yet.</p>'}`;
+   $$('#lbody [data-c]').forEach(bt=>bt.onclick=async()=>{if(!confirm('Cancel this leave application?'))return;try{await api('/leave/'+bt.dataset.c,{method:'DELETE'});toast('Leave application cancelled');loadLeaves()}catch(e){toast(e.message)}})}
+  catch(e){box.innerHTML=`<div class="msg err" style="margin:16px">${esc(e.message)}</div>`}}
+
+// ---------------------------------------------------------------- payslips
+async function loadSlips(){const box=$('#pbody');box.innerHTML='<p class="muted center">Loading…</p>';
+  try{const l=await api('/payslips');
+   if(!l.length){box.innerHTML='<p class="muted center" style="padding:32px">No payslips yet. They appear here once HR publishes the month\'s salary.</p>';return}
+   box.innerHTML=l.map(x=>`<div class="slip" data-m="${x.month}"><div style="flex:1"><b>${MONTHS[+x.month.slice(5,7)-1]} ${x.month.slice(0,4)}</b><div class="muted small">Tap to open the payslip</div></div><b style="color:var(--good)">${rs(x.net_pay)}</b></div>`).join('');
+   $$('#pbody .slip').forEach(s=>s.onclick=async()=>{const w=s.querySelector('.small');w.textContent='Opening…';
+    try{const r=await fetch('/api/app/payslip/'+s.dataset.m+'.pdf',{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw new Error('Not available');
+     const url=URL.createObjectURL(await r.blob());window.open(url,'_blank')||(location.href=url)}catch(e){toast(e.message)}w.textContent='Tap to open the payslip'})}
+  catch(e){box.innerHTML=`<div class="msg err" style="margin:16px">${esc(e.message)}</div>`}}
+
+// ---------------------------------------------------------------- work from home
+async function loadWfh(){if(!$('#wfr').value)$('#wfr').value=new Date().toLocaleDateString('en-CA');
+  $('#wtoday').innerHTML=me&&me.wfh_today?'<div class="msg ok">Work from home is approved for today: you can check in from anywhere.</div>':'';
+  try{const l=await api('/wfh');
+   $('#wlist').innerHTML=l.length?l.map(x=>{const st=x.status=='approved'?'p-ok':x.status=='rejected'?'p-bad':'p-wait';
+    return `<div style="display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line)"><div style="flex:1"><b>${x.start_date==x.end_date?dmy(x.start_date):dmy(x.start_date)+' to '+dmy(x.end_date)}</b>${x.reason?`<div class="muted small">${esc(x.reason)}</div>`:''}${x.status=='pending'?`<button class="cancel" style="float:none;padding:4px 0" data-w="${x.id}">Cancel</button>`:''}</div><span class="pill ${st}">${esc(x.status[0].toUpperCase()+x.status.slice(1))}</span></div>`}).join(''):'<p class="muted center" style="padding:24px">No requests yet.</p>';
+   $$('#wlist [data-w]').forEach(bt=>bt.onclick=async()=>{if(!confirm('Cancel this request?'))return;try{await api('/wfh/'+bt.dataset.w,{method:'DELETE'});toast('Request cancelled');loadWfh()}catch(e){toast(e.message)}})}catch(e){}}
+$('#wap').onclick=async()=>{const b=$('#wap');b.disabled=true;
+  try{if(!$('#wfr').value)throw new Error('Choose the date');await post('/wfh',{start_date:$('#wfr').value,end_date:$('#wto').value||$('#wfr').value,reason:$('#wre').value});
+   $('#wre').value='';toast('Request sent for approval');msg($('#wmsg'),'','');loadWfh()}catch(e){msg($('#wmsg'),e.message,'err')}b.disabled=false};
+
+// ---------------------------------------------------------------- settings and reminders (browser notifications)
+function loadSettings(){if(!me)return;$('#sname').textContent=me.name;$('#sid').textContent='Employee ID '+me.employee_id;$('#sav').textContent=initials(me.name);pushUI()}
+const pushOK=()=>'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
+const b64u=s=>{const p='='.repeat((4-s.length%4)%4),b=atob((s+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(b,c=>c.charCodeAt(0))};
+async function pushSub(){if(!pushOK())return null;const reg=await navigator.serviceWorker.ready;return reg.pushManager.getSubscription()}
+async function pushOff(){const s=await pushSub();if(!s)return;try{await post('/push/unsubscribe',s.toJSON())}catch(e){}await s.unsubscribe()}
+async function pushOn(){if(!pushOK())throw new Error('This phone or browser does not support notifications.');
+  if(await Notification.requestPermission()!='granted')throw new Error('Notifications are blocked. Allow them for this site in your browser settings, then try again.');
+  const {key}=await api('/push/key');const reg=await navigator.serviceWorker.ready;
+  const s=(await reg.pushManager.getSubscription())||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(key)});
+  await post('/push/subscribe',s.toJSON())}
+async function pushUI(){const st=$('#pushState'),bt=$('#pushBtn');
+  if(!pushOK()){st.innerHTML='<div class="msg info">Install the app from the Play Store for reminders on this phone.</div>';bt.classList.add('hide');return}
+  let on=false;try{on=!!(await pushSub())&&Notification.permission=='granted'}catch(e){}
+  if(on){try{await post('/push/subscribe',(await pushSub()).toJSON())}catch(e){}}
+  st.innerHTML=on?'<div class="msg ok">Reminders are on for this phone.</div>':'';
+  bt.textContent=on?'Turn off reminders':'Turn on reminders';bt.className='btn'+(on?' outline':'');bt.classList.remove('hide');
+  bt.onclick=async()=>{bt.disabled=true;let err='';try{on?await pushOff():await pushOn()}catch(e){err=e.message}bt.disabled=false;if(err)msg(st,err,'err');else pushUI()}}
+
+if('serviceWorker' in navigator)navigator.serviceWorker.register('/m/sw.js').catch(()=>{});
+if(token)start();else $('#login').classList.remove('hide');
+</script></body></html>

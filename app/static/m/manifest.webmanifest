@@ -1,0 +1,25 @@
+{
+  "id": "/m/",
+  "name": "Madarwala Attendance",
+  "short_name": "Attendance",
+  "description": "Employee app of Madarwala Tours and Travels: check in with GPS and a selfie, apply for leave and work from home, and download payslips.",
+  "start_url": "/m/",
+  "scope": "/m/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "screenshots": [
+    {"src": "screens/2-check-in.jpg", "sizes": "540x960", "type": "image/jpeg", "form_factor": "narrow", "label": "Check in with GPS and a selfie"},
+    {"src": "screens/4-leave.jpg", "sizes": "540x960", "type": "image/jpeg", "form_factor": "narrow", "label": "Leave balance and applications"},
+    {"src": "screens/5-wfh-payslips.jpg", "sizes": "540x960", "type": "image/jpeg", "form_factor": "narrow", "label": "Work from home requests and payslips"}
+  ]
+}

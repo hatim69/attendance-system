@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in · Attendance</title>
+<link rel="icon" href="/m/icon-192.png">
+<style>
+ *{box-sizing:border-box}
+ body{margin:0;min-height:100vh;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Arial,sans-serif;color:#0f172a;background:#fff;-webkit-font-smoothing:antialiased}
+ .art{background:radial-gradient(1200px 600px at -10% -10%,#6366f1 0,transparent 60%),radial-gradient(900px 500px at 110% 110%,#8b5cf6 0,transparent 55%),#0b1220;color:#e2e8f0;padding:48px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden}
+ .art::after{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:44px 44px;mask-image:linear-gradient(180deg,#000,transparent 85%)}
+ .art>*{position:relative;z-index:1}
+ .brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:17px;color:#fff}
+ .logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#818cf8,#a78bfa);display:grid;place-items:center;box-shadow:0 8px 24px rgba(129,140,248,.4)}
+ svg{width:24px;height:24px;fill:none;stroke:#fff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+ .art h2{font-size:34px;line-height:1.15;letter-spacing:-.02em;margin:0 0 14px;color:#fff;max-width:440px}
+ .art p{color:#a5b4fc;margin:0;max-width:420px}
+ .feats{list-style:none;padding:0;margin:28px 0 0;display:grid;gap:12px}
+ .feats li{display:flex;gap:10px;align-items:center;color:#cbd5e1}.feats i{width:22px;height:22px;border-radius:50%;background:rgba(129,140,248,.2);display:grid;place-items:center;font-style:normal;color:#a5b4fc;font-size:12px;font-weight:700}
+ .foot{color:#64748b;font-size:13px}
+ .side{display:flex;align-items:center;justify-content:center;padding:32px}
+ form{width:min(380px,100%)}
+ h1{font-size:26px;margin:0 0 6px;letter-spacing:-.01em}.sub{color:#64748b;margin:0 0 28px}
+ label{display:block;font-size:13px;font-weight:600;color:#334155;margin-bottom:6px}
+ input{width:100%;height:46px;padding:0 14px;font:inherit;border:1px solid #d6dbe6;border-radius:10px;margin-bottom:18px;outline:none;transition:.15s}
+ input:focus{border-color:#4f46e5;box-shadow:0 0 0 4px rgba(79,70,229,.14)}
+ button{width:100%;height:48px;font:inherit;font-weight:650;border:0;border-radius:10px;background:#4f46e5;color:#fff;cursor:pointer;box-shadow:0 6px 16px rgba(79,70,229,.3);transition:.15s}
+ button:hover{background:#4338ca}button:disabled{opacity:.6;cursor:default}
+ #err{color:#991b1b;background:#fef2f2;border:1px solid #fecaca;padding:10px 14px;border-radius:10px;margin-bottom:18px;display:none;font-size:14px}
+ .alt{margin-top:26px;padding-top:20px;border-top:1px solid #eef1f6;color:#64748b;font-size:14px;text-align:center}.alt a{color:#4f46e5;font-weight:600;text-decoration:none}
+ @media(max-width:860px){body{grid-template-columns:1fr}.art{display:none}.side{min-height:100vh;background:#f4f6fb}form{background:#fff;padding:30px 26px;border-radius:16px;box-shadow:0 10px 30px rgba(15,23,42,.08)}}
+</style></head><body>
+<section class="art">
+ <div class="brand"><div class="logo"><svg viewBox="0 0 24 24"><path d="M5.5 9.5a7 7 0 0 1 13 0"/><path d="M8 13.5c0-2.5 1.8-4.2 4-4.2s4 1.7 4 4.2c0 2.6-.4 4.8-1.2 6.5"/><path d="M12 13v1.5c0 2.5-.6 4.6-1.6 6"/><path d="M4.6 14.5c.3 1.7.2 3.2-.3 4.5"/><path d="M8.3 17.5c-.2 1.3-.6 2.4-1.2 3.3"/><path d="M19.3 13.5c0 1.6-.1 3.1-.4 4.5"/></svg></div>Attendance</div>
+ <div><h2>Every punch, every branch, in one place.</h2><p>Fingerprint machines and phone check-ins arrive live. Reports, leave and payslips follow from them.</p>
+  <ul class="feats"><li><i>✓</i>Live punches from all your machines</li><li><i>✓</i>Phone check-in with GPS and selfie</li><li><i>✓</i>Shifts, leave, payroll and payslips</li></ul></div>
+ <div class="foot">Secure sign-in · every change is logged</div>
+</section>
+<main class="side">
+ <form id="f"><h1>Welcome back</h1><p class="sub">Sign in to the attendance dashboard.</p><div id="err"></div>
+  <label for="u">Username</label><input id="u" autocomplete="username" autocapitalize="none" autofocus>
+  <label for="p">Password</label><input id="p" type="password" autocomplete="current-password">
+  <button id="go">Sign in</button>
+  <div class="alt">Employee? Check in from your phone at <a href="/m/">the phone app</a></div></form>
+</main>
+<script>
+document.getElementById('f').onsubmit=async e=>{e.preventDefault();const err=document.getElementById('err'),b=document.getElementById('go');err.style.display='none';
+ const user=document.getElementById('u').value.trim(), pass=document.getElementById('p').value;
+ if(!user||!pass){err.textContent=!user?'Type your username (for example admin).':'Type your password.';err.style.display='block';document.getElementById(!user?'u':'p').focus();return}
+ b.disabled=true;b.textContent='Signing in…';
+ try{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:user,password:pass})});
+  if(r.ok){location.href='/';return}const d=await r.json().catch(()=>({}));err.textContent=typeof d.detail=='string'?d.detail:'Sign-in failed';err.style.display='block'}
+ catch(x){err.textContent='Cannot reach the server. Check your connection.';err.style.display='block'}
+ b.disabled=false;b.textContent='Sign in'};
+</script></body></html>

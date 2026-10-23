@@ -207,7 +207,7 @@ fun ApplyLeaveScreen(s: AppState) {
                 Choice("Informed", type == "Informed", InformedFill, Modifier.weight(1f)) { type = "Informed" }
                 Choice("Adhoc", type == "Adhoc", AdhocFill, Modifier.weight(1f)) { type = "Adhoc" }
             }
-            Text("Informed: applied at least 7 days before. Adhoc: emergency or short notice.", color = Muted, fontSize = 12.sp,
+            Text("Informed: planned leave, from your Informed balance. Adhoc: emergency leave, from your Adhoc balance.", color = Muted, fontSize = 12.sp,
                 modifier = Modifier.padding(top = 6.dp))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp).clickable { half = !half }) {
                 Checkbox(half, { half = it })

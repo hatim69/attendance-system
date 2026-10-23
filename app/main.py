@@ -875,6 +875,19 @@ async def record_wfh(body: WfhIn, u: dict = Depends(access.need("manager", "leav
     return {"ok": True, "id": cur.lastrowid}
 
 
+@app.delete("/api/wfh/{req_id}")
+async def delete_wfh(req_id: int, u: dict = Depends(access.need("manager", "leave"))):
+    """Delete a work-from-home request whatever its status (e.g. approved by mistake): those days are no longer WFH."""
+    c = db.conn()
+    row = c.execute("SELECT device_user_id FROM wfh_requests WHERE id=?", (req_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "No such request")
+    access.assert_in_scope(row["device_user_id"])
+    c.execute("DELETE FROM wfh_requests WHERE id=?", (req_id,))
+    c.commit()
+    return {"ok": True}
+
+
 @app.post("/api/wfh/{req_id}/{action}")
 async def decide_wfh(req_id: int, action: str, u: dict = Depends(access.need("manager", "leave"))):
     """Team leads (own team), HR, management and admin approve or reject work-from-home requests."""

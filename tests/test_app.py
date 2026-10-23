@@ -713,17 +713,19 @@ def test_leave_policy_informed_adhoc_credits_and_workflow(tmp_path, monkeypatch)
         assert b["next_credit"] == {"date": "2026-11-01", "informed": 2, "adhoc": 0}
         b = c.get("/api/app/leave-balance", headers=h3).json()          # eligible in September: Sep 2 + Oct 1, Oct 1 Adhoc
         assert (b["informed"]["credited"], b["informed"]["left"], b["adhoc"]["left"]) == (3, 3, 1)
-        # Informed without 7 days' notice counts as Adhoc
+        # Informed stays Informed however short the notice
         p = preview(h3, start_date="2026-10-14", end_date="2026-10-14", type="Informed").json()
-        assert (p["informed_days"], p["adhoc_days"], p["excess_days"], p["needs_consent"]) == (0, 1, 0, False)
-        assert "7 days' notice" in p["warnings"][0]
+        assert (p["informed_days"], p["adhoc_days"], p["excess_days"], p["needs_consent"]) == (1, 0, 0, False)
+        assert not any("notice" in w for w in p["warnings"])
         r = apply(h3, start_date="2026-10-19", end_date="2026-10-20", type="Informed", reason="trip")
         assert r.status_code == 200 and (r.json()["days"], r.json()["adhoc_days"], r.json()["excess_days"]) == (2, 0, 0)
-        # Thu 22 + Fri 23 (Wed 21 is a holiday): 1 Informed left, so the 2nd day uses the Adhoc credit
+        # Thu 22 + Fri 23 (Wed 21 is a holiday): 1 Informed left, so the 2nd day is Informed beyond the balance (1.5x);
+        # the Adhoc balance is never used for Informed leave
         p = preview(h3, start_date="2026-10-21", end_date="2026-10-23", type="Informed").json()
-        assert (p["working_days"], p["informed_days"], p["adhoc_days"]) == (2, 1, 1) and "Informed balance is not enough" in p["warnings"][0]
-        assert [x["type"] for x in p["parts"]] == ["Informed", "Adhoc"]
-        assert apply(h3, start_date="2026-10-21", end_date="2026-10-23", type="Casual").json()["adhoc_days"] == 1   # old name still works
+        assert (p["working_days"], p["informed_days"], p["adhoc_days"], p["excess_days"]) == (2, 1, 0, 1)
+        assert [(x["type"], x["lop"]) for x in p["parts"]] == [("Informed", 0), ("Informed", 1.5)]
+        r = apply(h3, start_date="2026-10-21", end_date="2026-10-23", type="Casual", consent_name="Tara").json()   # old name still works
+        assert (r["adhoc_days"], r["excess_days"]) == (0, 1)
         # nothing left in October: beyond the balance costs 1.5 x a day's salary (31000 / 31 = 1000) and needs a signature
         p = preview(h3, start_date="2026-10-26", end_date="2026-10-26", type="Informed").json()
         assert (p["excess_days"], p["deduction"], p["needs_consent"], p["parts"][0]["lop"]) == (1, 1500.0, True, 1.5)
@@ -737,16 +739,16 @@ def test_leave_policy_informed_adhoc_credits_and_workflow(tmp_path, monkeypatch)
         k = c.get(f"/api/leave-consents/{lv['2026-10-26']['consent_id']}").json()
         assert k["typed_name"] == "tara" and "Rs 1,500.00" in k["text"] and k["device_user_id"] == "LV3"
         assert c.get(f"/api/leave-consents/{lv['2026-10-26']['consent_id']}/pdf").content.startswith(b"%PDF")
-        # November brings 2 more Informed (carried over is used first); no Adhoc until January, so Adhoc in December is 2x
+        # November brings 2 more Informed; October's 1 Adhoc pays for an Adhoc day; no more Adhoc until January, so the
+        # next Adhoc is 2x, and it leaves the Informed balance alone
         assert preview(h3, start_date="2026-11-02", end_date="2026-11-03", type="Informed").json()["excess_days"] == 0
-        p = preview(h3, start_date="2026-12-01", end_date="2026-12-01", type="Adhoc").json()
+        assert apply(h3, start_date="2026-12-01", end_date="2026-12-01", type="Adhoc").json()["excess_days"] == 0
+        p = preview(h3, start_date="2026-12-02", end_date="2026-12-02", type="Adhoc").json()
         assert (p["excess_days"], p["deduction"], p["parts"][0]["lop"]) == (1, 2000.0, 2.0) and "2 days' salary" in p["warnings"][-1]
-        # an Adhoc beyond the balance also takes 1 Informed credit
-        assert apply(h3, start_date="2026-12-01", end_date="2026-12-01", type="Adhoc", consent_name="Tara").status_code == 200
-        # (December's credit, so November's 2 are still free)
+        assert apply(h3, start_date="2026-12-02", end_date="2026-12-02", type="Adhoc", consent_name="Tara").status_code == 200
         assert preview(h3, start_date="2026-11-02", end_date="2026-11-03", type="Informed").json()["informed_days"] == 2
         b = c.get("/api/app/leave-balance", headers=h3).json()
-        assert (b["informed"]["left"], b["adhoc"]["left"], b["informed"]["used"], b["adhoc"]["used"]) == (0, 0, 4, 1)
+        assert (b["informed"]["left"], b["adhoc"]["left"], b["informed"]["used"], b["adhoc"]["used"]) == (0, 0, 3, 1)
         # only a Sunday: nothing to take; too old for self-service; removed types are refused
         assert "no working days" in apply(h1, start_date="2026-10-25", end_date="2026-10-25", type="Adhoc").json()["detail"]
         assert apply(h1, start_date="2026-07-06", end_date="2026-07-06", type="Adhoc").status_code == 400
@@ -765,21 +767,24 @@ def test_leave_policy_informed_adhoc_credits_and_workflow(tmp_path, monkeypatch)
 
         # my list (one application can be several records), cancelling, and ownership
         mine = c.get("/api/app/leaves", headers=h3).json()
-        assert {x["status"] for x in mine} == {"pending"} and len(mine) == 5
+        assert {x["status"] for x in mine} == {"pending"} and len(mine) == 6
         lid = [x["id"] for x in mine if x["start_date"] == "2026-10-19"][0]
         assert c.delete(f"/api/app/leave/{lid}", headers=h2).status_code == 404                                   # not theirs
         assert c.delete(f"/api/app/leave/{lid}", headers=h3).status_code == 200
-        assert c.get("/api/app/leave-balance", headers=h3).json()["informed"]["used"] == 2                       # balance freed
+        assert c.get("/api/app/leave-balance", headers=h3).json()["informed"]["used"] == 1                       # balance freed
         # HR approves an application as a whole (both its parts), rejects another
         pend = {x["start_date"]: x for x in c.get("/api/leaves?month=2026-10").json() if x["status"] == "pending"}
         assert c.post(f"/api/leaves/{pend['2026-10-22']['id']}/approve").status_code == 200
         assert c.post(f"/api/leaves/{pend['2026-10-23']['id']}/approve").status_code == 400                       # decided with its group
         assert c.post(f"/api/leaves/{pend['2026-10-26']['id']}/reject").status_code == 200
         assert c.delete(f"/api/app/leave/{pend['2026-10-22']['id']}", headers=h3).status_code == 400              # approved: cannot self-cancel
-        # HR records a past leave (no notice, so Adhoc) with no Adhoc left: 2x pay cut, shown in reports and payroll
+        # HR records a past Informed leave: still Informed, from the Informed balance, no cut
         r = c.post("/api/leaves", json={"device_user_id": "LV3", "start_date": "2026-10-08", "end_date": "2026-10-08", "type": "Informed"})
+        assert [(x["type"], x["lop"]) for x in r.json()["parts"]] == [("Informed", 0)]
+        # ... and an Adhoc with no Adhoc left: 2x pay cut, shown in reports and payroll
+        r = c.post("/api/leaves", json={"device_user_id": "LV3", "start_date": "2026-10-09", "end_date": "2026-10-09", "type": "Adhoc"})
         assert [(x["type"], x["lop"]) for x in r.json()["parts"]] == [("Adhoc", 2.0)]
-        row = {r["device_user_id"]: r for r in c.get("/api/reports/daily?day=2026-10-08").json()}["LV3"]
+        row = {r["device_user_id"]: r for r in c.get("/api/reports/daily?day=2026-10-09").json()}["LV3"]
         assert (row["status"], row["leave_type"]) == ("Leave", "Adhoc") and "beyond balance" in row["note"]
         pay = {r["device_user_id"]: r for r in c.get("/api/reports/payroll?month=2026-10").json()}["LV3"]
         assert pay["leave_cut"] == 2000.0
@@ -1549,9 +1554,9 @@ def test_absence_without_approved_leave_counts_as_adhoc(tmp_path, monkeypatch):
         assert r["status"] == "Absent" and not r.get("absent_adhoc")               # today is not counted yet
         r = day("2026-09-30")
         assert r["status"] == "Absent" and not r.get("absent_adhoc")               # before the rule's start date
-        # balance: Adhoc used by the 5th; the two beyond-balance days each used 1 Informed, plus the 8th's leave
+        # balance: Adhoc used by the 5th; the two beyond-balance days only cost salary; Informed used by the 8th's leave
         b = c.get("/api/leave-balance?employee=AB").json()
-        assert (b["adhoc"]["used"], b["adhoc"]["left"], b["informed"]["used"], b["informed"]["left"]) == (1, 0, 3, 0)
+        assert (b["adhoc"]["used"], b["adhoc"]["left"], b["informed"]["used"], b["informed"]["left"]) == (1, 0, 1, 2)
         m = {x["device_user_id"]: x for x in c.get("/api/reports/monthly?month=2026-10").json()}["AB"]
         assert (m["absent"], m["absent_as_adhoc"], m["leave_cut_days"]) == (4, 3, 4.0)
         pay = {x["device_user_id"]: x for x in c.get("/api/reports/payroll?month=2026-10").json()}["AB"]
@@ -1785,6 +1790,10 @@ def test_hr_records_work_from_home(monkeypatch):
         assert (d22["status"], d22["wfh"]) == ("Present", True) and "no punches" in d22["note"]    # no punches: present WFH
         m = {x["device_user_id"]: x for x in c.get("/api/reports/monthly?month=2026-10").json()}["WR1"]
         assert m["wfh_days"] == 1 and round(m["paid_days"] % 1, 2) == 0.8                          # one day at 0.8
+        # deleting the approved request: the 22nd is no longer WFH (an absence again)
+        wid = [x for x in c.get("/api/wfh?status=approved").json() if x["device_user_id"] == "WR1"][0]["id"]
+        assert c.delete(f"/api/wfh/{wid}").status_code == 200 and c.delete(f"/api/wfh/{wid}").status_code == 404
+        assert day("2026-10-22")["status"] == "Absent" and not day("2026-10-22").get("wfh")
 
 
 def test_leave_exception_has_no_pay_cut(monkeypatch):

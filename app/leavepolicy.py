@@ -1,7 +1,7 @@
 """MTT leave policy (financial year April - March). Two kinds of leave:
 
-  * INFORMED leave (applied at least 7 days in advance) - shown in yellow.
-  * ADHOC leave (emergency, uninformed, or less than 7 days' notice) - shown in red.
+  * INFORMED leave (planned) - shown in yellow.
+  * ADHOC leave (emergency), and any absence without approved leave - shown in red.
 
 Leave is credited month by month: the first month of every quarter (April, July, October, January) gives
 1 Informed + 1 Adhoc, the other two months give 2 Informed each, so a full year is 20 Informed + 4 Adhoc = 24.
@@ -10,12 +10,12 @@ There is no monthly limit: any credit already earned can be used.
 
   * Leave starts after 3 months of working: credits are earned from the month in which the person becomes eligible.
     Before that there is no balance, so every leave day is beyond the balance (see below).
-  * Informed applied with less than 7 days' notice counts as Adhoc. When Informed credits run out, an Adhoc credit is
-    used instead if there is one.
-  * Beyond the balance the day is still leave, but salary is cut: 1.5 x a day's salary for Informed, 2 x for Adhoc.
-    An Adhoc day beyond the Adhoc balance also uses up 1 Informed credit.
-  * HALF DAY: half a day from the Informed (then Adhoc) balance, so the day is paid in full; with no balance,
-    0.5 x 1.5 = 0.75 of a day's salary is cut. No notice needed.
+  * Approved leave is taken as the type applied for, however much notice was given. INFORMED uses the Informed
+    balance only; beyond it the day is still leave but 1.5 x a day's salary is cut. ADHOC (Adhoc leave applied for,
+    or absent without approved leave) uses the Adhoc balance only; beyond it 2 x a day's salary is cut. The other
+    balance is never touched.
+  * HALF DAY: half a day from the balance of the type applied for, so the day is paid in full; with no balance,
+    half the cut (0.75 of a day's salary for Informed, 1 for Adhoc).
   * A day's salary = monthly salary / calendar days in that month.
 
 Only working days count (weekly offs and holidays inside a leave are free). Pending applications reserve balance;
@@ -129,7 +129,7 @@ def _bucket(t: str, lop: float) -> str | None:
     if t == "Informed":
         return None if lop else "I"
     if t == "Adhoc":
-        return "I" if lop >= ADHOC_EXCESS_CUT else "A"   # Adhoc beyond the balance also uses 1 Informed credit
+        return None if lop else "A"
     return None
 
 
@@ -155,7 +155,7 @@ def _leave_usage(emp: dict, ctx) -> list[tuple[date, str, float]]:
 def absences(emp: dict, ctx, fy_start: int) -> dict[str, float]:
     """Working days of the year (up to yesterday) on which the person was absent without approved leave (none applied,
     still pending, or rejected). Each counts as Adhoc leave: {day: 0.0} when an Adhoc credit paid for it, {day: 2.0}
-    when there was none left (2 x a day's salary cut and 1 Informed credit used, like any Adhoc beyond the balance)."""
+    when there was none left (2 x a day's salary cut, like any Adhoc beyond the balance)."""
     _, shifts, holidays, changes = ctx
     today = reports.now_local().date()
     first = max(date(fy_start, 4, 1), date.fromisoformat(emp["count_from"]) if emp.get("count_from") else date.min,
@@ -181,8 +181,6 @@ def absences(emp: dict, ctx, fy_start: int) -> dict[str, float]:
                 used.append((d, "A", 1))
                 out[iso] = 0.0
             else:
-                if not (elig and d < elig):
-                    used.append((d, "I", 1))       # Adhoc beyond the balance also uses 1 Informed credit
                 out[iso] = ADHOC_EXCESS_CUT
         d += timedelta(days=1)
     return out
@@ -202,8 +200,8 @@ def usage(emp: dict, ctx, years: set[int] | None = None) -> list[tuple[date, str
     for y in years or {fy(reports.now_local().date())}:
         for iso, lop in absences(emp, ctx, y).items():
             d = date.fromisoformat(iso)
-            if not (elig and d < elig):
-                out.append((d, "A" if not lop else "I", 1))
+            if not (elig and d < elig) and not lop:
+                out.append((d, "A", 1))
     return out
 
 
@@ -237,28 +235,19 @@ def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict
         return {"error": f"A leave can cover at most {MAX_RANGE_DAYS} days"}
     if strict and start < applied_on - timedelta(days=BACKDATE_DAYS):
         return {"error": f"You can apply for leave that started at most {BACKDATE_DAYS} days ago. Ask HR to record older leave."}
-    if half:
-        if end != start:
-            return {"error": "A half day is a single date"}
-        kind = "Informed"   # half days use Informed, then Adhoc, with no notice needed
+    if half and end != start:
+        return {"error": "A half day is a single date"}
     days = working_days(emp, start, end, ctx)
     if not days:
         return {"error": "There are no working days in that range (weekly offs and holidays are not counted)"}
     elig = eligible_from(emp.get("joined"))
-    notice_ok = half or (start - applied_on).days >= NOTICE_DAYS
     unit = 0.5 if half else 1
     used = usage(emp, ctx)
-    alloc = []   # (day, type, lop per full day)
+    alloc = []   # (day, type, lop per full day): the type applied for, from its own balance or beyond it
+    bucket, cut = ("I", INFORMED_EXCESS_CUT) if kind == "Informed" else ("A", ADHOC_EXCESS_CUT)
     for d in days:
         early = bool(elig and d < elig)
-        if not early and kind == "Informed" and notice_ok and left(emp, used, "I", d) >= unit:
-            t, lop = "Informed", 0.0
-        elif not early and left(emp, used, "A", d) >= unit:
-            t, lop = "Adhoc", 0.0
-        elif kind == "Informed" and notice_ok:
-            t, lop = "Informed", INFORMED_EXCESS_CUT
-        else:
-            t, lop = "Adhoc", ADHOC_EXCESS_CUT
+        t, lop = kind, (0.0 if not early and left(emp, used, bucket, d) >= unit else cut)
         b = None if early else _bucket(t, lop)
         if b:
             used.append((d, b, unit))
@@ -275,22 +264,17 @@ def plan(uid: str, kind: str, start_s: str, end_s: str, applied_on: date, strict
     if before:
         warnings.append(f"Leave credits start on {elig:%d %b %Y} (after 3 months of working), so {len(before)} day(s) "
                         "before that have no balance.")
-    converted = cnt("Adhoc")
-    if kind == "Informed" and not notice_ok and (converted or cnt("Adhoc", True)):
-        warnings.append(f"Informed leave needs {NOTICE_DAYS} days' notice, so this counts as Adhoc (emergency) leave.")
-    elif kind == "Informed" and converted:
-        warnings.append(f"Your Informed balance is not enough, so {converted} day(s) will use your Adhoc leave.")
     if half:
         warnings.insert(0, "Half day: half of the day comes from your leave balance, so the day is paid in full"
                         + (" (not this time: see below)." if excess else "."))
     if excess and half:
-        warnings.append("You don't have enough leave balance for the half day: 0.5 x 1.5 = 0.75 of a day's salary"
+        warnings.append(f"You don't have enough {kind} balance for the half day: 0.5 x {cut:g} = {cut / 2:g} of a day's salary"
                         + (f" ({rs(deduction)})" if salary else "") + " will be cut.")
     elif excess:
         n15, n2 = cnt("Informed", True), cnt("Adhoc", True)
         bits = ([f"{n15} Informed day(s) x 1.5 day's salary"] if n15 else []) + \
-               ([f"{n2} Adhoc day(s) x 2 days' salary (each also uses 1 Informed credit)"] if n2 else [])
-        warnings.append("You don't have enough leave balance. Beyond it: " + " and ".join(bits) +
+               ([f"{n2} Adhoc day(s) x 2 days' salary"] if n2 else [])
+        warnings.append(f"You don't have enough {kind} balance. Beyond it: " + " and ".join(bits) +
                         (f" = {rs(deduction)} will be cut from your salary." if salary else " will be cut from your salary."))
     consent = ""
     if excess:

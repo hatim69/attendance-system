@@ -709,8 +709,8 @@ def list_leaves(month: str | None = None):
         "WHERE substr(l.start_date,1,7)<=? AND substr(l.end_date,1,7)>=?" + frag + " ORDER BY l.start_date DESC", (month, month, *args))]
 
 
-@app.post("/api/leaves", dependencies=[Depends(access.need("hr", "leave"))])
-def add_leave(l: LeaveIn):
+@app.post("/api/leaves")
+def add_leave(l: LeaveIn, u: dict = Depends(access.need("hr", "leave"))):
     l.device_user_id = db.canon_id(l.device_user_id)
     access.assert_in_scope(l.device_user_id)
     _valid_date(l.start_date)
@@ -735,6 +735,8 @@ def add_leave(l: LeaveIn):
         if "error" in p:
             raise HTTPException(400, p["error"] + " (tick 'override' to record it anyway)")
         parts = p["parts"]
+    if l.override and l.type in leavepolicy.POLICY_TYPES:   # an exception: no pay cut; kept on record with who allowed it
+        l.note = f"Exception (no pay cut) by {u['username']}" + (f": {l.note}" if l.note.strip() else "")
     group = secrets.token_hex(6)
     for part in parts:
         c.execute("INSERT INTO leaves(device_user_id,start_date,end_date,type,note,status,applied_on,requested_by,group_id,lop,half) "

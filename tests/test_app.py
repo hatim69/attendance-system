@@ -1780,8 +1780,34 @@ def test_hr_records_work_from_home(monkeypatch):
         assert c.post("/api/wfh", json={"device_user_id": "WR1", "start_date": "2026-10-22"}).status_code == 400   # overlap
         assert c.get("/api/wfh?status=approved").json()[0]["status"] == "approved"
         day = lambda d: {x["device_user_id"]: x for x in c.get(f"/api/reports/daily?day={d}").json()}["WR1"]
-        assert day("2026-10-21")["status"] == "Present" and day("2026-10-21")["wfh"]               # punched: still WFH
+        assert day("2026-10-21")["status"] == "Present" and not day("2026-10-21").get("wfh")     # came to the office: full day
         d22 = day("2026-10-22")
         assert (d22["status"], d22["wfh"]) == ("Present", True) and "no punches" in d22["note"]    # no punches: present WFH
         m = {x["device_user_id"]: x for x in c.get("/api/reports/monthly?month=2026-10").json()}["WR1"]
-        assert m["wfh_days"] == 2 and round(m["paid_days"] % 1, 2) == 0.6                          # two days at 0.8 each
+        assert m["wfh_days"] == 1 and round(m["paid_days"] % 1, 2) == 0.8                          # one day at 0.8
+
+
+def test_leave_exception_has_no_pay_cut(monkeypatch):
+    _freeze_today(monkeypatch, 2026, 10, 23)
+    from app import db as appdb
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "Exc 10-19", "start": "10:00", "end": "19:00", "weekly_off": "SUN"})
+        sid = [x for x in c.get("/api/shifts").json() if x["name"] == "Exc 10-19"][0]["id"]
+        c.post("/api/employees", json={"device_user_id": "EX1", "name": "New Joiner", "department": "Ops", "shift_id": sid,
+                                       "joined": "2026-09-03", "salary": 13000})
+        for d in ("2026-10-21", "2026-10-23"):
+            c.post("/api/punches", json={"device_user_id": "EX1", "ts": f"{d} 10:00:00"})
+            c.post("/api/punches", json={"device_user_id": "EX1", "ts": f"{d} 19:00:00"})
+        appdb.conn().execute("UPDATE settings SET value='2026-10-01' WHERE key='absent_as_adhoc_from'"); appdb.conn().commit()
+        day = lambda: {x["device_user_id"]: x for x in c.get("/api/reports/daily?day=2026-10-22").json()}["EX1"]
+        cut = lambda: {x["device_user_id"]: x for x in c.get("/api/reports/monthly?month=2026-10").json()}["EX1"]["leave_cut_days"]
+        assert day().get("lop") == 2.0                                     # absent, no leave, no balance yet: 2x cut
+        before = cut()
+        r = c.post("/api/leaves", json={"device_user_id": "EX1", "start_date": "2026-10-22", "end_date": "2026-10-22",
+                                        "type": "Informed", "override": True, "note": "family emergency"})
+        assert r.status_code == 200 and r.json()["parts"][0]["lop"] == 0
+        d = day()
+        assert d["status"] == "Leave" and not d.get("lop") and not d.get("absent_adhoc")
+        row = appdb.conn().execute("SELECT note FROM leaves WHERE device_user_id='EX1'").fetchone()
+        assert row["note"].startswith("Exception (no pay cut) by ") and row["note"].endswith("family emergency")
+        assert cut() == before - 2                                         # the 22nd's 2x cut is gone

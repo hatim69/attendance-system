@@ -171,7 +171,7 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
         if shift and shift.get("week_off_duty"):
             out["week_off_duty"] = True
             out["note"] = (out["note"] + "; " if out["note"] else "") + "rostered on weekly off"
-        if dict(p).get("w") or d in emp.get("_wfh", ()):
+        if dict(p).get("w"):   # checked in from home in the app; a punch at the office on a WFH day is a full day
             out["wfh"] = True
             out["note"] = "WFH" + ("; " + out["note"] if out["note"] else "")
         if half:            # worked the other half: a half day, without late / early marks

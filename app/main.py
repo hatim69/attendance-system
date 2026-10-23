@@ -840,6 +840,39 @@ def list_wfh(month: str | None = None, status: str | None = None):
     return [dict(r) for r in db.conn().execute(q + " ORDER BY w.status='pending' DESC, w.start_date DESC", args)]
 
 
+class WfhIn(BaseModel):
+    device_user_id: str
+    start_date: str
+    end_date: str = ""
+    reason: str = ""
+
+
+@app.post("/api/wfh")
+async def record_wfh(body: WfhIn, u: dict = Depends(access.need("manager", "leave"))):
+    """HR (or a team lead for their team) records work from home directly; it is approved straight away and the days
+    are paid at 0.8, whether or not the person punched."""
+    uid = db.canon_id(body.device_user_id)
+    access.assert_in_scope(uid)
+    c = db.conn()
+    if not c.execute("SELECT 1 FROM employees WHERE device_user_id=?", (uid,)).fetchone():
+        raise HTTPException(404, "No such employee")
+    a, b = body.start_date, body.end_date or body.start_date
+    _valid_date(a)
+    _valid_date(b)
+    if b < a or (date.fromisoformat(b) - date.fromisoformat(a)).days > 30:
+        raise HTTPException(400, "Choose an end date on or after the start, at most 31 days")
+    clash = c.execute("SELECT status FROM wfh_requests WHERE device_user_id=? AND status!='rejected' AND start_date<=? AND end_date>=?",
+                      (uid, b, a)).fetchone()
+    if clash:
+        raise HTTPException(400, "There is already a work-from-home request for some of these days" +
+                            (": approve it on the Work from home page" if clash["status"] == "pending" else ""))
+    stamp = now_local().strftime("%Y-%m-%d %H:%M:%S")
+    cur = c.execute("INSERT INTO wfh_requests(device_user_id,start_date,end_date,reason,status,applied_at,decided_by,decided_at) "
+                    "VALUES (?,?,?,?,'approved',?,?,?)", (uid, a, b, body.reason.strip()[:200], stamp, u["username"], stamp))
+    c.commit()
+    return {"ok": True, "id": cur.lastrowid}
+
+
 @app.post("/api/wfh/{req_id}/{action}")
 async def decide_wfh(req_id: int, action: str, u: dict = Depends(access.need("manager", "leave"))):
     """Team leads (own team), HR, management and admin approve or reject work-from-home requests."""

@@ -1764,3 +1764,24 @@ def test_phone_app_notifications_feed(monkeypatch):
         c.post(f"/api/wfh/{wid}/approve")
         n = c.get("/api/app/notifications", headers=tok).json()
         assert any(x["key"] == f"wfh-{wid}-approved" and "23 Oct" in x["body"] for x in n)
+
+
+def test_hr_records_work_from_home(monkeypatch):
+    _freeze_today(monkeypatch, 2026, 10, 23)
+    with TestClient(app) as c:
+        c.post("/api/shifts", json={"name": "WfhRec 10-19", "start": "10:00", "end": "19:00", "weekly_off": "SUN"})
+        sid = [x for x in c.get("/api/shifts").json() if x["name"] == "WfhRec 10-19"][0]["id"]
+        c.post("/api/employees", json={"device_user_id": "WR1", "name": "Wfh Recorded", "department": "Ops", "shift_id": sid,
+                                       "joined": "2024-01-01", "salary": 31000})
+        for ts in ("2026-10-21 10:00:00", "2026-10-21 19:00:00"):          # a normal machine punch on a WFH day
+            c.post("/api/punches", json={"device_user_id": "WR1", "ts": ts})
+        r = c.post("/api/wfh", json={"device_user_id": "WR1", "start_date": "2026-10-21", "end_date": "2026-10-22", "reason": "home"})
+        assert r.status_code == 200
+        assert c.post("/api/wfh", json={"device_user_id": "WR1", "start_date": "2026-10-22"}).status_code == 400   # overlap
+        assert c.get("/api/wfh?status=approved").json()[0]["status"] == "approved"
+        day = lambda d: {x["device_user_id"]: x for x in c.get(f"/api/reports/daily?day={d}").json()}["WR1"]
+        assert day("2026-10-21")["status"] == "Present" and day("2026-10-21")["wfh"]               # punched: still WFH
+        d22 = day("2026-10-22")
+        assert (d22["status"], d22["wfh"]) == ("Present", True) and "no punches" in d22["note"]    # no punches: present WFH
+        m = {x["device_user_id"]: x for x in c.get("/api/reports/monthly?month=2026-10").json()}["WR1"]
+        assert m["wfh_days"] == 2 and round(m["paid_days"] % 1, 2) == 0.6                          # two days at 0.8 each

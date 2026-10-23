@@ -40,8 +40,15 @@ def _load(scoped: bool = True):
     emps = [dict(r) for r in c.execute("SELECT * FROM employees WHERE (active=1 OR left_on IS NOT NULL)" + frag + " ORDER BY name", args)]
     started = c.execute("SELECT MIN(d) FROM (SELECT MIN(date(ts)) d FROM punches UNION ALL "
                         "SELECT MIN(start_date) FROM leaves WHERE status='approved')").fetchone()[0] or ""
+    wfh: dict[str, set] = {}   # approved work from home: paid at 0.8 (WFH_PAY), with or without punches
+    for r in c.execute("SELECT device_user_id, start_date, end_date FROM wfh_requests WHERE status='approved'"):
+        x, end = Date.fromisoformat(r["start_date"]), Date.fromisoformat(r["end_date"])
+        while x <= end:
+            wfh.setdefault(r["device_user_id"], set()).add(x.isoformat())
+            x += timedelta(days=1)
     for e in emps:   # nothing is counted before the first day this system has any attendance for
         e["count_from"] = max(e.get("joined") or "", started)
+        e["_wfh"] = wfh.get(e["device_user_id"], set())
     holidays = {r["date"]: r["name"] for r in c.execute("SELECT * FROM holidays WHERE optional=0")}
     leaves = [dict(r) for r in c.execute("SELECT * FROM leaves WHERE status='approved'")]
     changes: dict = {}
@@ -164,7 +171,7 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
         if shift and shift.get("week_off_duty"):
             out["week_off_duty"] = True
             out["note"] = (out["note"] + "; " if out["note"] else "") + "rostered on weekly off"
-        if dict(p).get("w"):
+        if dict(p).get("w") or d in emp.get("_wfh", ()):
             out["wfh"] = True
             out["note"] = "WFH" + ("; " + out["note"] if out["note"] else "")
         if half:            # worked the other half: a half day, without late / early marks
@@ -195,6 +202,8 @@ def evaluate(emp: dict, shift: dict | None, d: str, p, holidays: dict, leaves: l
         out["status"], out["note"], out["leave_type"] = "Leave", leave["type"], leave["type"]
         if leave.get("lop"):     # beyond the balance: still a leave day, but salary is cut lop x a day
             out["lop"], out["note"] = leave["lop"], f"{leave['type']} beyond balance ({leave['lop']:g}x pay cut)"
+    elif d in emp.get("_wfh", ()):   # approved work from home without punches: worked, paid at 0.8
+        out["status"], out["wfh"], out["note"] = "Present", True, "WFH (approved, no punches)"
     else:
         out["status"] = "Absent"
     return out
